@@ -16,6 +16,11 @@ type Executor struct {
 	entityResolver EntityResolver
 	planner        planner.QueryPlanner
 	options        ExecutorOptions
+	// unit is the relation of one empty tuple over no symbol, the identity
+	// for joins: the verdict that holds, the run of a branch over no required
+	// run, the subject of a form over no group. A relation is immutable, so
+	// every clause executor this executor builds reads this one.
+	unit *MaterializedRelation
 }
 
 // defaultPlannerOptions is the planner profile NewExecutor constructs with —
@@ -59,6 +64,7 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 		entityResolver: resolver,
 		planner:        queryPlanner,
 		options:        execOpts,
+		unit:           NewUnitRelation(execOpts),
 	}
 }
 
@@ -172,6 +178,7 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		entityResolver: e.entityResolver,
 		planner:        e.planner,
 		options:        e.options,
+		unit:           e.unit,
 	}
 
 	// q.String() renders the whole query, so the guard is here rather than
@@ -645,7 +652,7 @@ func (e *DefaultQueryExecutor) executePhase(ctx *Context, phaseNumber int, phase
 		return nil, fmt.Errorf("phase %d failed: %w", phaseNumber, err)
 	}
 	if len(phase.Query.Find) == 0 {
-		result, err = existenceVerdict(result, e.options)
+		result, err = existenceVerdict(result, e.executor.unit)
 		if err != nil {
 			return nil, fmt.Errorf("phase %d failed: %w", phaseNumber, err)
 		}

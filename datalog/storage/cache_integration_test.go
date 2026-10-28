@@ -533,6 +533,73 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 	}
 }
 
+// TestCardinalityManyUnboundScanUsesCache: a pattern over a cardinality-many
+// attribute with the entity open answers every entity's current set, and
+// resolves each entity's set through the cache: after the scan every entity's
+// set is cached, so the next scan reads no set from storage. A member
+// withdrawn and a member added after the scan are what the next scan answers.
+func TestCardinalityManyUnboundScanUsesCache(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			s, err := schema.NewBuilder().
+				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
+			require.NoError(t, db.SetSchema(s))
+
+			tags := datalog.NewKeyword(":person/tags")
+			alice := datalog.NewIdentity("person1")
+			bob := datalog.NewIdentity("person2")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(alice, tags, "developer"))
+			require.NoError(t, tx.Add(alice, tags, "golang"))
+			require.NoError(t, tx.Add(bob, tags, "designer"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			const scan = `[:find ?e ?tag :where [?e :person/tags ?tag]]`
+			sets := func() map[datalog.Identity]map[interface{}]bool {
+				tuples, err := executor.CollectTuples(db.Query(scan))
+				require.NoError(t, err)
+				answered := map[datalog.Identity]map[interface{}]bool{}
+				for _, tuple := range tuples {
+					e := tuple[0].(datalog.Identity)
+					if answered[e] == nil {
+						answered[e] = map[interface{}]bool{}
+					}
+					answered[e][tuple[1]] = true
+				}
+				return answered
+			}
+
+			require.Equal(t, map[datalog.Identity]map[interface{}]bool{
+				alice: {"developer": true, "golang": true},
+				bob:   {"designer": true},
+			}, sets(), "the scan answers every entity's current set")
+
+			var tagsAttr Attribute
+			copy(tagsAttr[:], tags.String())
+			for _, e := range []datalog.Identity{alice, bob} {
+				assert.True(t, db.Cache().GetCachedAttrs(Entity(e.Hash()))[tagsAttr],
+					"the scan resolves %s's set through the cache, so the set is cached after it", e)
+			}
+
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Remove(alice, tags, "developer"))
+			require.NoError(t, tx.Add(bob, tags, "writer"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			require.Equal(t, map[datalog.Identity]map[interface{}]bool{
+				alice: {"golang": true},
+				bob:   {"designer": true, "writer": true},
+			}, sets(), "the next scan answers the sets as the commit left them")
+		})
+	}
+}
+
 // TestCacheConcurrency verifies that concurrent cache access with real storage
 // is thread-safe and returns correct values.
 func TestCacheConcurrency(t *testing.T) {

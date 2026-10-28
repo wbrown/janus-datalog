@@ -465,7 +465,9 @@ func NewMaterializedRelationWithProperties(
 }
 
 // newMaterializedRelationFromSet constructs a Relation from tuples already
-// proven duplicate-free by the producing relational operator.
+// proven duplicate-free by the producing relational operator, holding the
+// properties the operator derived as given: a relation's properties are
+// immutable, and every derivation builds its own values.
 func newMaterializedRelationFromSet(
 	symbols []query.Symbol,
 	tuples []Tuple,
@@ -476,7 +478,7 @@ func newMaterializedRelationFromSet(
 		symbols:    symbols,
 		tuples:     tuples,
 		options:    opts,
-		properties: properties.clone(),
+		properties: properties,
 	}
 }
 

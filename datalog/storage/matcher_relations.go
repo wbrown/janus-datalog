@@ -2204,26 +2204,46 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			}
 			it.seenEntities[eBytes] = true
 
-			// Resolve the set for this entity using add-wins semantics. Intake
-			// accrues into the report at scan time, so it survives the error
-			// return below; only what the result carries has to wait for one.
-			result, err := it.matcher.resolveAddWinsSet(eBytes[:], it.aBytes[:], it.report)
-			if err != nil {
-				it.err = err
-				return false
+			// The entity's current set under add-wins: through the cache when
+			// the matcher has one and its view is served by it (cacheKey), as
+			// the route for a bound entity reads it, and from storage otherwise.
+			// A hit reads no index; a build and a storage resolution accrue
+			// their intake into the report at scan time, so it survives the
+			// error return below.
+			var members map[any]any
+			var version datalog.ElementID
+			key, cached := it.matcher.cacheKey(Entity(eBytes), Attribute(it.aBytes))
+			if cached && it.matcher.cache != nil {
+				entry, err := it.matcher.cache.GetOrResolve(key, schema.CardinalityMany, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
+				if err != nil {
+					it.err = err
+					return false
+				}
+				if entry != nil {
+					members = entry.ManySet()
+					version = entry.Version()
+				}
+			} else {
+				result, err := it.matcher.resolveAddWinsSet(eBytes[:], it.aBytes[:], it.report)
+				if err != nil {
+					it.err = err
+					return false
+				}
+				members = result.Members
+				version = result.MaxElementID
 			}
 			if it.report != nil {
-				it.report.resolved += len(result.Members)
+				it.report.resolved += len(members)
 			}
 
 			// If set has members, set up iteration
-			if len(result.Members) > 0 {
+			if len(members) > 0 {
 				it.currentEntity = datom.E
-				it.currentSetMembers = make([]interface{}, 0, len(result.Members))
-				for _, member := range result.Members {
+				it.currentSetMembers = make([]interface{}, 0, len(members))
+				for _, member := range members {
 					it.currentSetMembers = append(it.currentSetMembers, member)
 				}
-				it.currentMaxElementID = result.MaxElementID
+				it.currentMaxElementID = version
 				it.currentMemberIdx = 0
 				break // Go back to top of outer loop to yield first member
 			}

@@ -93,7 +93,7 @@ func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.Ru
 		if !held {
 			return NewMaterializedRelationWithOptions([]query.Symbol{}, nil, e.options), nil
 		}
-		return NewUnitRelation(e.options), nil
+		return e.executor.unit, nil
 	}
 
 	renames := len(keep) == len(inv.Args)

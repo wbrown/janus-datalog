@@ -484,18 +484,19 @@ func HashJoinWithOptions(
 	}
 
 	// Materialized mode
+	// The build tuples are in hand and size the seen map and the results, the
+	// probe side when its size is known and smaller; both grow past either
+	// under fanout.
+	expectedResults := buildCount
+	if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
+		expectedResults = probeSize
+	}
 	// Use efficient TupleKeyMap for deduplication
 	var seen *TupleKeyMap
 	if len(resultProperties.Keys) == 0 {
-		// The build tuples are in hand and size the map, the probe side when
-		// its size is known and smaller; the map grows past either.
-		expectedResults := buildCount
-		if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
-			expectedResults = probeSize
-		}
 		seen = NewTupleKeyMapWithCapacity(expectedResults)
 	}
-	var results []Tuple
+	results := make([]Tuple, 0, expectedResults)
 
 	// CRITICAL: Check if probe relation was already consumed
 	// This should never happen - it indicates a bug in the executor
