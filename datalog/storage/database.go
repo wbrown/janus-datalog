@@ -2101,9 +2101,6 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	// Normalize integer width to canonical int64 at the API boundary.
 	v = datalog.NormalizeValue(v)
-	if err := validateValueStorable(a, v); err != nil {
-		return err
-	}
 
 	// Check cardinality first - determines validation strategy
 	card := schema.CardinalityOne
@@ -2115,6 +2112,9 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	switch card {
 	case schema.CardinalityOne:
+		if err := validateValueStorable(a, v); err != nil {
+			return err
+		}
 		// Schema validation for single value
 		if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
 			return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
@@ -2145,8 +2145,11 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Schema validation for each element in the slice
+		// Each element is one datom's value.
 		for _, val := range newSlice {
+			if err := validateValueStorable(a, val); err != nil {
+				return err
+			}
 			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
 				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
 			}
@@ -2267,8 +2270,11 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Schema validation for each element in the slice
+		// Each element is one datom's value.
 		for _, val := range newSlice {
+			if err := validateValueStorable(a, val); err != nil {
+				return err
+			}
 			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
 				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
 			}
@@ -2793,10 +2799,14 @@ func reflectValues(slice reflect.Value) []interface{} {
 	return values
 }
 
-// validateValueStorable rejects values outside the storable domain at the
-// transaction write boundary.
+// validateValueStorable rejects, at the transaction write boundary, a value
+// that is not one datom's: a value outside the domain, or a vector, which a
+// vector attribute holds as its elements, one datom each. It is asked of each
+// datom's value a write appends: the value given to Add, Remove and Retract,
+// and to Set under cardinality one; each element of the slice given to Set
+// under cardinality many or vector.
 func validateValueStorable(a datalog.Keyword, v interface{}) error {
-	if err := datalog.ValidateValue(v); err != nil {
+	if err := datalog.ValidateDatomValue(v); err != nil {
 		return fmt.Errorf("attribute %s: %w", a, err)
 	}
 	return nil

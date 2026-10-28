@@ -9,9 +9,9 @@ import (
 
 // A vector's elements enter the domain as scalars do: a float's signed zero
 // is 0.0 and an integer is int64, at any depth, in every slice the domain
-// admits: a []interface{}, a []float64, a named type over either, and a
-// vector of vectors, each answering its own type. A vector whose elements are
-// already of the domain is the same slice, not a copy.
+// admits: a []interface{}, a []float64, a []Value, a named type over any of
+// them, and a vector of vectors, each answering its own type. A vector whose
+// elements are already of the domain is the same slice, not a copy.
 func TestNormalizeValueTakesAVectorsElementsAsScalars(t *testing.T) {
 	type embedding []float64
 	type row []interface{}
@@ -90,5 +90,36 @@ func TestNormalizeValueTakesAVectorsElementsAsScalars(t *testing.T) {
 		require.Same(t, &floats[0], &NormalizeValue(floats).([]float64)[0])
 		values := []interface{}{int64(1), "s", float64(0)}
 		require.Same(t, &values[0], &NormalizeValue(values).([]interface{})[0])
+		typed := []Value{int64(1), "s", float64(0)}
+		require.Same(t, &typed[0], &NormalizeValue(typed).([]Value)[0])
+	})
+
+	t.Run("a []Value holding a signed zero answers a []Value", func(t *testing.T) {
+		held := []Value{negativeZero, "s"}
+		normalized, ok := NormalizeValue(held).([]Value)
+		require.True(t, ok, "a []Value normalizes to a []Value, got %T", NormalizeValue(held))
+		require.Len(t, normalized, 2)
+		require.False(t, math.Signbit(normalized[0].(float64)), "the signed zero is 0.0")
+		require.Equal(t, "s", normalized[1])
+		require.True(t, math.Signbit(held[0].(float64)), "the given slice is untouched")
+	})
+
+	t.Run("a vector of []Value copies from the first changed inner vector", func(t *testing.T) {
+		first := []Value{1.5}
+		second := []Value{negativeZero, 2.5}
+		normalized, ok := NormalizeValue([][]Value{first, second}).([][]Value)
+		require.True(t, ok, "a vector of []Value normalizes to its own type, got %T", NormalizeValue([][]Value{first, second}))
+		require.Len(t, normalized, 2)
+		require.Same(t, &first[0], &normalized[0][0], "an inner vector with no signed zero is the same slice")
+		require.False(t, math.Signbit(normalized[1][0].(float64)), "the nested signed zero is 0.0")
+		require.Equal(t, 2.5, normalized[1][1])
+		require.True(t, math.Signbit(second[0].(float64)), "the given inner slice is untouched")
+	})
+
+	t.Run("a []Value holding nil after a signed zero is refused, never a panic", func(t *testing.T) {
+		held := []Value{negativeZero, nil}
+		var err error
+		require.NotPanics(t, func() { err = ValidateValue(held) })
+		require.EqualError(t, err, "nil is not a datalog value")
 	})
 }
