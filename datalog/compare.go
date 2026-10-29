@@ -544,15 +544,19 @@ func ValuesEqual(a, b interface{}) bool {
 		return ok && av.Equal(bv)
 	}
 
-	// Slice comparison for typed slices ([]string, []int64) and
-	// []interface{}, element-wise via reflect. Slow path; must precede the
-	// general == fallback below, which would panic on two values that share
-	// an uncomparable (slice) dynamic type.
+	// A vector compares element-wise against another vector, through reflect
+	// for typed slices ([]string, []int64) and []interface{} alike. IsVector
+	// excludes a byte slice, the domain's scalar, which the []byte arm above
+	// decides, so a vector against one is unequal from this side as from
+	// that. Slow path; must precede the general == fallback below, which
+	// would panic on two values that share an uncomparable (slice) dynamic
+	// type.
 	ra := reflect.ValueOf(a)
 	rb := reflect.ValueOf(b)
-	if ra.Kind() == reflect.Slice || rb.Kind() == reflect.Slice {
-		if ra.Kind() != reflect.Slice || rb.Kind() != reflect.Slice {
-			return false // one is a slice, the other isn't
+	va, vb := IsVector(a), IsVector(b)
+	if va || vb {
+		if !va || !vb {
+			return false
 		}
 		if ra.Len() != rb.Len() {
 			return false
