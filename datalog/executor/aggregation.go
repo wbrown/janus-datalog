@@ -676,9 +676,10 @@ type StreamingAggregateRelation struct {
 	aggregates  []query.FindAggregate
 	options     ExecutorOptions
 
-	// Lazy materialization
-	materializeOnce sync.Once
-	materialized    *MaterializedRelation
+	// The groups, one tuple each, folded from the source on first read and
+	// held for every read after.
+	foldOnce sync.Once
+	groups   *MaterializedRelation
 }
 
 // NewStreamingAggregateRelation creates a streaming aggregate relation
@@ -713,131 +714,129 @@ func (r *StreamingAggregateRelation) Options() ExecutorOptions {
 	return r.options
 }
 
-// RequiresCopy returns false because StreamingAggregateRelation materializes
-// all results internally before returning them via Iterator(). The tuples
-// are stored in a slice and not reused across iterations.
+// RequiresCopy is false: the groups are held in a slice nothing reuses, and
+// Iterator hands them out from it.
 func (r *StreamingAggregateRelation) RequiresCopy() bool { return false }
 
-// Iterator returns an iterator over the aggregated results
-// Uses lazy materialization: aggregates are computed on first call, cached for subsequent calls
+// Iterator reads the groups, folded from the source on the first call and
+// held for every later one.
 func (r *StreamingAggregateRelation) Iterator() Iterator {
-	r.materializeOnce.Do(func() {
-		r.materialized = r.materialize()
+	r.foldOnce.Do(func() {
+		r.groups = r.fold()
 	})
-	return r.materialized.Iterator()
+	return r.groups.Iterator()
 }
 
-// Size returns the number of groups (only known after materialization)
+// Size returns the number of groups, folding them first.
 func (r *StreamingAggregateRelation) Size() int {
-	// Trigger materialization to know size
 	r.Iterator()
-	return r.materialized.Size()
+	return r.groups.Size()
 }
 
-// Get returns a specific tuple by index (requires materialization)
+// Get returns the group at index i, folding the groups first.
 func (r *StreamingAggregateRelation) Get(i int) Tuple {
 	r.Iterator()
-	return r.materialized.Get(i)
+	return r.groups.Get(i)
 }
 
-// String returns a string representation (delegates to materialized result)
+// String returns a string representation (reads the groups)
 func (r *StreamingAggregateRelation) String() string {
 	r.Iterator()
-	return r.materialized.String()
+	return r.groups.String()
 }
 
-// Table returns a table representation (delegates to materialized result)
+// Table returns a table representation (reads the groups)
 func (r *StreamingAggregateRelation) Table() string {
 	r.Iterator()
-	return r.materialized.Table()
+	return r.groups.Table()
 }
 
 // ProjectFromPattern creates a new Relation with symbols from the pattern
 func (r *StreamingAggregateRelation) ProjectFromPattern(pattern *query.DataPattern) Relation {
 	r.Iterator()
-	return r.materialized.ProjectFromPattern(pattern)
+	return r.groups.ProjectFromPattern(pattern)
 }
 
 // Sorted returns tuples sorted by the relation's symbols
 func (r *StreamingAggregateRelation) Sorted() ([]Tuple, error) {
 	r.Iterator()
-	return r.materialized.Sorted()
+	return r.groups.Sorted()
 }
 
-// Project projects specific symbols (delegates to materialized result)
+// Project projects specific symbols (reads the groups)
 func (r *StreamingAggregateRelation) Project(symbols []query.Symbol) (Relation, error) {
 	r.Iterator()
-	return r.materialized.Project(symbols)
+	return r.groups.Project(symbols)
 }
 
-// Rename is the materialized result under the substitution.
+// Rename is the groups under the substitution.
 func (r *StreamingAggregateRelation) Rename(subst query.Substitution) (Relation, error) {
 	r.Iterator()
-	return r.materialized.Rename(subst)
+	return r.groups.Rename(subst)
 }
 
-// Materialize returns the materialized relation
+// Materialize returns the groups, which are held in memory.
 func (r *StreamingAggregateRelation) Materialize() Relation {
 	r.Iterator()
-	return r.materialized
+	return r.groups
 }
 
 // Sort returns a new relation sorted by the specified order-by clauses
 func (r *StreamingAggregateRelation) Sort(orderBy []query.OrderByClause) Relation {
 	r.Iterator()
-	return r.materialized.Sort(orderBy)
+	return r.groups.Sort(orderBy)
 }
 
-// FilterWithPredicate applies a predicate filter (delegates to materialized result)
+// FilterWithPredicate applies a predicate filter (reads the groups)
 func (r *StreamingAggregateRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	r.Iterator()
-	return r.materialized.FilterWithPredicate(pred)
+	return r.groups.FilterWithPredicate(pred)
 }
 
 // EvaluateFunction evaluates a function and adds result as new symbol
 func (r *StreamingAggregateRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
 	r.Iterator()
-	return r.materialized.EvaluateFunction(fn, outputSymbol)
+	return r.groups.EvaluateFunction(fn, outputSymbol)
 }
 
 // Select returns a new relation filtered by predicate
 func (r *StreamingAggregateRelation) Select(pred func(Tuple) bool) Relation {
 	r.Iterator()
-	return r.materialized.Select(pred)
+	return r.groups.Select(pred)
 }
 
 // Join performs a natural join with another relation
 func (r *StreamingAggregateRelation) Join(other Relation) Relation {
 	r.Iterator()
-	return r.materialized.Join(other)
+	return r.groups.Join(other)
 }
 
-// HashJoin performs a hash join (delegates to materialized result)
+// HashJoin performs a hash join (reads the groups)
 func (r *StreamingAggregateRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
 	r.Iterator()
-	return r.materialized.HashJoin(other, joinSyms)
+	return r.groups.HashJoin(other, joinSyms)
 }
 
 // SemiJoin returns tuples from this relation that have matches in the other
 func (r *StreamingAggregateRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
 	r.Iterator()
-	return r.materialized.SemiJoin(other, joinSyms)
+	return r.groups.SemiJoin(other, joinSyms)
 }
 
 // AntiJoin returns tuples from this relation that have no matches in the other
 func (r *StreamingAggregateRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
 	r.Iterator()
-	return r.materialized.AntiJoin(other, joinSyms)
+	return r.groups.AntiJoin(other, joinSyms)
 }
 
-// Aggregate applies aggregation (delegates to materialized result)
+// Aggregate applies aggregation (reads the groups)
 func (r *StreamingAggregateRelation) Aggregate(findElements []query.FindElement) Relation {
 	r.Iterator()
-	return r.materialized.Aggregate(findElements)
+	return r.groups.Aggregate(findElements)
 }
 
-// materialize performs the actual streaming aggregation
-func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation) {
+// fold is the single pass over the source that produces the groups.
+func (r *StreamingAggregateRelation) fold() (result *MaterializedRelation) {
 	// Resolve each aggregate's behavior once, before any iteration.
 	ops, opsErr := resolveAggregates(r.aggregates)
 	if opsErr != nil {
