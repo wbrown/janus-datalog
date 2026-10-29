@@ -149,13 +149,14 @@ Candidate keys prove more than setness. Current proof origins include:
 - Complete output symbols after explicit typed deduplication.
 - Preserved outer keys through safe OR/fallback shapes.
 - Join keys derived by one-to-one or many-to-one natural joins.
+- The composite of a natural join's two sides: each left key followed by the
+  symbols of each right key not among its own, a key of the join whatever the
+  join symbols are.
 
 Proofs are consumed by:
 
 - Projection dedup elision.
 - Unique hash-build specialization.
-- Hash-join result dedup elision.
-- Semi/anti join result construction.
 - OR/fallback dedup decisions.
 
 Relation bindings apply positional ρ-renaming to ordering and key symbols.
@@ -262,6 +263,28 @@ Complex checkpoint:
 Projection, predicate filtering, and deterministic extension construct lazy
 derived relations. Random access realizes only the required prefix. Full sorting
 retains explicit complete realization.
+
+### Join output as a set
+
+The hash join's materialized and streaming arms and the symmetric arm keyed
+every combined tuple into a full-tuple `seen` table whenever `joinProperties`
+derived no candidate key for the result. A join of two keyed relations on a
+proper subset of either side's symbols derived none, since the composite of the
+two sides' keys was not among the origins, so every body join of two fixpoint
+relations in a recursive stratum ran the table.
+
+A join of two sets is a set (`docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md`,
+T1). No arm builds the table. `joinProperties` derives the composite of each
+left key with each right key (T3). `SemiJoin` and `AntiJoin` construct through
+the proven-set constructor over the left's symbols and properties (T5).
+
+The reproduction of `docs/bugs/JANUS_REPRO_FILLED.md`, its `unfilled` query over
+the kernel's facts through the CLI:
+
+| | Before | After |
+|---|---:|---:|
+| wall | 10 min 27 s | 4 min 38 s |
+| user CPU | 1041 s | 581 s |
 
 ## Correctness Hardening Completed
 

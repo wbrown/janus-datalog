@@ -103,9 +103,6 @@ func SymmetricHashJoinWithOptions(
 		resultQueue:  make([]Tuple, 0),
 		batchSize:    100, // Process tuples in batches for efficiency
 	}
-	if len(resultProperties.Keys) == 0 {
-		iter.seen = NewTupleKeyMapWithCapacity(tableSize)
-	}
 
 	// Return a streaming relation with the symmetric join iterator
 	return NewStreamingRelationWithProperties(
@@ -126,7 +123,6 @@ type symmetricHashJoinIterator struct {
 	rightJoinPos              []bool // Per right position: is it a join symbol?
 	outputSyms                []query.Symbol
 	resultQueue               []Tuple
-	seen                      *TupleKeyMap // For deduplication
 	leftDone, rightDone       bool
 	batchSize                 int
 	resultPos                 int
@@ -178,13 +174,10 @@ func (it *symmetricHashJoinIterator) processLeftBatch() {
 		if rightMatchesVal, ok := it.rightTable.Get(key); ok {
 			rightMatches := rightMatchesVal.([]Tuple)
 			for _, rightTuple := range rightMatches {
-				// Combine tuples
-				joined := it.combineTuples(leftTuple, rightTuple, true)
-
-				// A nil seen map means a result key proves uniqueness.
-				if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
-					it.resultQueue = append(it.resultQueue, joined)
-				}
+				// Every combined tuple is one the join answers: the join of
+				// two sets is a set
+				// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
+				it.resultQueue = append(it.resultQueue, it.combineTuples(leftTuple, rightTuple, true))
 			}
 		}
 
@@ -224,13 +217,10 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 		if leftMatchesVal, ok := it.leftTable.Get(key); ok {
 			leftMatches := leftMatchesVal.([]Tuple)
 			for _, leftTuple := range leftMatches {
-				// Combine tuples
-				joined := it.combineTuples(leftTuple, rightTuple, true)
-
-				// A nil seen map means a result key proves uniqueness.
-				if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
-					it.resultQueue = append(it.resultQueue, joined)
-				}
+				// Every combined tuple is one the join answers: the join of
+				// two sets is a set
+				// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
+				it.resultQueue = append(it.resultQueue, it.combineTuples(leftTuple, rightTuple, true))
 			}
 		}
 

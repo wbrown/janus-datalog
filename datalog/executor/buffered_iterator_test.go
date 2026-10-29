@@ -17,7 +17,7 @@ func TestBufferedIterator(t *testing.T) {
 			{2, "bob"},
 			{3, "charlie"},
 		}
-		source := newMockIterator(tuples)
+		source := &sliceIterator{tuples: tuples, pos: -1}
 		buffered := NewBufferedIterator(source)
 
 		// First iteration
@@ -40,7 +40,7 @@ func TestBufferedIterator(t *testing.T) {
 			{1, "alice"},
 			{2, "bob"},
 		}
-		source := newMockIterator(tuples)
+		source := &sliceIterator{tuples: tuples, pos: -1}
 		buffered := NewBufferedIterator(source)
 
 		// First iteration - consume partially
@@ -68,7 +68,7 @@ func TestBufferedIterator(t *testing.T) {
 			{2, "bob"},
 			{3, "charlie"},
 		}
-		source := newMockIterator(tuples)
+		source := &sliceIterator{tuples: tuples, pos: -1}
 		buffered := NewBufferedIterator(source)
 
 		// First full iteration
@@ -102,7 +102,7 @@ func TestBufferedIterator(t *testing.T) {
 			{3, "charlie"},
 			{4, "diana"},
 		}
-		source := newMockIterator(tuples)
+		source := &sliceIterator{tuples: tuples, pos: -1}
 		buffered := NewBufferedIterator(source)
 
 		// Size should consume the source if needed
@@ -126,7 +126,7 @@ func TestBufferedIterator(t *testing.T) {
 			{2, "bob"},
 			{3, "charlie"},
 		}
-		source := newMockIterator(tuples)
+		source := &sliceIterator{tuples: tuples, pos: -1}
 		buffered := NewBufferedIterator(source)
 
 		// Consume some from original
@@ -154,7 +154,7 @@ func TestBufferedIterator(t *testing.T) {
 	})
 
 	t.Run("EmptySource", func(t *testing.T) {
-		source := newMockIterator([]Tuple{})
+		source := &sliceIterator{tuples: []Tuple{}, pos: -1}
 		buffered := NewBufferedIterator(source)
 
 		assert.Equal(t, 0, buffered.Size())
@@ -171,7 +171,7 @@ func TestBufferedIterator(t *testing.T) {
 			{2, "bob"},
 			{3, "charlie"},
 		}
-		source := newMockIterator(tuples)
+		source := &sliceIterator{tuples: tuples, pos: -1}
 		buffered := NewBufferedIterator(source)
 
 		// Consume one tuple
@@ -233,7 +233,7 @@ func TestStreamingRelationWithBuffering(t *testing.T) {
 		}
 		symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 
-		source := newMockIterator(tuples)
+		source := &sliceIterator{tuples: tuples, pos: -1}
 		rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 		// Call Materialize() to enable multiple iterations

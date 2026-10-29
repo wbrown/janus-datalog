@@ -100,7 +100,7 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 	// mode on a composed StreamingRelation — the two real relation kinds.
 	var current Relation
 	if opts.EnableTrueStreaming {
-		current = NewStreamingRelationWithOptions(symbols, newMockIterator(tuples), opts)
+		current = NewStreamingRelationWithOptions(symbols, &sliceIterator{tuples: tuples, pos: -1}, opts)
 	} else {
 		current = NewMaterializedRelationWithOptions(symbols, tuples, opts)
 	}
@@ -137,7 +137,7 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 					joinTuples = append(joinTuples, Tuple{i, fmt.Sprintf("city%d", i)})
 				}
 			}
-			joinIter := newMockIterator(joinTuples)
+			joinIter := &sliceIterator{tuples: joinTuples, pos: -1}
 			joinRel := NewStreamingRelation([]query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?city")}, joinIter)
 			current = HashJoin(current, joinRel, []query.Symbol{datalog.NewSymbol("?id")})
 		}
@@ -206,7 +206,7 @@ func benchmarkScenarioWithOpts(b *testing.B, size int, filterRatio float64, opts
 	// mode on a composed StreamingRelation — the two real relation kinds.
 	var rel Relation
 	if opts.EnableTrueStreaming {
-		rel = NewStreamingRelationWithOptions(symbols, newMockIterator(tuples), opts)
+		rel = NewStreamingRelationWithOptions(symbols, &sliceIterator{tuples: tuples, pos: -1}, opts)
 	} else {
 		rel = NewMaterializedRelationWithOptions(symbols, tuples, opts)
 	}

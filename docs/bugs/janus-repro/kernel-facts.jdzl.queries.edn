@@ -1,0 +1,30 @@
+;; the rule set, given as the queries' % input
+[
+ [(calls ?c ?k) [?c :cell/callee ?k]]
+ [(calls ?c ?k) [?d :dispatch/cell ?c] [?d :dispatch/candidate ?k]]
+ [(reach ?c) [?s :seg/entry ?w] [?w :word/entry ?c]]
+ [(reach ?n) (reach ?c) [?c :cell/next ?n]]
+ [(reach ?e) (reach ?c) (calls ?c ?k) [?k :word/entry ?e]]
+ [(vector ?m) [?r :relies/mem ?m]]
+ [(open ?c ?m) (vector ?m) [?c :cell/kind ?kind]
+  (not-join [?c ?m] [?s :store-site/cell ?c] [?s :store-site/mem ?m])]
+ [(plain ?c) [?c :cell/kind ?kind] (not-join [?c] [?c :cell/callee ?k] [?k :word/entry ?e])]
+ [(inner ?c ?k) [?c :cell/callee ?k] [?k :word/entry ?e]]
+ [(through ?c ?m) (open ?c ?m) (plain ?c)]
+ [(through ?c ?m) (open ?c ?m) (inner ?c ?k) (passes ?k ?m)]
+ [(clear ?m ?k ?e) (vector ?m) [?k :word/entry ?e]]
+ [(clear ?m ?k ?n) (clear ?m ?k ?c) [?c :cell/next ?n] (through ?c ?m)]
+ [(passes ?k ?m) (clear ?m ?k ?x) [?x :cell/ends true]]
+ [(unfilled ?m ?c) (vector ?m) [?s :seg/entry ?w] [?w :word/entry ?c]]
+ [(unfilled ?m ?n) (unfilled ?m ?c) [?c :cell/next ?n] (through ?c ?m)]
+ [(unfilled ?m ?e) (unfilled ?m ?c) (calls ?c ?k) [?k :word/entry ?e]]
+]
+
+;; the jumps reached from the entry
+[:find ?r :in $ % :where [?r :relies/cell ?c] (reach ?c)]
+
+;; the jumps reached with the vector unfilled
+[:find ?r :in $ % :where [?r :relies/cell ?c] [?r :relies/mem ?m] (unfilled ?m ?c)]
+
+;; the cells reached from the entry
+[:find (count ?c) :in $ % :where (reach ?c)]

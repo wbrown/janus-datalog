@@ -18,7 +18,6 @@ type hashJoinIterator struct {
 	buildIndex  *JoinIndex
 	probeIt     Iterator
 	buildErr    error // deferred error captured from the (eagerly consumed) build relation
-	seen        *TupleKeyMap
 	buildIsLeft bool
 	// probeNeedsCopy is true when the probe relation's iterator reuses its
 	// tuple workspace (RequiresCopy()); only then must currentProbeTuple be
@@ -71,20 +70,16 @@ func (it *hashJoinIterator) Next() bool {
 				joined = combineTuplesIndexed(it.currentProbeTuple, buildTuple, it.rightNonJoinIndices, it.resultWidth)
 			}
 
-			// A nil seen map means a derived candidate key already proves every
-			// output tuple unique. Otherwise restore set semantics explicitly.
-			if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
-				// combineTuplesIndexed returns a fresh slice on every call and
-				// nothing mutates it, so no copy is needed here and this iterator
-				// answers RequiresCopy false: a consumer may retain the tuple.
-				it.currentJoined = joined // Store for Tuple() to return
-				if it.metrics != nil {
-					it.metrics.resultCount++
-				}
-				return true
+			// Every combined tuple is one the join answers: the join of two
+			// sets is a set (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
+			// combineTuplesIndexed returns a fresh slice on every call and
+			// nothing mutates it, so no copy is needed here and this iterator
+			// answers RequiresCopy false: a consumer may retain the tuple.
+			it.currentJoined = joined // Store for Tuple() to return
+			if it.metrics != nil {
+				it.metrics.resultCount++
 			}
-			// Duplicate, continue to next match
-			continue
+			return true
 		}
 
 		// Need next probe tuple
@@ -450,22 +445,10 @@ func HashJoinWithOptions(
 	// Check if streaming mode is enabled
 	if opts.EnableStreamingJoins {
 		// Return streaming relation with lazy evaluation
-		var resultSeen *TupleKeyMap
-		if len(resultProperties.Keys) == 0 {
-			// The build tuples are in hand and size the map, the probe side
-			// when its size is known and smaller; the map grows past either.
-			expectedResults := buildCount
-			if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
-				expectedResults = probeSize
-			}
-			resultSeen = NewTupleKeyMapWithCapacity(expectedResults)
-		}
-
 		iter := &hashJoinIterator{
 			buildIndex:          buildIndex,
 			probeIt:             probeRel.Iterator(),
 			buildErr:            buildErr,
-			seen:                resultSeen,
 			buildIsLeft:         buildIsLeft,
 			probeNeedsCopy:      probeRel.RequiresCopy(),
 			rightNonJoinIndices: rightNonJoinIndices,
@@ -484,17 +467,11 @@ func HashJoinWithOptions(
 	}
 
 	// Materialized mode
-	// The build tuples are in hand and size the seen map and the results, the
-	// probe side when its size is known and smaller; both grow past either
-	// under fanout.
+	// The build tuples are in hand and size the results, the probe side when
+	// its size is known and smaller; the slice grows past either under fanout.
 	expectedResults := buildCount
 	if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
 		expectedResults = probeSize
-	}
-	// Use efficient TupleKeyMap for deduplication
-	var seen *TupleKeyMap
-	if len(resultProperties.Keys) == 0 {
-		seen = NewTupleKeyMapWithCapacity(expectedResults)
 	}
 	results := make([]Tuple, 0, expectedResults)
 
@@ -536,11 +513,9 @@ func HashJoinWithOptions(
 				joined = combineTuplesIndexed(probeTuple, buildTuple, rightNonJoinIndices, resultWidth)
 			}
 
-			// A nil seen map means the result candidate key proves this
-			// joined tuple cannot duplicate any prior output.
-			if seen == nil || !seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
-				results = append(results, joined)
-			}
+			// Every combined tuple is one the join answers: the join of two
+			// sets is a set (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
+			results = append(results, joined)
 		}
 	}
 	probeErr := probeIt.Error()
@@ -559,9 +534,9 @@ func HashJoinWithOptions(
 		})
 	}
 
-	// We already deduplicated with 'seen', no need to do it again.
-	// Carry any deferred build/probe error onto the result so a failed scan
-	// isn't laundered into an empty/partial join.
+	// The results are a set (T1), constructed as one. Carry any deferred
+	// build/probe error onto the result so a failed scan isn't laundered into
+	// an empty/partial join.
 	result := newMaterializedRelationFromSet(outputSyms, results, opts, resultProperties)
 	if buildErr != nil {
 		result.err = buildErr
@@ -632,7 +607,9 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		lerr = cerr
 	}
 
-	res := materializeFilteredLeft(left, results, opts)
+	// A selection of a set is a set
+	// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T5).
+	res := newMaterializedRelationFromSet(left.Symbols(), results, opts, left.Properties())
 	res.err = lerr
 	return res
 }
@@ -699,21 +676,11 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		lerr = cerr
 	}
 
-	res := materializeFilteredLeft(left, results, opts)
+	// A selection of a set is a set
+	// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T5).
+	res := newMaterializedRelationFromSet(left.Symbols(), results, opts, left.Properties())
 	res.err = lerr
 	return res
-}
-
-func materializeFilteredLeft(
-	left Relation,
-	tuples []Tuple,
-	opts ExecutorOptions,
-) *MaterializedRelation {
-	properties := left.Properties()
-	if len(properties.Keys) > 0 {
-		return newMaterializedRelationFromSet(left.Symbols(), tuples, opts, properties)
-	}
-	return NewMaterializedRelationWithProperties(left.Symbols(), tuples, opts, properties)
 }
 
 // Join utility functions

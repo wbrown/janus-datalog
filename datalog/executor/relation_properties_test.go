@@ -321,8 +321,6 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 		"the candidate-key proof must hold in the grouped build tuples")
 	require.Len(t, joinIterator.buildIndex.Probe(Tuple{int64(1)}), 1,
 		"a unique build key groups exactly one tuple")
-	require.Nil(t, joinIterator.seen,
-		"a proven result key makes internal full-tuple join deduplication redundant")
 
 	projected, err := joined.Project([]query.Symbol{id, leftValue})
 	require.NoError(t, err)
@@ -389,8 +387,6 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 		"a fanout key must be visible in the grouped build tuples")
 	require.Len(t, joinIterator.buildIndex.Probe(Tuple{int64(1)}), 2,
 		"a non-unique build key must retain every fanout tuple")
-	require.NotNil(t, joinIterator.seen,
-		"an unkeyed join must retain internal full-tuple deduplication")
 
 	projected, err := joined.Project([]query.Symbol{id, leftValue})
 	require.NoError(t, err)
@@ -442,6 +438,49 @@ func TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey(t *testing.T) {
 		"a join against a unique left side cannot duplicate keyed right tuples")
 }
 
+// A join's result carries the composite of each left key with each right
+// key: two result tuples that agree on a left key are one left tuple, and
+// on a right key one right tuple, so they are one pair
+// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T3).
+func TestJoinPropertiesDeriveTheCompositeOfEachSidesKeys(t *testing.T) {
+	p := datalog.NewSymbol("?p")
+	q := datalog.NewSymbol("?q")
+	r := datalog.NewSymbol("?r")
+	join := []query.Symbol{p}
+
+	require.Equal(t,
+		RelationProperties{Keys: [][]query.Symbol{{p, q, r}}},
+		joinProperties(
+			RelationProperties{Keys: [][]query.Symbol{{p, q}}},
+			RelationProperties{Keys: [][]query.Symbol{{p, r}}},
+			join),
+		"neither key lies within the join symbols, so the composite is the only key")
+
+	require.Equal(t,
+		RelationProperties{Keys: [][]query.Symbol{{p, r}}},
+		joinProperties(
+			RelationProperties{Keys: [][]query.Symbol{{p}}},
+			RelationProperties{Keys: [][]query.Symbol{{p, r}}},
+			join),
+		"a left key within the join symbols keeps the right keys, which the composite equals")
+
+	require.Equal(t,
+		RelationProperties{},
+		joinProperties(
+			RelationProperties{},
+			RelationProperties{Keys: [][]query.Symbol{{p, r}}},
+			join),
+		"a side with no key contributes no composite")
+
+	require.Equal(t,
+		RelationProperties{Keys: [][]query.Symbol{{q, p, r}}},
+		joinProperties(
+			RelationProperties{Keys: [][]query.Symbol{{q}, {p, q}}},
+			RelationProperties{Keys: [][]query.Symbol{{p, r}}},
+			join),
+		"two composites over one symbol set are one key")
+}
+
 func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
 	id := datalog.NewSymbol("?id")
 	leftValue := datalog.NewSymbol("?left")
@@ -475,8 +514,6 @@ func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
 	symmetricJoin := SymmetricHashJoinWithOptions(
 		streamingLeft, streamingRight, []query.Symbol{id}, opts)
 	require.Equal(t, properties, symmetricJoin.Properties())
-	require.Nil(t, symmetricJoin.(*StreamingRelation).iterator.(*symmetricHashJoinIterator).seen,
-		"a proven symmetric-join result key makes internal deduplication redundant")
 }
 
 func TestSemiAndAntiJoinsPreserveLeftProperties(t *testing.T) {
@@ -512,24 +549,6 @@ func TestSemiAndAntiJoinsPreserveLeftProperties(t *testing.T) {
 	antiTuples, err := CollectTuples(anti, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(2), "two"}}, antiTuples)
-}
-
-func TestSemiAndAntiJoinsDeduplicateUnkeyedLeftInput(t *testing.T) {
-	id := datalog.NewSymbol("?id")
-	// Deliberately constructs a duplicate-carrying relation — an invariant
-	// violation no constructor admits — to pin that semi/anti-joins
-	// deduplicate unkeyed input rather than trusting it.
-	left := &MaterializedRelation{
-		symbols: []query.Symbol{id},
-		tuples:  []Tuple{{int64(1)}, {int64(1)}, {int64(2)}, {int64(2)}},
-	}
-	right := NewMaterializedRelation(
-		[]query.Symbol{id},
-		[]Tuple{{int64(1)}},
-	)
-
-	require.Equal(t, 1, SemiJoin(left, right, []query.Symbol{id}).Size())
-	require.Equal(t, 1, AntiJoin(left, right, []query.Symbol{id}).Size())
 }
 
 func TestExpandingExpressionDoesNotPreserveOuterKey(t *testing.T) {
