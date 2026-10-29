@@ -279,6 +279,47 @@ func TestChooseJoinStrategy(t *testing.T) {
 	})
 }
 
+// TestSymmetricHashJoinNextAdvancesAndTupleAnswersTheCurrent pins the
+// Iterator contract on the symmetric join's iterator: Next advances to the
+// next joined tuple and Tuple answers the current one, so a reader that
+// pulls with Next alone, as a count does, reaches the end.
+func TestSymmetricHashJoinNextAdvancesAndTupleAnswersTheCurrent(t *testing.T) {
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?quire"), datalog.NewSymbol("?leaves")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?quire"), datalog.NewSymbol("?press")}
+	left := NewStreamingRelation(leftSymbols, &sliceIterator{tuples: []Tuple{
+		{int64(1), int64(8)}, {int64(2), int64(12)}, {int64(3), int64(16)},
+	}, pos: -1})
+	right := NewStreamingRelation(rightSymbols, &sliceIterator{tuples: []Tuple{
+		{int64(1), "north"}, {int64(2), "south"}, {int64(3), "east"},
+	}, pos: -1})
+	joinSymbols := []query.Symbol{datalog.NewSymbol("?quire")}
+
+	it := SymmetricHashJoin(left, right, joinSymbols).Iterator()
+	defer it.Close()
+
+	if !it.Next() {
+		t.Fatal("the join of three matching pairs answers a first tuple")
+	}
+	first := it.Tuple()
+	if again := it.Tuple(); !tupleValuesEqual(first, again) {
+		t.Fatalf("Tuple answers the current tuple until the next Next: got %v then %v", first, again)
+	}
+	if !it.Next() {
+		t.Fatal("the join of three matching pairs answers a second tuple")
+	}
+	second := it.Tuple()
+	if tupleValuesEqual(first, second) {
+		t.Fatalf("Next advances to the next joined tuple: got %v twice", first)
+	}
+	pulled := 2
+	for it.Next() {
+		pulled++
+	}
+	if pulled != 3 {
+		t.Fatalf("a reader pulling with Next alone reaches the end: pulled %d of 3 pairs", pulled)
+	}
+}
+
 // BenchmarkSymmetricHashJoin compares symmetric vs standard hash join
 func BenchmarkSymmetricHashJoin(b *testing.B) {
 	// Create larger test data

@@ -521,10 +521,10 @@ func ValuesEqual(a, b interface{}) bool {
 	// Comparable primitives. The == fast path is correct (and allocation-free)
 	// whenever the two dynamic types match — the dominant case, and the only one
 	// reached after boundary normalization makes user integers int64. Only when
-	// == is false do we pay to unify integer width: a non-canonical width
-	// (int/int8/int16/int32) compares by magnitude against any other integer
-	// width, while int-vs-float stays strict (asInt64 reports false for float64),
-	// so mixed-numeric values are never conflated.
+	// == is false do we pay to unify integer width: a non-canonical signed
+	// width (int/int8/int16/int32) compares by magnitude against the other
+	// signed widths, while uint64 and float64 stay strict (asInt64 reports
+	// false for both), so mixed-numeric values are never conflated.
 	switch a.(type) {
 	case int64, float64, string, bool, uint64, int, int8, int16, int32:
 		if a == b {

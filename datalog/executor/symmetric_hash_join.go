@@ -128,9 +128,10 @@ type symmetricHashJoinIterator struct {
 	resultPos                 int
 }
 
-// Next advances to the next result tuple
+// Next advances to the next result tuple: the next one queued, or the
+// first of the next batch of matches the two sides yield.
 func (it *symmetricHashJoinIterator) Next() bool {
-	// If we have queued results, return them first
+	it.resultPos++
 	if it.resultPos < len(it.resultQueue) {
 		return true
 	}
@@ -265,12 +266,7 @@ func (it *symmetricHashJoinIterator) combineTuples(leftTuple, rightTuple Tuple, 
 
 // Tuple returns the current result tuple
 func (it *symmetricHashJoinIterator) Tuple() Tuple {
-	if it.resultPos < len(it.resultQueue) {
-		tuple := it.resultQueue[it.resultPos]
-		it.resultPos++
-		return tuple
-	}
-	return nil
+	return it.resultQueue[it.resultPos]
 }
 
 // RequiresCopy is false: every joined tuple is a fresh slice combineTuples
