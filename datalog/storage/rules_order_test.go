@@ -48,6 +48,27 @@ func TestRules_ABoundInvocationBeforeAScanIsRewrittenForItsBindingAlone(t *testi
 	}
 }
 
+// A top-level invocation bound at one position beside a pattern with a value
+// constant providing its other position is rewritten for both positions: the
+// pattern has visible selectivity and is planned first, and the top level
+// binds an invocation's position from every group in hand
+// (REWRITE_ORDER_PROOF.md T5, F5), where a rule body's rewrite binds from
+// the seed component alone
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md §7).
+func TestRules_ATopLevelInvocationBesideAValueConstantPatternIsRewrittenForBothPositions(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			adorned := &rewriteAdornments{}
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})
+			g := writeGraph(t, d, chain(10))
+			rel, err := d.Query(`[:find ?b :in $ % ?start :where [?b :type :node] (reach ?start ?b)]`, mustRuleSet(t, closureRules), nodeID("n1"))
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{"n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "n10"}, g.tuples(t, rel))
+			require.Equal(t, [][]bool{{true, true}}, adorned.made(), "one rewrite, for the start and the nodes in hand")
+		})
+	}
+}
+
 // A rule body written with its recursive invocation before the pattern that
 // binds the invocation's argument is rewritten in the planner's order, so a
 // bound invocation derives, on every backend, the chain its start reaches and

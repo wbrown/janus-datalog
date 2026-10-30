@@ -34,16 +34,21 @@ type Magic struct {
 // data inputs, each planned through PlanScope under the set: a top-level
 // invocation, or one inside an or or or-join form, is adorned by the
 // constants it holds and the variables the head's bound positions and the
-// planned clauses before it provide, and its magic rule derives those
-// bindings from the guard and those clauses. An invocation under a
-// non-monotone form, a not, not-join, or-default or or-default-join form or
-// a subquery whose inner query aggregates, is adorned by the variables the
-// head's bound positions and the planned clauses before the first that
-// invokes a predicate of the rule's own stratum provide, and its magic rule
-// reads those clauses: a clause after that invocation is adorned under what
-// it binds, so a magic rule reading it would depend on the adorned predicate
-// of the stratum, which depends through the form on the predicate inside
-// it, a recursion through a non-monotone form. A magic rule reads no
+// planned clauses before it that shared variables connect to them, or to a
+// pattern with an entity constant, provide, and at a position the predicate
+// requires by a variable any planned clause before it provides, and its
+// magic rule derives those bindings from the guard, those clauses and the
+// extent chains of the required positions
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md). An
+// invocation under a non-monotone form, a not, not-join, or-default or
+// or-default-join form or a subquery whose inner query aggregates, is
+// adorned the same way by the head's bound positions and the planned
+// clauses before the first that invokes a predicate of the rule's own
+// stratum, and its magic rule reads those clauses: a clause after that
+// invocation is adorned under what it binds, so a magic rule reading it
+// would depend on the adorned predicate of the stratum, which depends
+// through the form on the predicate inside it, a recursion through a
+// non-monotone form. A magic rule reads no
 // negation and no aggregating subquery, at any depth of what it reads, so
 // no magic rule depends non-monotonically on any predicate
 // (magicRuleReads). An invocation none of that binds keeps its name and its
@@ -165,31 +170,41 @@ type nonMonotoneSite struct {
 
 // scopeLevel is one scope on the path from a rule's body to an invocation, a
 // form's branch or a subquery's inner query, as a magic rule reads it: a
-// subquery of its own whose :in is in and whose call passes inputs, over the
-// clauses the walk has passed at this level, since the level's variables are
-// its own and never unify with the enclosing scope's. For a branch, in and
-// inputs carry the sources, the rule set and the given symbols the enclosing
-// scope binds, and given holds the symbols the branch is given
-// (GivenSymbols), each of which stands for the enclosing scope's symbol of
-// the same name; a header symbol the branch is not given, a fallback's
-// output, is the branch's own. For a subquery, in and inputs are the call's
-// own, names is the call's substitution, under which a bound :in symbol
-// stands for the argument's variable, and constants holds the constant the
-// call passes at an :in symbol, which a magic rule grounds as it grounds a
-// constant argument of the invocation itself.
+// subquery of its own over the clauses the walk has passed at this level,
+// since the level's variables are its own and never unify with the enclosing
+// scope's. roots is the level's seed, the symbols it is given that the
+// enclosing scope's bound set holds, and extentRoots the symbols it is given
+// that the enclosing scope's extent set holds; which of them a read passes
+// is decided at the invocation from the clauses the read carries
+// (adornInvocation, passes). For a branch, given holds the symbols the
+// branch is given (GivenSymbols), each of which stands for the enclosing
+// scope's symbol of the same name; a header symbol the branch is not given,
+// a fallback's output, is the branch's own. For a subquery, call is the call,
+// whose :in and arguments a read restricts to the symbols it passes
+// (passedInputs), names is the call's substitution, under which a bound :in
+// symbol stands for the argument's variable, and constants holds the
+// constant the call passes at an :in symbol, which a magic rule grounds as
+// it grounds a constant argument of the invocation itself.
 type scopeLevel struct {
-	in        []query.InputSpec
-	inputs    []query.PatternElement
-	clauses   []query.Clause
-	given     []query.Symbol
-	names     query.Substitution
-	constants map[query.Symbol]query.PatternElement
+	clauses     []query.Clause
+	roots       map[query.Symbol]bool
+	extentRoots map[query.Symbol]bool
+	given       []query.Symbol
+	call        *query.SubqueryPattern
+	names       query.Substitution
+	constants   map[query.Symbol]query.PatternElement
 }
 
-// passing is what passes into an invocation: the variables bound before it,
-// the body's clauses a magic rule reads to derive them, the guard first, and
-// the scopes entered below the body on the path to the invocation, outermost
-// first, each with the clauses the walk has passed inside it.
+// passing is what passes into an invocation: the bound set, the variables
+// of the seed and of the clauses before it that shared variables connect to
+// the seed or to a pattern with an entity constant; the extent set, the
+// symbols the other clauses before it provide and the extent roots the scope
+// is given, less the bound set
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md §1); head,
+// the body's seed, its bound head positions; the body's clauses a magic rule
+// may read, the guard first; and the scopes entered below the body on the
+// path to the invocation, outermost first, each with the clauses the walk
+// has passed inside it. bound and extent are the innermost scope's.
 // adornedRule is the adorned rule the walk is rewriting, the rule a
 // refusal names a site under. nonMonotone holds when the passing enters a
 // non-monotone form, a negation, a fallback form or an aggregating inner
@@ -197,6 +212,8 @@ type scopeLevel struct {
 // requires is left unadorned.
 type passing struct {
 	bound       map[query.Symbol]bool
+	extent      map[query.Symbol]bool
+	head        map[query.Symbol]bool
 	prefix      []query.Clause
 	levels      []scopeLevel
 	adornedRule query.Symbol
@@ -204,23 +221,24 @@ type passing struct {
 }
 
 // within is what passes into a header form's branches: of the symbols the
-// branches are given (GivenSymbols), those the enclosing scope binds, over
-// the same clauses, since inside the form only the given symbols are the
-// enclosing scope's, with the branch entered as a scope a magic rule reads
-// through a subquery over those variables.
+// branches are given (GivenSymbols), those in the enclosing scope's bound
+// set seed the branch and those in its extent set root the branch's extent
+// set, over the same clauses, since inside the form only the given symbols
+// are the enclosing scope's, with the branch entered as a scope a magic rule
+// reads through a subquery over the given symbols its read carries.
 func (p passing) within(given []query.Symbol) passing {
 	inside := p
 	inside.bound = make(map[query.Symbol]bool, len(given))
-	level := scopeLevel{
-		in:     []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}},
-		inputs: []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Constant{Value: datalog.NewSymbol("%")}},
-		given:  given,
-	}
+	inside.extent = make(map[query.Symbol]bool, len(given))
+	level := scopeLevel{roots: map[query.Symbol]bool{}, extentRoots: map[query.Symbol]bool{}, given: given}
 	for _, sym := range given {
-		if p.bound[sym] {
+		switch {
+		case p.bound[sym]:
 			inside.bound[sym] = true
-			level.in = append(level.in, query.ScalarInput{Symbol: sym})
-			level.inputs = append(level.inputs, query.Variable{Name: sym})
+			level.roots[sym] = true
+		case p.extent[sym]:
+			inside.extent[sym] = true
+			level.extentRoots[sym] = true
 		}
 	}
 	inside.levels = append(append([]scopeLevel(nil), p.levels...), level)
@@ -301,7 +319,7 @@ func (w *magicRewriter) rewritePredicate(name query.Symbol, bound []bool) error 
 		if len(guardArgs) > 0 {
 			prefix = []query.Clause{&query.RuleInvocation{Name: magic, Args: guardArgs}}
 		}
-		into := passing{bound: boundVars, prefix: prefix, adornedRule: adorned}
+		into := passing{bound: boundVars, head: boundVars, prefix: prefix, adornedRule: adorned}
 		body, magicRules, _, err := w.rewriteClauses(rule.Name, planned, into, into, false)
 		if err != nil {
 			return err
@@ -318,27 +336,35 @@ func (w *magicRewriter) rewritePredicate(name query.Symbol, bound []bool) error 
 // that invokes a predicate of the rule's own stratum, negated, which sealed
 // says the walk has already met, and reports whether any clause changed.
 // Each clause is rewritten under what passes into it. A clause a magic rule
-// reads joins the clauses the rule reads, the body's prefix at the body and
-// the innermost scope's clauses below it, an or-default-join as the union of
-// its branches over its header, which binds what the form binds and holds
-// every tuple it yields, and the variables it provides join the bound set
-// for the clauses after it; the clauses a magic rule reads are the guard and
-// those before the one holding the invocation. A clause left out widens the
-// bindings a magic rule derives and loses no tuple, since the adorned rule
-// applies every clause. What passes into an invocation under a non-monotone
-// form stops at the first clause that invokes a predicate of the rule's own
-// stratum, so no magic rule depends through such a form on that stratum's
-// adorned predicate. The bound set is the walk's own copy, so the scopes a
-// caller walks under one passing share nothing of what each binds.
+// may read, one every correlate of which the bound set or the extent set
+// holds, joins the clauses the scope has read, the body's prefix at the body
+// and the innermost scope's clauses below it, an or-default-join as the
+// union of its branches over its header, which binds what the form binds
+// and holds every tuple it yields, and the two sets are recomputed over the
+// clauses read (split): the bound set is the seed and the variables of the
+// clauses shared variables connect to it or to a pattern with an entity
+// constant, in any order, and the extent set is what the other clauses
+// provide. The clauses a magic rule reads are the guard and, of those before
+// the one holding the invocation, the seed-connected ones and the extent
+// chains the invocation needs (adornInvocation). A clause left out widens
+// the bindings a magic rule derives and loses no tuple, since the adorned
+// rule applies every clause. What passes into an invocation under a
+// non-monotone form stops at the first clause that invokes a predicate of
+// the rule's own stratum, so no magic rule depends through such a form on
+// that stratum's adorned predicate. The two sets are the walk's own copies,
+// so the scopes a caller walks under one passing share nothing of what each
+// binds.
 func (w *magicRewriter) rewriteClauses(rule query.Symbol, clauses []query.Clause, before, negated passing, sealed bool) ([]query.Clause, []*query.Rule, bool, error) {
 	out := make([]query.Clause, len(clauses))
 	var magicRules []*query.Rule
 	before.bound = maps.Clone(before.bound)
+	before.extent = maps.Clone(before.extent)
 	changed := false
 	for i, clause := range clauses {
 		if !sealed && w.invokesStratumOf(rule, clause) {
 			negated = before
 			negated.bound = maps.Clone(before.bound)
+			negated.extent = maps.Clone(before.extent)
 			sealed = true
 		}
 		rewritten, rules, err := w.rewriteClause(rule, clause, before, negated, sealed)
@@ -350,14 +376,12 @@ func (w *magicRewriter) rewriteClauses(rule query.Symbol, clauses []query.Clause
 			changed = true
 		}
 		magicRules = append(magicRules, rules...)
-		read, ok := w.magicRuleReads(rewritten, before.bound)
+		read, ok := w.magicRuleReads(rewritten, before.available())
 		if !ok {
 			continue
 		}
 		before = before.reading(read)
-		for _, sym := range query.ScopeOf(read, w.rs).Provides {
-			before.bound[sym] = true
-		}
+		before.bound, before.extent = w.split(before)
 		if !sealed {
 			negated = before
 		}
@@ -379,6 +403,203 @@ func (p passing) reading(clause query.Clause) passing {
 	}
 	p.prefix = append(p.prefix[:len(p.prefix):len(p.prefix)], clause)
 	return p
+}
+
+// available is the symbols the innermost scope holds before the current
+// clause, the bound set and the extent set together: a clause a magic rule
+// may read correlates on these alone.
+func (p passing) available() map[query.Symbol]bool {
+	all := make(map[query.Symbol]bool, len(p.bound)+len(p.extent))
+	for sym := range p.bound {
+		all[sym] = true
+	}
+	for sym := range p.extent {
+		all[sym] = true
+	}
+	return all
+}
+
+// scope is the innermost scope the passing stands in: its seed, its extent
+// roots and the clauses a magic rule may read in it so far, the last
+// level's below the body and the body's own above it.
+func (p passing) scope() (roots, extentRoots map[query.Symbol]bool, clauses []query.Clause) {
+	if n := len(p.levels); n > 0 {
+		level := p.levels[n-1]
+		return level.roots, level.extentRoots, level.clauses
+	}
+	return p.head, nil, p.prefix
+}
+
+// split is the bound set and the extent set of the passing's innermost scope
+// over the clauses it has read: the variables of the seed's connected
+// component (seedOf), and the extent roots and the provides of the other
+// clauses less them
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md §1).
+func (w *magicRewriter) split(p passing) (bound, extent map[query.Symbol]bool) {
+	roots, extentRoots, clauses := p.scope()
+	bound = w.seedOf(roots, clauses)
+	extent = map[query.Symbol]bool{}
+	for sym := range extentRoots {
+		if !bound[sym] {
+			extent[sym] = true
+		}
+	}
+	for _, clause := range clauses {
+		if w.seedConnected(clause, bound) {
+			continue
+		}
+		for _, sym := range query.ScopeOf(clause, w.rs).Provides {
+			if !bound[sym] {
+				extent[sym] = true
+			}
+		}
+	}
+	return bound, extent
+}
+
+// seedOf is the variables of a scope's seed component over the clauses
+// read: the roots, and the variables of every clause shared variables
+// connect to them or to a data pattern with an entity constant, in any
+// order.
+func (w *magicRewriter) seedOf(roots map[query.Symbol]bool, clauses []query.Clause) map[query.Symbol]bool {
+	seed := make(map[query.Symbol]bool, len(roots))
+	for sym := range roots {
+		seed[sym] = true
+	}
+	for grown := true; grown; {
+		grown = false
+		for _, clause := range clauses {
+			if !w.seedConnected(clause, seed) {
+				continue
+			}
+			for _, sym := range query.FreeVariables([]query.Clause{clause}, w.rs) {
+				if !sym.IsSource() && !seed[sym] {
+					seed[sym] = true
+					grown = true
+				}
+			}
+		}
+	}
+	return seed
+}
+
+// seedConnected reports whether a clause lies in the seed component whose
+// variables seed holds: it is a data pattern with a constant at the entity
+// position, which names one entity, or a variable of it is in seed.
+func (w *magicRewriter) seedConnected(clause query.Clause, seed map[query.Symbol]bool) bool {
+	if entityConstant(clause) {
+		return true
+	}
+	for _, sym := range query.FreeVariables([]query.Clause{clause}, w.rs) {
+		if seed[sym] {
+			return true
+		}
+	}
+	return false
+}
+
+// entityConstant reports whether a clause is a data pattern with a constant
+// at the entity position.
+func entityConstant(clause query.Clause) bool {
+	pattern, ok := clause.(*query.DataPattern)
+	if !ok || len(pattern.Elements) == 0 {
+		return false
+	}
+	switch pattern.Elements[0].(type) {
+	case query.Constant, query.VectorConstant:
+		return true
+	}
+	return false
+}
+
+// levelReads is the clauses a magic rule reads at a scope, in the walk's
+// order, and the extent roots the read passes. The clauses are the seed
+// component's and, for the symbols needed, their extent chains: the
+// connected components, among the other clauses, that a needed symbol
+// touches. The roots passed are the extent roots a clause read mentions and
+// the needed symbols that are extent roots themselves; a read correlated on
+// an extent root nothing it carries mentions would run once per value of
+// it, the product inside the magic rule.
+func (w *magicRewriter) levelReads(roots, extentRoots map[query.Symbol]bool, clauses []query.Clause, needed map[query.Symbol]bool) ([]query.Clause, map[query.Symbol]bool) {
+	seed := w.seedOf(roots, clauses)
+	reached := make(map[query.Symbol]bool, len(needed))
+	for sym := range needed {
+		reached[sym] = true
+	}
+	chained := make([]bool, len(clauses))
+	for grown := true; grown; {
+		grown = false
+		for i, clause := range clauses {
+			if chained[i] || w.seedConnected(clause, seed) {
+				continue
+			}
+			vars := query.FreeVariables([]query.Clause{clause}, w.rs)
+			touches := false
+			for _, sym := range vars {
+				if reached[sym] {
+					touches = true
+					break
+				}
+			}
+			if !touches {
+				continue
+			}
+			chained[i] = true
+			grown = true
+			for _, sym := range vars {
+				reached[sym] = true
+			}
+		}
+	}
+	passed := map[query.Symbol]bool{}
+	for sym := range needed {
+		if extentRoots[sym] {
+			passed[sym] = true
+		}
+	}
+	var read []query.Clause
+	for i, clause := range clauses {
+		if !chained[i] && !w.seedConnected(clause, seed) {
+			continue
+		}
+		read = append(read, clause)
+		for _, sym := range query.FreeVariables([]query.Clause{clause}, w.rs) {
+			if extentRoots[sym] {
+				passed[sym] = true
+			}
+		}
+	}
+	return read, passed
+}
+
+// passes is a read's :in and arguments at the level over the symbols passed,
+// the level's seed and the extent roots the read carries: for a call, its
+// :in and arguments restricted to them (passedInputs); for a branch, the
+// sources, the rule set and the given symbols among them, in the given
+// order.
+func (l scopeLevel) passes(passed map[query.Symbol]bool) ([]query.InputSpec, []query.PatternElement) {
+	if l.call != nil {
+		return passedInputs(l.call, passed)
+	}
+	in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}}
+	inputs := []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Constant{Value: datalog.NewSymbol("%")}}
+	for _, sym := range l.given {
+		if passed[sym] {
+			in = append(in, query.ScalarInput{Symbol: sym})
+			inputs = append(inputs, query.Variable{Name: sym})
+		}
+	}
+	return in, inputs
+}
+
+// outside is the enclosing scope's name for a symbol the level is given:
+// the argument's variable for a call's :in symbol, the symbol itself for a
+// branch's given symbol.
+func (l scopeLevel) outside(sym query.Symbol) query.Symbol {
+	if name, named := l.names.Of(sym); named {
+		return name
+	}
+	return sym
 }
 
 // invokesStratumOf reports whether the clause invokes, at any depth, a
@@ -628,17 +849,18 @@ func (w *magicRewriter) rewriteSubquery(rule query.Symbol, c *query.SubqueryPatt
 }
 
 // enteringSubquery is what passes into a subquery's inner query: the inner
-// :in symbols whose arguments are constants or variables the passing binds,
-// over the same body clauses, with the call pushed as a scope whose :in and
-// arguments hold the sources, the rule set and those inputs alone
-// (passedInputs), so a read of the scope passes nothing the passing leaves
-// unbound, whose names substitute each bound :in symbol by its argument's
-// variable and whose constants hold the constant each :in symbol stands
-// for.
+// :in symbols whose arguments are constants or variables in the enclosing
+// bound set seed it, and those whose arguments are variables in the
+// enclosing extent set root its extent set, over the same body clauses, with
+// the call pushed as a scope, whose names substitute each such :in symbol by
+// its argument's variable and whose constants hold the constant each :in
+// symbol stands for; a read of the scope passes, of the call's inputs, the
+// seed and the extent roots the read carries (passes).
 func (p passing) enteringSubquery(c *query.SubqueryPattern) (passing, error) {
 	inside := p
 	inside.bound = map[query.Symbol]bool{}
-	level := scopeLevel{constants: map[query.Symbol]query.PatternElement{}}
+	inside.extent = map[query.Symbol]bool{}
+	level := scopeLevel{roots: map[query.Symbol]bool{}, extentRoots: map[query.Symbol]bool{}, call: c, constants: map[query.Symbol]query.PatternElement{}}
 	var from, to []query.Symbol
 	for position, sym := range query.InputSymbols(c.Query.In) {
 		if sym == nil {
@@ -646,17 +868,23 @@ func (p passing) enteringSubquery(c *query.SubqueryPattern) (passing, error) {
 		}
 		switch arg := c.Inputs[position].(type) {
 		case query.Variable:
-			if !p.bound[arg.Name] {
+			switch {
+			case p.bound[arg.Name]:
+				inside.bound[sym] = true
+				level.roots[sym] = true
+			case p.extent[arg.Name]:
+				inside.extent[sym] = true
+				level.extentRoots[sym] = true
+			default:
 				continue
 			}
 			from, to = append(from, sym), append(to, arg.Name)
-			inside.bound[sym] = true
 		case query.Constant, query.VectorConstant:
 			level.constants[sym] = arg
 			inside.bound[sym] = true
+			level.roots[sym] = true
 		}
 	}
-	level.in, level.inputs = passedInputs(c, inside.bound)
 	names, err := query.SubstitutionOf(from, to)
 	if err != nil {
 		return passing{}, err
@@ -764,44 +992,53 @@ func (w *magicRewriter) excludedSite(in passing, inv *query.RuleInvocation, boun
 
 // adornInvocation adorns one invocation of the named rule under what passes
 // into it: a position is bound when it holds a constant, a variable the
-// bound set holds, or a variable standing for a constant the call passes, a
-// repeated variable at its first position only. A position the predicate
-// requires bound that the adornment leaves free is RequiredBindingError at
-// a positive site. With a required position free under a non-monotone
-// form, or at a site under such a form that a refusal of the set excluded,
-// the invocation stands and its predicate's original rules join the set.
-// With no bound position, the invocation names the predicate adorned all
-// free, with no magic rule, when a rule of the predicate or of one its rules
-// reach invokes a predicate with required positions
-// (RuleSet.ReachesRequired), so that predicate is adorned from the clauses
-// before its invocation and derived in the rewritten set at every level;
-// otherwise the invocation stands and the original rules join the set.
-// Every site under a non-monotone form the walk names adorned, all free or
-// at a bound position, is recorded for a refusal to name (excludedSite).
-// At a bound position the invocation names the adorned predicate, which is
-// queued, and its magic rule derives the bound arguments from the body's
-// prefix and the scopes on the path: a constant through a fresh variable a
-// ground expression binds, named for the magic predicate and the position;
-// a variable bound in the body under its own name; and a variable bound
-// inside a scope through that scope's read, a subquery over the scope's
-// clauses finding the variable under its name there and binding it to the
-// name standing for it one scope out, each read nested inside the next
-// scope's out to the body. A read finds the bound variables the scope's
-// clauses provide, the inner read among them. A bound variable the scope's
-// inputs alone bind has no attribute in the read's result, so it passes
-// through under the name standing for it outside: a symbol the branch is
-// given under the enclosing scope's symbol of its name, a bound :in symbol
-// under its argument's variable, and one standing for a constant the call
-// passes as that constant, grounded at the body. A scope whose clauses
-// provide none of the bound variables contributes no read, since a clause
-// left out widens the magic set and loses no tuple. A scope's local, a
-// fallback's output the branch provides among them, stands for a fresh
-// variable named for the magic predicate and the position, which the reads
-// outside carry up unchanged.
+// bound set holds, a variable the extent set holds at a position the
+// predicate requires, or a variable standing for a constant the call
+// passes, a repeated variable at its first position only
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md T2). A
+// position the predicate requires bound that the adornment leaves free is
+// RequiredBindingError at a positive site. With a required position free
+// under a non-monotone form, or at a site under such a form that a refusal
+// of the set excluded, the invocation stands and its predicate's original
+// rules join the set. With no bound position, the invocation names the
+// predicate adorned all free, with no magic rule, when a rule of the
+// predicate or of one its rules reach invokes a predicate with required
+// positions (RuleSet.ReachesRequired), so that predicate is adorned from
+// the clauses before its invocation and derived in the rewritten set at
+// every level; otherwise the invocation stands and the original rules join
+// the set. Every site under a non-monotone form the walk names adorned, all
+// free or at a bound position, is recorded for a refusal to name
+// (excludedSite). At a bound position the invocation names the adorned
+// predicate, which is queued, and its magic rule derives the bound
+// arguments from the body's clauses and the scopes on the path, each read
+// through levelReads: the scope's seed-connected clauses and the extent
+// chains of the symbols the read needs, a variable bound from the extent
+// set at the innermost scope and the extent roots a read inside passes up
+// under their names outside. A constant is derived through a fresh variable
+// a ground expression binds, named for the magic predicate and the
+// position; a variable bound in the body under its own name; and a variable
+// bound inside a scope through that scope's read, a subquery over the
+// clauses the scope reads finding the variable under its name there and
+// binding it to the name standing for it one scope out, each read nested
+// inside the next scope's out to the body. A read finds the bound variables
+// the clauses it carries provide, the inner read among them, and passes the
+// scope's seed and the extent roots those clauses mention (passes). A bound
+// variable the scope's inputs alone bind has no attribute in the read's
+// result, so it passes through under the name standing for it outside: a
+// symbol the branch is given under the enclosing scope's symbol of its
+// name, a bound :in symbol under its argument's variable, and one standing
+// for a constant the call passes as that constant, grounded at the body. A
+// scope whose read carries no clause providing a bound variable contributes
+// no read, since a clause left out widens the magic set and loses no tuple.
+// A scope's local, a fallback's output the branch provides among them,
+// stands for a fresh variable named for the magic predicate and the
+// position, which the reads outside carry up unchanged.
 func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvocation, in passing) (query.Clause, []*query.Rule, error) {
 	args := append([]query.PatternElement(nil), inv.Args...)
 	bound := make([]bool, len(args))
 	names := make([]query.Symbol, len(args))
+	required := w.rs.Required(inv.Name)
+	needed := map[query.Symbol]bool{}
 	seen := map[query.Symbol]bool{}
 	for i, arg := range args {
 		switch a := arg.(type) {
@@ -809,8 +1046,13 @@ func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvoca
 			bound[i] = true
 		case query.Variable:
 			names[i] = a.Name
-			if in.bound[a.Name] && !seen[a.Name] {
+			switch {
+			case seen[a.Name]:
+			case in.bound[a.Name]:
 				bound[i] = true
+			case in.extent[a.Name] && i < len(required) && required[i]:
+				bound[i] = true
+				needed[a.Name] = true
 			}
 			seen[a.Name] = true
 		}
@@ -839,14 +1081,24 @@ func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvoca
 	var read query.Clause
 	for k := len(in.levels) - 1; k >= 0; k-- {
 		level := in.levels[k]
-		where := level.clauses
+		where, passed := w.levelReads(level.roots, level.extentRoots, level.clauses, needed)
 		if read != nil {
-			where = append(where[:len(where):len(where)], read)
+			where = append(where, read)
 		}
 		provided := map[query.Symbol]bool{}
 		for _, clause := range where {
 			for _, sym := range query.ScopeOf(clause, w.rs).Provides {
 				provided[sym] = true
+			}
+		}
+		for sym := range level.roots {
+			passed[sym] = true
+		}
+		levelIn, inputs := level.passes(passed)
+		needed = map[query.Symbol]bool{}
+		for sym := range level.extentRoots {
+			if passed[sym] {
+				needed[level.outside(sym)] = true
 			}
 		}
 		var find []query.FindElement
@@ -875,13 +1127,13 @@ func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvoca
 		read = nil
 		if len(find) > 0 {
 			read = &query.SubqueryPattern{
-				Query:   &query.Query{Find: find, In: level.in, Where: where},
-				Inputs:  level.inputs,
+				Query:   &query.Query{Find: find, In: levelIn, Where: where},
+				Inputs:  inputs,
 				Binding: query.RelationBinding{Variables: binding},
 			}
 		}
 	}
-	body := append([]query.Clause(nil), in.prefix...)
+	body, _ := w.levelReads(in.head, nil, in.prefix, needed)
 	for i, arg := range args {
 		if !bound[i] {
 			continue

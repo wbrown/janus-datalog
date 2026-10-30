@@ -221,6 +221,77 @@ func TestEvaluateRules_TwoRecursiveOccurrences(t *testing.T) {
 	}
 }
 
+// An iteration after the first runs the delta copies marked on the
+// predicates the iteration before added tuples to, and no other copy
+// (docs/proposals/DELTA_COPY_RUNS_ON_ITS_DELTA_PROOF.md, T3). Over two
+// mutually recursive predicates, each body's one delta copy marked on the
+// other, every iteration adds tuples to one predicate alone, so each
+// iteration runs one copy, and the phases begun between consecutive
+// iteration events are that copy's.
+func TestRunStratum_RunsTheCopiesOfThePredicatesThatGainedTuples(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, `[[(odd ?a ?b) [?a :page/next ?b]]
+	                     [(even ?a ?c) (odd ?a ?b) [?b :page/next ?c]]
+	                     [(odd ?a ?c) (even ?a ?b) [?b :page/next ?c]]]`)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (odd ?x ?y)]`)
+	odd, even := datalog.NewSymbol("odd"), datalog.NewSymbol("even")
+	oddPairs := map[[2]datalog.Identity]bool{}
+	for i := 1; i <= 6; i++ {
+		for j := i + 1; j <= 6; j += 2 {
+			oddPairs[[2]datalog.Identity{page(i), page(j)}] = true
+		}
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var events []annotations.Event
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			require.NoError(t, err)
+			requireSamePairs(t, identityPairs(t, result), oddPairs)
+
+			// The phases of each copy, by the predicate the copy is marked
+			// on: the copy of even's body reads odd's delta, and the delta
+			// copy of odd's second body reads even's.
+			bodies, err := planner.PlanStratum(exec.planner, rs, rs.Strata()[0], nil)
+			require.NoError(t, err)
+			require.Len(t, bodies.Delta, 2, "one delta copy per body with an occurrence")
+			phases := map[query.Symbol]int{}
+			for _, body := range bodies.Delta {
+				marked := odd
+				if body.Rule.Name == odd {
+					marked = even
+				}
+				phases[marked] += len(body.Plan.Phases)
+			}
+
+			var previous map[query.Symbol]int
+			begun, compared := 0, 0
+			for _, e := range events {
+				switch e.Name {
+				case annotations.PhaseBegin:
+					begun++
+				case annotations.RulesIteration:
+					if previous != nil {
+						want := 0
+						for p, added := range previous {
+							if added > 0 {
+								want += phases[p]
+							}
+						}
+						require.Equal(t, want, begun, "iteration %v: the phases begun are the copies' marked on the predicates the iteration before added to, %v", e.Data["iteration"], previous)
+						compared++
+					}
+					previous = e.Data["delta"].(map[query.Symbol]int)
+					begun = 0
+				}
+			}
+			require.GreaterOrEqual(t, compared, 4, "the chain's odd and even paths alternate over several iterations")
+		})
+	}
+}
+
 func TestEvaluateRules_StratifiedNegation(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(chainDatoms(4))
 	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]

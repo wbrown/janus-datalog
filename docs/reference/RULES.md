@@ -179,11 +179,18 @@ This is the magic-set rewrite:
 - The copy's rules are guarded by a magic predicate, `magic.bf/reach`. It
   holds the bindings the predicate is asked with.
 - The bindings pass through each body in the order the planner gives it
-  into the invocations after them, and through each branch of a form in the
-  planner's order: an invocation inside a branch is bound by the form's
-  header and the branch's clauses before it, which its magic rule reads as a
-  scope of their own, apart from the body's clauses, so a branch local that
-  shares a body variable's name never unifies with it.
+  into the invocations after them: an invocation is bound by the head's
+  bound positions and the clauses before it that shared variables connect
+  to them, or to a pattern naming one entity at its entity position, and at
+  a position its predicate requires by any clause before it. A clause
+  before it connected to neither binds nothing, so a pattern with a value
+  constant beside the invocation leaves its position free, and the magic
+  rule reads the connected clauses and the chains of the required
+  positions. The bindings pass through each branch of a form the same way:
+  an invocation inside a branch is bound by the form's header and the
+  branch's clauses before it, which its magic rule reads as a scope of
+  their own, apart from the body's clauses, so a branch local that shares a
+  body variable's name never unifies with it.
 - An invocation under `not`, `not-join`, `or-default`, `or-default-join` or
   a subquery whose inner query aggregates receives the bindings of the
   clauses before the first that invokes a predicate of the rule's own
@@ -219,11 +226,12 @@ the clause under the bindings the branch holds there.
 
 A recursive stratum iterates semi-naively. The seeding run executes the rules
 with no recursive invocation. Each later iteration executes each rule once
-per recursive invocation in its body. In that execution the chosen invocation
-invokes the predicate's delta symbol, `delta/reach`, under which the scope
-holds the tuples the previous iteration added. Every other invocation reads
-the whole relation. The tuples not yet derived become the next iteration's
-delta. The stratum ends when an iteration adds nothing.
+per recursive invocation in its body whose predicate gained tuples in the
+iteration before. In that execution the chosen invocation invokes the
+predicate's delta symbol, `delta/reach`, under which the scope holds the
+tuples the previous iteration added. Every other invocation reads the whole
+relation. The tuples not yet derived become the next iteration's delta. The
+stratum ends when an iteration adds nothing.
 
 Every iteration reads the one snapshot the query reads. A write committed
 while a closure is under evaluation is invisible to it.
@@ -244,13 +252,15 @@ window's iterations from zero.
 
 A rule body is planned by the query planner as a query of its own, under the
 database's planner options. Its plan enters the plan cache under its own
-text, which carries `%` and the delta symbol. An invocation of a predicate
-the seed restricts, `magic.bf/reach`, `adorned.bf/reach` or the delta of
-either, reads a relation holding only what the seed reaches, so the planner
-schedules it before the body's patterns, which then seek on the bindings it
-provides. An invocation of any other predicate, `reach` or `delta/reach`,
-reads an unrestricted relation. The body's patterns scan first and it joins
-them.
+text, which carries `%` and the delta symbol. An invocation of a delta,
+`delta/reach` or `delta.adorned.bf/reach`, reads the tuples the iteration
+before added, so the planner schedules it first in its copy, and the clauses
+after it seek on the bindings it provides. An invocation of a predicate the
+seed restricts, `magic.bf/reach` or `adorned.bf/reach`, reads a relation
+holding only what the seed reaches, so the planner schedules it before the
+body's patterns, which then seek on the bindings it provides. An invocation
+of any other predicate, `reach`, reads an unrestricted relation. The body's
+patterns scan first and it joins them.
 
 A source opened with `RefuseUnknownAttributes` refuses a rule body whose
 pattern on it names an attribute its schema does not declare. A keyword an

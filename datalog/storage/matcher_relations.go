@@ -213,9 +213,18 @@ func (m *PatternMatcher) MatchWithConstraints(
 	var rel executor.Relation
 	switch strategy.Type {
 	case SinglePositionReuse:
-		// For V-bound cardinality-one queries, use candidate + validate pattern
-		// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 4
+		// A value binding on an attribute resolving as cardinality one is
+		// served by candidates validated per key, Theorem 5 of
+		// docs/reference/INDEX_SELECTION_PROOF.md, at or below the boundary.
+		// Above it, on a constant attribute, the binding is probed against
+		// one resolved scan of the attribute under AETV, whose first entry
+		// per entity is the current value, which answers the same entities
+		// (A_VALUE_BINDING_ABOVE_THE_BOUNDARY_SCANS_ONCE_PROOF.md).
 		if strategy.NeedsValidation {
+			if strategy.BoundA != nil && bindingRel.Size() > executor.SmallBindingBoundary {
+				rel, err = m.matchWithHashJoin(pattern, bindingRel, symbols, strategy.Position, AETV, constraints)
+				break
+			}
 			rel, err = m.matchWithVValidation(pattern, bindingRel, symbols, strategy, constraints)
 			break
 		}

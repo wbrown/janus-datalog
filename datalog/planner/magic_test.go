@@ -173,6 +173,156 @@ func TestMagic_ClosureBoundFirst(t *testing.T) {
 	assertRules(t, "the original set", rs.Rules(sym("follows")), followsRules())
 }
 
+// An invocation bound at its first position beside a pattern with a value
+// constant on its second argument is adorned for the first position alone,
+// the pattern before it in the adorned body and its magic rule the guard
+// alone, and beside a pattern with an entity constant on that argument it is
+// adorned for both positions, the pattern before it and its magic rule
+// reading the pattern: a pattern sharing no variable with the bound head
+// position binds nothing unless an entity constant names its one entity
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md T2, L2).
+func TestMagic_AnInvocationIsBoundFromAnEntityConstantAndNotFromAValueConstant(t *testing.T) {
+	pageKind := query.Constant{Value: datalog.NewKeyword(":page/kind")}
+	pageNext := query.Constant{Value: datalog.NewKeyword(":page/next")}
+	x := query.Variable{Name: sym("?x")}
+	leaf := &query.DataPattern{Elements: []query.PatternElement{x, pageKind, query.Constant{Value: "leaf"}}}
+	hub := &query.DataPattern{Elements: []query.PatternElement{query.Constant{Value: datalog.NewIdentity("hub")}, pageNext, x}}
+	rules := append(followsRules(),
+		defineRule("leafward", []string{"?a", "?x"}, invoke("follows", "?a", "?x"), leaf),
+		defineRule("hubward", []string{"?a", "?x"}, invoke("follows", "?a", "?x"), hub))
+	rs := mustRuleSet(t, rules)
+
+	magic := mustMagic(t, rs, "leafward", true, false)
+	assertRules(t, "adorned.bf/leafward", magic.Rules.Rules(sym("adorned.bf/leafward")), []*query.Rule{
+		defineRule("adorned.bf/leafward", []string{"?a", "?x"},
+			invoke("magic.bf/leafward", "?a"),
+			leaf,
+			invoke("adorned.bf/follows", "?a", "?x")),
+	})
+	if got := magic.Rules.Rules(sym("adorned.bb/follows")); len(got) != 0 {
+		t.Errorf("adorned.bb/follows has %d rules, want none: the pattern with a value constant binds no position of follows:\n%s", len(got), renderRules(got))
+	}
+	want := defineRule("magic.bf/follows", []string{"?a"}, invoke("magic.bf/leafward", "?a")).String()
+	if got := renderRules(magic.Rules.Rules(sym("magic.bf/follows"))); !strings.Contains(got, want) {
+		t.Errorf("magic.bf/follows lacks %s: the magic rule of the leafward site is the guard alone:\n%s", want, got)
+	}
+
+	magic = mustMagic(t, rs, "hubward", true, false)
+	assertRules(t, "adorned.bf/hubward", magic.Rules.Rules(sym("adorned.bf/hubward")), []*query.Rule{
+		defineRule("adorned.bf/hubward", []string{"?a", "?x"},
+			invoke("magic.bf/hubward", "?a"),
+			hub,
+			invoke("adorned.bb/follows", "?a", "?x")),
+	})
+	want = defineRule("magic.bb/follows", []string{"?a", "?x"}, invoke("magic.bf/hubward", "?a"), hub).String()
+	if got := renderRules(magic.Rules.Rules(sym("magic.bb/follows"))); !strings.Contains(got, want) {
+		t.Errorf("magic.bb/follows lacks %s: the magic rule of the hubward site reads the pattern with an entity constant:\n%s", want, got)
+	}
+}
+
+// A scan inside a union's branch, before the recursion and sharing no
+// variable with the position the head binds, binds nothing: under a flat
+// header the branch is given the bound head symbol, the recursion is adorned
+// at that position as the root is, and its magic rule is the guard alone,
+// with no read of the branch
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md T2, T4).
+func TestMagic_AScanOutsideTheSeedComponentBindsNothingInsideABranch(t *testing.T) {
+	form := func(recursion string) *query.OrJoinClause {
+		return &query.OrJoinClause{OutputVars: []query.Symbol{sym("?p"), sym("?q")}, Branches: [][]query.Clause{
+			{scopePattern("?p", "page/next", "?q")},
+			{scopePattern("?p", "page/next", "?m"), invoke(recursion, "?m", "?q")},
+		}}
+	}
+	down := defineRule("down", []string{"?p", "?q"}, form("down"))
+	magic := mustMagic(t, mustRuleSet(t, []*query.Rule{down}), "down", false, true)
+	assertRules(t, "adorned.fb/down", magic.Rules.Rules(sym("adorned.fb/down")), []*query.Rule{
+		defineRule("adorned.fb/down", []string{"?p", "?q"}, invoke("magic.fb/down", "?q"), form("adorned.fb/down")),
+	})
+	assertRules(t, "magic.fb/down", magic.Rules.Rules(sym("magic.fb/down")), []*query.Rule{
+		defineRule("magic.fb/down", []string{"?q"}, invoke("magic.fb/down", "?q")),
+	})
+	if got := magic.Rules.Rules(sym("adorned.bb/down")); len(got) != 0 {
+		t.Errorf("adorned.bb/down has %d rules, want none: the branch's scan shares no variable with the bound ?q and binds nothing:\n%s", len(got), renderRules(got))
+	}
+}
+
+// A pattern with a value constant sharing no variable with the bound head
+// position is an extent clause: the symbol it provides binds a position of a
+// later invocation only where the predicate requires that position, and the
+// magic rule of that invocation reads the symbol's extent chain, the pattern
+// and the other invocation providing the symbol; an invocation that does not
+// require the position stands unadorned with its predicate's original rules
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md T2, L2). The
+// planner places the unrequired invocation first: it provides the symbol
+// the required one correlates on, and scoreClause scores a provide above a
+// correlate.
+func TestMagic_AnExtentClauseBindsARequiredPositionAlone(t *testing.T) {
+	root := &query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: sym("?k")}, query.Constant{Value: datalog.NewKeyword(":page/kind")}, query.Constant{Value: "root"}}}
+	loose := defineRule("loose", []string{"?n"}, scopePattern("?n", "page/n", "_"))
+	p := defineRule("p", []string{"?x", "?k"}, root, invoke("small", "?k"), invoke("loose", "?k"))
+	p.Required = []query.Symbol{sym("?x")}
+	magic := mustMagic(t, mustRuleSet(t, []*query.Rule{smallRule(), loose, p}), "p", true, false)
+	assertRules(t, "adorned.bf/p", magic.Rules.Rules(sym("adorned.bf/p")), []*query.Rule{
+		defineRule("adorned.bf/p", []string{"?x", "?k"},
+			invoke("magic.bf/p", "?x"),
+			root,
+			invoke("loose", "?k"),
+			invoke("adorned.b/small", "?k")),
+	})
+	assertRules(t, "magic.b/small", magic.Rules.Rules(sym("magic.b/small")), []*query.Rule{
+		defineRule("magic.b/small", []string{"?k"}, invoke("magic.bf/p", "?x"), root, invoke("loose", "?k")),
+	})
+	if got := magic.Rules.Rules(sym("adorned.b/loose")); len(got) != 0 {
+		t.Errorf("adorned.b/loose has %d rules, want none: loose requires no position, so the pattern's ?k binds none of its positions:\n%s", len(got), renderRules(got))
+	}
+	assertRules(t, "loose", magic.Rules.Rules(sym("loose")), []*query.Rule{loose})
+}
+
+// A symbol a union's branches are given that an extent clause of the body
+// provides binds a required position inside a branch through the branch's
+// clause: the branch read passes the symbol and the magic rule reads the
+// extent clause at the body. At a position not required the symbol binds
+// nothing and the invocation stands unadorned
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md T4, L4).
+func TestMagic_AnExtentGivenSymbolBindsARequiredPositionInsideABranch(t *testing.T) {
+	root := &query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: sym("?k")}, query.Constant{Value: datalog.NewKeyword(":page/kind")}, query.Constant{Value: "root"}}}
+	loose := defineRule("loose", []string{"?n"}, scopePattern("?n", "page/n", "_"))
+	form := func(invocation string) *query.OrJoinClause {
+		return &query.OrJoinClause{RequiredVars: []query.Symbol{sym("?k")}, OutputVars: []query.Symbol{sym("?m")}, Branches: [][]query.Clause{
+			{scopePattern("?k", "page/next", "?m"), invoke(invocation, "?m")},
+			{scopePattern("?k", "page/other", "?m")},
+		}}
+	}
+
+	t.Run("a required position", func(t *testing.T) {
+		p := defineRule("p", []string{"?x", "?m"}, root, form("small"))
+		p.Required = []query.Symbol{sym("?x")}
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{smallRule(), p}), "p", true, false)
+		assertRules(t, "adorned.bf/p", magic.Rules.Rules(sym("adorned.bf/p")), []*query.Rule{
+			defineRule("adorned.bf/p", []string{"?x", "?m"}, invoke("magic.bf/p", "?x"), root, form("adorned.b/small")),
+		})
+		assertRules(t, "magic.b/small", magic.Rules.Rules(sym("magic.b/small")), []*query.Rule{
+			defineRule("magic.b/small", []string{"?m"},
+				invoke("magic.bf/p", "?x"),
+				root,
+				branchRead("?k", []query.Clause{scopePattern("?k", "page/next", "?m")}, "?m", "?m")),
+		})
+	})
+
+	t.Run("a position not required", func(t *testing.T) {
+		p := defineRule("p", []string{"?x", "?m"}, root, form("loose"))
+		p.Required = []query.Symbol{sym("?x")}
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{loose, p}), "p", true, false)
+		assertRules(t, "adorned.bf/p", magic.Rules.Rules(sym("adorned.bf/p")), []*query.Rule{
+			defineRule("adorned.bf/p", []string{"?x", "?m"}, invoke("magic.bf/p", "?x"), root, form("loose")),
+		})
+		if got := magic.Rules.Rules(sym("adorned.b/loose")); len(got) != 0 {
+			t.Errorf("adorned.b/loose has %d rules, want none: loose requires no position, so the given ?k and the branch's ?m bind none of its positions:\n%s", len(got), renderRules(got))
+		}
+		assertRules(t, "loose", magic.Rules.Rules(sym("loose")), []*query.Rule{loose})
+	})
+}
+
 // A free invocation of a predicate whose rules reach a predicate with
 // required positions is rewritten with its head all free: the rewrite has no
 // seed and the adorned root's rules carry no guard, each required predicate
@@ -566,32 +716,18 @@ func TestMagic_ABranchReadFindsWhatTheBranchProvides(t *testing.T) {
 		form := func(recursion string) *query.OrJoinClause {
 			return &query.OrJoinClause{OutputVars: []query.Symbol{sym("?a"), sym("?c")}, Branches: [][]query.Clause{
 				{scopePattern("?a", "edge", "?c")},
-				{scopePattern("?a", "edge", "?b"), invoke(recursion, "?b", "?c")},
+				{scopePattern("?b", "edge", "?c"), invoke(recursion, "?a", "?b")},
 			}}
 		}
 		r := defineRule("r", []string{"?a", "?c"}, form("r"))
 		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{r}), "r", false, true)
 		assertRules(t, "adorned.fb/r", magic.Rules.Rules(sym("adorned.fb/r")), []*query.Rule{
-			defineRule("adorned.fb/r", []string{"?a", "?c"}, invoke("magic.fb/r", "?c"), form("adorned.bb/r")),
+			defineRule("adorned.fb/r", []string{"?a", "?c"}, invoke("magic.fb/r", "?c"), form("adorned.fb/r")),
 		})
-		assertRules(t, "adorned.bb/r", magic.Rules.Rules(sym("adorned.bb/r")), []*query.Rule{
-			defineRule("adorned.bb/r", []string{"?a", "?c"}, invoke("magic.bb/r", "?a", "?c"), form("adorned.bb/r")),
-		})
-		assertRules(t, "magic.bb/r", magic.Rules.Rules(sym("magic.bb/r")), []*query.Rule{
-			defineRule("magic.bb/r", []string{"?magic.bb/r.0", "?c"},
+		assertRules(t, "magic.fb/r", magic.Rules.Rules(sym("magic.fb/r")), []*query.Rule{
+			defineRule("magic.fb/r", []string{"?magic.fb/r.1"},
 				invoke("magic.fb/r", "?c"),
-				branchRead("?c", []query.Clause{scopePattern("?a", "edge", "?b")}, "?b", "?magic.bb/r.0")),
-			defineRule("magic.bb/r", []string{"?magic.bb/r.0", "?c"},
-				invoke("magic.bb/r", "?a", "?c"),
-				&query.SubqueryPattern{
-					Query: &query.Query{
-						Find:  []query.FindElement{query.FindVariable{Symbol: sym("?b")}},
-						In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?a")}, query.ScalarInput{Symbol: sym("?c")}},
-						Where: []query.Clause{scopePattern("?a", "edge", "?b")},
-					},
-					Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Constant{Value: datalog.NewSymbol("%")}, query.Variable{Name: sym("?a")}, query.Variable{Name: sym("?c")}},
-					Binding: query.RelationBinding{Variables: []query.Symbol{sym("?magic.bb/r.0")}},
-				}),
+				branchRead("?c", []query.Clause{scopePattern("?b", "edge", "?c")}, "?b", "?magic.fb/r.1")),
 		})
 	})
 
@@ -1501,7 +1637,7 @@ func TestMagic_AFallbackBranchIsGivenTheRequiredRunAlone(t *testing.T) {
 	low := defineRule("low", []string{"?a", "?b"}, scopePattern("?a", "edge", "?b"))
 	m, k := []query.Symbol{sym("?m")}, []query.Symbol{sym("?k")}
 	guard := invoke("magic.fb/p", "?k")
-	link := scopePattern("?a", "link", "?m")
+	link := scopePattern("?k", "link", "?m")
 
 	t.Run("a fallback", func(t *testing.T) {
 		form := func(invocation string) *query.OrDefaultJoinClause {
@@ -1510,10 +1646,10 @@ func TestMagic_AFallbackBranchIsGivenTheRequiredRunAlone(t *testing.T) {
 				{scopePattern("?m", "other", "?k")},
 			}}
 		}
-		p := defineRule("p", []string{"?a", "?k"}, link, form("low"))
+		p := defineRule("p", []string{"?m", "?k"}, link, form("low"))
 		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{low, p}), "p", false, true)
 		assertRules(t, "adorned.fb/p", magic.Rules.Rules(sym("adorned.fb/p")), []*query.Rule{
-			defineRule("adorned.fb/p", []string{"?a", "?k"}, guard, link, form("adorned.bf/low")),
+			defineRule("adorned.fb/p", []string{"?m", "?k"}, guard, link, form("adorned.bf/low")),
 		})
 		assertRules(t, "magic.bf/low", magic.Rules.Rules(sym("magic.bf/low")), []*query.Rule{
 			defineRule("magic.bf/low", []string{"?m"}, guard, link),
@@ -1528,10 +1664,10 @@ func TestMagic_AFallbackBranchIsGivenTheRequiredRunAlone(t *testing.T) {
 				{scopePattern("?m", "other", "?k")},
 			}}
 		}
-		p := defineRule("p", []string{"?a", "?k"}, link, form("low"))
+		p := defineRule("p", []string{"?m", "?k"}, link, form("low"))
 		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{low, p}), "p", false, true)
 		assertRules(t, "adorned.fb/p", magic.Rules.Rules(sym("adorned.fb/p")), []*query.Rule{
-			defineRule("adorned.fb/p", []string{"?a", "?k"}, guard, link, form("adorned.bb/low")),
+			defineRule("adorned.fb/p", []string{"?m", "?k"}, guard, link, form("adorned.bb/low")),
 		})
 		assertRules(t, "magic.bb/low", magic.Rules.Rules(sym("magic.bb/low")), []*query.Rule{
 			defineRule("magic.bb/low", []string{"?m", "?k"}, guard, link),

@@ -447,7 +447,7 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 		}
 		changed := ev.windows == 1 || stratumSeed != nil
 		for _, body := range s.eval.bodies.Lower {
-			if len(added[body.Lower]) > 0 {
+			if len(added[body.Marked]) > 0 {
 				changed = true
 				break
 			}
@@ -590,10 +590,12 @@ func (s *stratumEvaluation) run(ctx *Context, held map[query.Symbol]Relation, bo
 // gained tuples in the window run over those tuples, held under the
 // predicate's delta symbol, and a window that adds no seed tuple and has no
 // such copy runs nothing. Then each iteration runs the same-stratum copies
-// over the previous iteration's deltas until none is left, the iteration
-// bound counted from the window's first iteration and the tuple bound over
-// the evaluation's total; a seed's tuples are given, not derived, and are
-// not counted.
+// marked on the predicates the previous iteration added tuples to, over
+// those deltas, until none is left
+// (docs/proposals/DELTA_COPY_RUNS_ON_ITS_DELTA_PROOF.md); the iteration
+// bound is counted from the window's first iteration and the tuple bound
+// over the evaluation's total, and a seed's tuples are given, not derived,
+// and are not counted.
 func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relation, lower map[query.Symbol][]Tuple) (map[query.Symbol][]Tuple, error) {
 	e := ev.executor
 	handler := e.options.Handler
@@ -684,7 +686,7 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 	if ev.windows > 1 {
 		bodies = nil
 		for _, body := range s.eval.bodies.Lower {
-			if len(lower[body.Lower]) > 0 {
+			if len(lower[body.Marked]) > 0 {
 				bodies = append(bodies, body)
 			}
 		}
@@ -717,12 +719,21 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 			return nil, &query.RuleIterationLimitError{Predicates: stratum.Predicates, Limit: limit, Reached: iteration}
 		}
 		// The run holds the last iteration's delta of each predicate under
-		// the predicate's delta symbol, beside the relations as they stand.
+		// the predicate's delta symbol, beside the relations as they stand,
+		// and runs the copies marked on a predicate whose delta holds a
+		// tuple: a copy marked on an empty delta answers tuples the sets
+		// hold (DELTA_COPY_RUNS_ON_ITS_DELTA_PROOF.md, L1).
 		held = view()
 		for _, p := range stratum.Predicates {
 			held[query.DeltaSymbol(p)] = newMaterializedRelationFromSet(s.eval.symbols[p], delta[p], e.options, deduplicatedProperties(s.eval.symbols[p]))
 		}
-		results, err := s.eval.run(ctx, held, s.eval.bodies.Delta)
+		var copies []planner.PlannedBody
+		for _, body := range s.eval.bodies.Delta {
+			if len(delta[body.Marked]) > 0 {
+				copies = append(copies, body)
+			}
+		}
+		results, err := s.eval.run(ctx, held, copies)
 		if err != nil {
 			return nil, err
 		}

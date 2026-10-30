@@ -97,11 +97,14 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 				continue
 			}
 
-			// A clause scanning a whole extent ranks below every other
-			// clause, and the score decides within a rank, the first in
-			// list order on a tie (REWRITE_ORDER_PROOF.md §6).
+			// A delta invocation ranks above every other clause, a clause
+			// scanning a whole extent below every other, and the score
+			// decides within a rank, the first in list order on a tie
+			// (REWRITE_ORDER_PROOF.md §6).
 			rank := 1
-			if scansAWholeExtent(clause, available, bindings.Rules) {
+			if inv, ok := clause.(*query.RuleInvocation); ok && query.IsDeltaSymbol(inv.Name) {
+				rank = 2
+			} else if scansAWholeExtent(clause, available, bindings.Rules) {
 				rank = 0
 			}
 			score := scoreClause(clause, available, bindings)
