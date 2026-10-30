@@ -711,6 +711,67 @@ func TestPatternOverAStreamingGroupReadsItOnce(t *testing.T) {
 	}
 }
 
+// A pattern after a join of two groups takes the window: the join result
+// reports no size, so the pattern reads it once, in windows, under the form
+// "pattern", and answers the join of the group with the pattern's matches
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T6 and L7). The input
+// group over ?e and ?x is joined with the first pattern's matches at the
+// collapse, and the second pattern runs over that join result. Every item
+// carries :item/value, and the even items carry :item/other, so the even
+// items are answered beside their payload and both values.
+func TestAPatternOverAJoinResultTakesTheWindow(t *testing.T) {
+	entity, x := datalog.NewSymbol("?e"), datalog.NewSymbol("?x")
+	v, w := datalog.NewSymbol("?v"), datalog.NewSymbol("?w")
+	itemValue, itemOther := datalog.NewKeyword(":item/value"), datalog.NewKeyword(":item/other")
+	const items = 6
+	var datoms []datalog.Datom
+	var tuples []Tuple
+	var want [][]interface{}
+	for i := 1; i <= items; i++ {
+		e := datalog.NewIdentity(fmt.Sprintf("joined-item%d", i))
+		datoms = append(datoms, datalog.Datom{E: e, A: itemValue, V: int64(i), Tx: datalog.ElementID{Lamport: uint64(i), ReplicaID: 1}})
+		tuples = append(tuples, Tuple{e, int64(100 + i)})
+		if i%2 == 0 {
+			datoms = append(datoms, datalog.Datom{E: e, A: itemOther, V: int64(10 * i), Tx: datalog.ElementID{Lamport: uint64(items + i), ReplicaID: 1}})
+			want = append(want, []interface{}{e, int64(100 + i), int64(i), int64(10 * i)})
+		}
+	}
+	q := &query.Query{Where: []query.Clause{
+		&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: entity}, query.Constant{Value: itemValue}, query.Variable{Name: v}}},
+		&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: entity}, query.Constant{Value: itemOther}, query.Variable{Name: w}}},
+	}}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var forms []string
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) {
+				if e.Name == annotations.ScopeWindow {
+					forms = append(forms, e.Data[annotations.KeyForm].(string))
+				}
+			}
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor(nil)
+			group := NewMaterializedRelation([]query.Symbol{entity, x}, tuples)
+			groups, err := exec.Execute(NewContext(), q, []Relation{group})
+			require.NoError(t, err)
+			require.Len(t, groups, 1, "the second pattern's result stands in the join result's place")
+			got, err := CollectTuples(groups[0], nil)
+			require.NoError(t, err)
+			syms := groups[0].Symbols()
+			ei, xi, vi, wi := query.SymbolIndex(syms, entity), query.SymbolIndex(syms, x), query.SymbolIndex(syms, v), query.SymbolIndex(syms, w)
+			require.True(t, ei >= 0 && xi >= 0 && vi >= 0 && wi >= 0, "the result carries the group's symbols and both patterns'; got %v", syms)
+			var answered [][]interface{}
+			for _, tuple := range got {
+				answered = append(answered, []interface{}{tuple[ei], tuple[xi], tuple[vi], tuple[wi]})
+			}
+			require.ElementsMatch(t, want, answered, "the join of the group with both patterns' matches")
+			require.NotEmpty(t, forms, "the pattern over the join result reads it through the window")
+			for _, form := range forms {
+				require.Equal(t, "pattern", form, "the window reports under the pattern's form")
+			}
+		})
+	}
+}
+
 // A bound invocation at the top level is a form over the window: the
 // invocation is one body under the header of its bound variables as the
 // required run and its free variables as the outputs, its fixpoint seeded by

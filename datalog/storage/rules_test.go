@@ -1021,6 +1021,12 @@ func (c *ruleEventCounts) handle(e annotations.Event) {
 		}
 		c.last[stratum] = iteration
 		c.trail = append(c.trail, fmt.Sprintf("%s %v iteration %v", e.Name, e.Data["predicates"], iteration))
+	case annotations.RulesStratumComplete:
+		c.trail = append(c.trail, fmt.Sprintf("%s %v", e.Name, e.Data["predicates"]))
+	case annotations.ScopeWindow:
+		c.trail = append(c.trail, fmt.Sprintf("%s %v ordinal %v tuples %v", e.Name, e.Data[annotations.KeyForm], e.Data["ordinal"], e.Data["tuple_count"]))
+	case annotations.ScopeBranchBuild:
+		c.trail = append(c.trail, fmt.Sprintf("%s %v branch %v size %v", e.Name, e.Data[annotations.KeyForm], e.Data["branch"], e.Data["branch_size"]))
 	}
 }
 

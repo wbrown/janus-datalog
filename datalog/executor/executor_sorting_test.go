@@ -515,12 +515,16 @@ func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
 				t.Fatalf("execution failed: %v", err)
 			}
 
-			if result.Size() != 3 {
-				t.Fatalf("expected 3 results, got %d", result.Size())
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("collecting the results: %v", err)
+			}
+			if len(tuples) != 3 {
+				t.Fatalf("expected 3 results, got %d", len(tuples))
 			}
 			seen := map[string]bool{}
-			for i := 0; i < result.Size(); i++ {
-				seen[result.Get(i)[0].(string)] = true
+			for _, tuple := range tuples {
+				seen[tuple[0].(string)] = true
 			}
 			for _, name := range []string{"Alice", "Bob", "Carol"} {
 				if !seen[name] {

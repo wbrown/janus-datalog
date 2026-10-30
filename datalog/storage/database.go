@@ -789,7 +789,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableSymmetricHashJoin: false, // Conservative for now
 
 		// Other executor options
-		EnableStreamingJoins:       false, // Keep false for stability
+		EnableStreamingJoins:       false, // Selects nothing in the hash join, which streams in every setting
 		EnableStreamingAggregation: true,  // Streaming aggregation
 
 		// Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple

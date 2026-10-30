@@ -34,11 +34,6 @@ func TestHashJoin(t *testing.T) {
 	// Join on ?dept
 	joined := left.HashJoin(right, []query.Symbol{datalog.NewSymbol("?dept")})
 
-	// Expected: 3 results (no Marketing people)
-	if joined.Size() != 3 {
-		t.Errorf("expected 3 joined tuples, got %d", joined.Size())
-	}
-
 	// Check symbols
 	expectedSymbols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept"), datalog.NewSymbol("?location")}
 	if !reflect.DeepEqual(joined.Symbols(), expectedSymbols) {
@@ -47,6 +42,11 @@ func TestHashJoin(t *testing.T) {
 
 	// Collect results
 	results := collectTuples(joined)
+
+	// Expected: 3 results (no Marketing people)
+	if len(results) != 3 {
+		t.Errorf("expected 3 joined tuples, got %d", len(results))
+	}
 
 	// Verify specific joins
 	expected := []Tuple{
@@ -81,12 +81,13 @@ func TestJoinMultipleSymbols(t *testing.T) {
 	// Join on both ?a and ?b
 	joined := left.HashJoin(right, []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")})
 
+	results := collectTuples(joined)
+
 	// Should match: (1,2) and (1,3)
-	if joined.Size() != 2 {
-		t.Errorf("expected 2 joined tuples, got %d", joined.Size())
+	if len(results) != 2 {
+		t.Errorf("expected 2 joined tuples, got %d", len(results))
 	}
 
-	results := collectTuples(joined)
 	expected := []Tuple{
 		{1, 2, "x", "foo"},
 		{1, 3, "y", "bar"},
@@ -109,8 +110,8 @@ func TestEmptyJoin(t *testing.T) {
 
 	joined := left.HashJoin(right, []query.Symbol{datalog.NewSymbol("?y")})
 
-	if joined.Materialize().Size() != 0 {
-		t.Error("expected empty join result")
+	if results := collectTuples(joined); len(results) != 0 {
+		t.Errorf("expected empty join result, got %v", results)
 	}
 }
 
@@ -217,13 +218,20 @@ func TestAntiJoin(t *testing.T) {
 
 // Test utilities
 
+// collectTuples drains a relation, copying each tuple it keeps when the
+// relation says copy.
 func collectTuples(rel Relation) []Tuple {
 	var tuples []Tuple
+	copies := rel.RequiresCopy()
 	it := rel.Iterator()
 	defer it.Close()
 
 	for it.Next() {
-		tuples = append(tuples, it.Tuple())
+		tuple := it.Tuple()
+		if copies {
+			tuple = copyTuple(tuple)
+		}
+		tuples = append(tuples, tuple)
 	}
 	return tuples
 }
@@ -329,7 +337,7 @@ func TestHashJoinEmitsStructuredStrategyBuildAndProbeAnnotations(t *testing.T) {
 	require.Len(t, collectTuples(result), 2)
 
 	require.NotNil(t, strategy)
-	require.Equal(t, "materialized", strategy.Data["mode"])
+	require.Equal(t, "streaming", strategy.Data["mode"])
 	require.Equal(t, "right", strategy.Data["build_side"])
 
 	require.NotNil(t, build)

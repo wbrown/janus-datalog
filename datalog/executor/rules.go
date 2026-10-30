@@ -211,8 +211,9 @@ func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInv
 // deriveInvocation evaluates an invocation's predicate at its clause: the
 // clause's evaluation, continued across the windows of the form execution
 // the clause stands in when the context carries that execution's
-// continuations, and otherwise an evaluation of this one run, completed at
-// once. The evaluation is created at the clause's first run through
+// continuations, under the clause it stands for (ruleContinuations), and
+// otherwise an evaluation of this one run, completed at once. The
+// evaluation is created at the clause's first run through
 // invocationEvaluation, over what the plan planned for the clause, and
 // extended by every run with the seed the run's bindings give at the
 // positions the plan has bound. The relation is returned with its head, the
@@ -225,13 +226,15 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 	}
 	planned := e.plan.Evaluations[inv]
 	var eval *ruleEvaluation
+	var under *query.RuleInvocation
 	if ctx.continued != nil {
-		eval = ctx.continued.byClause[inv]
+		under = ctx.continued.clauseOf(inv)
+		eval = ctx.continued.byClause[under]
 	}
 	if eval == nil {
 		eval = e.invocationEvaluation(inv, planned)
 		if ctx.continued != nil {
-			ctx.continued.byClause[inv] = eval
+			ctx.continued.byClause[under] = eval
 		}
 	}
 	var seed Relation
@@ -762,14 +765,38 @@ func (ev *ruleEvaluation) complete() {
 // windows, by the invocation clause each evaluates: the outermost form's
 // iterator creates them, every scope under it shares them through the
 // context, and that iterator completes them at the subject's exhaustion and
-// at its close.
+// at its close. An invocation has one clause in its scope's plan and, where
+// a window reads it through a frame, a second in the frame's plan
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.1). The frame's clause
+// stands for the scope's, and an evaluation at either continues under the
+// scope's.
 type ruleContinuations struct {
-	byClause map[*query.RuleInvocation]*ruleEvaluation
+	byClause  map[*query.RuleInvocation]*ruleEvaluation
+	standsFor map[*query.RuleInvocation]*query.RuleInvocation
 }
 
 // newRuleContinuations is a form execution's continuations, holding none.
 func newRuleContinuations() *ruleContinuations {
-	return &ruleContinuations{byClause: map[*query.RuleInvocation]*ruleEvaluation{}}
+	return &ruleContinuations{
+		byClause:  map[*query.RuleInvocation]*ruleEvaluation{},
+		standsFor: map[*query.RuleInvocation]*query.RuleInvocation{},
+	}
+}
+
+// standFor records that framed, the invocation clause of the frame planned
+// for inv, stands for inv.
+func (c *ruleContinuations) standFor(framed, inv *query.RuleInvocation) {
+	c.standsFor[framed] = inv
+}
+
+// clauseOf is the clause an evaluation at inv continues under: the clause
+// inv stands for when inv is a frame's invocation clause, and inv itself
+// otherwise.
+func (c *ruleContinuations) clauseOf(inv *query.RuleInvocation) *query.RuleInvocation {
+	if stood, ok := c.standsFor[inv]; ok {
+		return stood
+	}
+	return inv
 }
 
 // complete completes every evaluation held.

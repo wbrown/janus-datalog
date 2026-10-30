@@ -89,7 +89,9 @@ func NewTupleKeyMap() *TupleKeyMap {
 	}
 }
 
-// NewTupleKeyMapWithCapacity creates a new TupleKeyMap pre-sized to hold expectedSize entries
+// NewTupleKeyMapWithCapacity creates a new TupleKeyMap pre-sized to hold
+// expectedSize entries. A negative expectedSize, a stream's size answer,
+// starts the map empty.
 func NewTupleKeyMapWithCapacity(expectedSize int) *TupleKeyMap {
 	// Pre-size the map to avoid reallocation
 	// Use expectedSize directly as map capacity

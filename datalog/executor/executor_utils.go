@@ -245,5 +245,11 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) (Relation, error
 	if bound == nil {
 		return NewUnitRelation(ExecutorOptions{}), nil
 	}
-	return bound, nil
+	if len(entries) == 1 {
+		return bound, nil
+	}
+	// A fold of several entries answers a join result, a stream read once,
+	// and the bound group is read twice by its reader, so the fold is held
+	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, L4).
+	return materializePhaseBoundary(bound), nil
 }

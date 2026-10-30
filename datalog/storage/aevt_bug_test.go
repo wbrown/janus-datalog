@@ -98,8 +98,12 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 			}
 
 			// Verify results
-			if result.Size() != 3 {
-				t.Errorf("Expected 3 results, got %d", result.Size())
+			tuples, err := executor.CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("collecting the results: %v", err)
+			}
+			if len(tuples) != 3 {
+				t.Errorf("Expected 3 results, got %d", len(tuples))
 			}
 
 			// Check index selection and datom scan count

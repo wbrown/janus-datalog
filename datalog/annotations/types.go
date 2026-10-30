@@ -36,6 +36,16 @@ const (
 	QueryComplete                     = "query/completed"
 	QueryRewriteConditionalAggregates = "query/rewrite.conditional-aggregates"
 
+	// PlannerPlanMade is one plan made: the plan cache held none under the
+	// request's key, and the planner made one and stored it. It carries the
+	// query planned under KeyQuery and, under "bindings", the bindings the
+	// plan was made under, the symbols bound, the rule set and the
+	// invocations held, typed as the planner's own
+	// (docs/proposals/EXECUTION_PLANS_NOTHING_PROOF.md). A plan the cache
+	// serves reports nothing, so a run of a query the planner has planned
+	// reports none.
+	PlannerPlanMade = "planner/plan.made"
+
 	// Phase execution
 	PhaseBegin    = "phase/begin"
 	PhaseComplete = "phase/complete"

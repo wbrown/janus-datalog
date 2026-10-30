@@ -286,6 +286,45 @@ the kernel's facts through the CLI:
 | wall | 10 min 27 s | 4 min 38 s |
 | user CPU | 1041 s | 581 s |
 
+### A pull-based hash join
+
+Every body join of a recursive stratum realized its whole output on every
+iteration:
+
+- The materialized arm appended one combined tuple per pair to a results
+  slice.
+- The streaming arm, selected by `EnableStreamingJoins`, built one fresh tuple
+  per pair and copied every probe tuple of a workspace-reusing probe.
+
+The join is pull-based (`docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md`, T1 to
+T6):
+
+- The join answers the streaming relation in every setting of the option.
+- Its iterator fills one workspace of the result's width per pull and answers
+  `RequiresCopy` true.
+- The probe tuple is read as its iterator hands it back.
+- An empty build answers the empty relation without opening its probe side.
+- The join holds its build index and nothing of its output.
+- `BindQueryInputs` holds its fold of several entries, since its reader reads
+  the bound group twice.
+- A join result reports no size, so a later pattern or invocation sharing its
+  symbols takes the windowed route.
+- A query whose final relation is a join result answers -1 for its size, as
+  one ending in a scan does.
+
+The reproduction of `docs/bugs/JANUS_REPRO_FILLED.md`, its `unfilled` query over
+the kernel's facts through the CLI. The before column is the set change's
+after: its wall and user figures are the table above's, and its allocation
+figures are those the "Join output is a set" entry of `PERFORMANCE_STATUS.md`
+records:
+
+| | Before | After |
+|---|---:|---:|
+| wall | 4 min 38 s | 19.3 s |
+| user CPU | 581 s | 26.5 s |
+| allocated | 465 GB | 8.65 GB |
+| objects | 2.64 billion | 69.4 million |
+
 ## Correctness Hardening Completed
 
 The audits exposed correctness defects that were fixed before broadening lazy

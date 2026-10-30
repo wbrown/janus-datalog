@@ -8,10 +8,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// hashJoinIterator implements streaming hash join execution
+// hashJoinIterator is the join's iterator: the build index, the probe
+// iterator, the deferred build error, the projection plan, the current probe
+// tuple, the current match group and its position, and one workspace of the
+// result's width that every pull fills and Tuple hands back
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, L1).
 //
 // CONCURRENCY: This iterator is NOT thread-safe. It maintains mutable state
-// (currentProbeTuple, currentJoined, matches, matchIdx) that would be corrupted
+// (currentProbeTuple, workspace, matches, matchIdx) that would be corrupted
 // by concurrent access. Each goroutine must create its own iterator by calling
 // Relation.Iterator(), which returns independent iterator instances.
 type hashJoinIterator struct {
@@ -19,22 +23,20 @@ type hashJoinIterator struct {
 	probeIt     Iterator
 	buildErr    error // deferred error captured from the (eagerly consumed) build relation
 	buildIsLeft bool
-	// probeNeedsCopy is true when the probe relation's iterator reuses its
-	// tuple workspace (RequiresCopy()); only then must currentProbeTuple be
-	// copied before use. Materialized probes return stable tuples and skip it.
-	probeNeedsCopy bool
 	// rightNonJoinIndices identifies positions in the right-side tuple
 	// (per buildIsLeft, the probe side when buildIsLeft is true, otherwise
-	// the build side) whose values must be appended to each result tuple.
-	// Computed once at iterator setup; the combine inner loop is a pure
-	// indexed gather, never a per-call symbol scan.
+	// the build side) whose values are written after the left tuple in the
+	// workspace. Computed once at iterator setup; the fill inner loop is a
+	// pure indexed gather, never a per-call symbol scan.
 	rightNonJoinIndices []int
-	resultWidth         int
 	options             ExecutorOptions
+	// workspace is the one slice of the result's width every pull fills and
+	// Tuple hands back. The next pull overwrites it, so RequiresCopy answers
+	// true and a consumer keeping a tuple copies it.
+	workspace Tuple
 
 	// Current state - NOT safe for concurrent access
 	currentProbeTuple Tuple
-	currentJoined     Tuple
 	matches           []Tuple
 	matchIdx          int
 	closed            bool
@@ -62,20 +64,18 @@ func (it *hashJoinIterator) Next() bool {
 			buildTuple := it.matches[it.matchIdx]
 			it.matchIdx++
 
-			// Combine tuples via the precomputed projection plan.
-			var joined Tuple
-			if it.buildIsLeft {
-				joined = combineTuplesIndexed(buildTuple, it.currentProbeTuple, it.rightNonJoinIndices, it.resultWidth)
-			} else {
-				joined = combineTuplesIndexed(it.currentProbeTuple, buildTuple, it.rightNonJoinIndices, it.resultWidth)
+			// Fill the workspace through the precomputed projection plan: the
+			// left tuple whole, then the right tuple's values at the plan's
+			// positions. Every combined tuple is one the join answers: the join
+			// of two sets is a set (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
+			first, second := buildTuple, it.currentProbeTuple
+			if !it.buildIsLeft {
+				first, second = it.currentProbeTuple, buildTuple
 			}
-
-			// Every combined tuple is one the join answers: the join of two
-			// sets is a set (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
-			// combineTuplesIndexed returns a fresh slice on every call and
-			// nothing mutates it, so no copy is needed here and this iterator
-			// answers RequiresCopy false: a consumer may retain the tuple.
-			it.currentJoined = joined // Store for Tuple() to return
+			base := copy(it.workspace, first)
+			for k, idx := range it.rightNonJoinIndices {
+				it.workspace[base+k] = second[idx]
+			}
 			if it.metrics != nil {
 				it.metrics.resultCount++
 			}
@@ -95,19 +95,12 @@ func (it *hashJoinIterator) Next() bool {
 		if it.metrics != nil {
 			it.metrics.probeCount++
 		}
+		// The probe tuple is read as the probe iterator hands it back. Its
+		// values are read into the workspace at each pull of this iterator,
+		// and the probe iterator is pulled again only once the match group is
+		// exhausted, so a probe that reuses its buffer overwrites nothing this
+		// iterator still reads (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, L2).
 		it.currentProbeTuple = it.probeIt.Tuple()
-
-		// Only copy when the probe iterator reuses its tuple workspace. A
-		// materialized probe returns stable tuples (RequiresCopy()==false), so
-		// the copy is skipped — saving one alloc per probe tuple. Values read
-		// from currentProbeTuple are consumed before the next probeIt.Next()
-		// (combineTuplesIndexed copies them into fresh result slices), so a
-		// reused buffer only needs copying when the iterator says so.
-		if it.probeNeedsCopy {
-			tupleCopy := make(Tuple, len(it.currentProbeTuple))
-			copy(tupleCopy, it.currentProbeTuple)
-			it.currentProbeTuple = tupleCopy
-		}
 
 		// Look up matches in the build index — a positional probe, so no key
 		// materializes, and a hit is the key's group of held tuples.
@@ -125,12 +118,12 @@ func (it *hashJoinIterator) Next() bool {
 }
 
 func (it *hashJoinIterator) Tuple() Tuple {
-	return it.currentJoined
+	return it.workspace
 }
 
-// RequiresCopy is false: every joined tuple is a fresh slice
-// combineTuplesIndexed builds, which nothing writes after.
-func (it *hashJoinIterator) RequiresCopy() bool { return false }
+// RequiresCopy is true: Tuple hands back the workspace, which the next pull
+// overwrites.
+func (it *hashJoinIterator) RequiresCopy() bool { return true }
 
 func (it *hashJoinIterator) Close() error {
 	if !it.closed {
@@ -312,16 +305,12 @@ func HashJoinWithOptions(
 		}
 	}
 	buildKeysUnique := hasKeyWithin(buildRel.Properties().Keys, joinSymSet)
-	mode := "materialized"
-	if opts.EnableStreamingJoins {
-		mode = "streaming"
-	}
 	buildSide := "right"
 	if buildIsLeft {
 		buildSide = "left"
 	}
 	if opts.Handler != nil {
-		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, mode, buildSide, buildKeysUnique)
+		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, "streaming", buildSide, buildKeysUnique)
 	}
 
 	// Build phase - hold each build tuple in the index under its join key.
@@ -441,109 +430,47 @@ func HashJoinWithOptions(
 		})
 	}
 
-	// Probe phase - find matches
-	// Check if streaming mode is enabled
-	if opts.EnableStreamingJoins {
-		// Return streaming relation with lazy evaluation
-		iter := &hashJoinIterator{
-			buildIndex:          buildIndex,
-			probeIt:             probeRel.Iterator(),
-			buildErr:            buildErr,
-			buildIsLeft:         buildIsLeft,
-			probeNeedsCopy:      probeRel.RequiresCopy(),
-			rightNonJoinIndices: rightNonJoinIndices,
-			resultWidth:         resultWidth,
-			options:             opts,
-			matchIdx:            0,
-		}
+	// Probe phase. An index holding no tuple matches no probe tuple
+	// (JoinIndex.Probe answers nil for every key), so the join is empty
+	// whatever the probe side holds and the probe side is never opened: a
+	// stream among the probe sides keeps its one use
+	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). The build side was
+	// drained, so its deferred error is in hand and the result carries it.
+	if buildCount == 0 {
 		if opts.Handler != nil {
-			iter.metrics = &hashJoinMetrics{}
+			opts.Handler(annotations.Event{
+				Name: annotations.JoinProbe,
+				Data: map[string]interface{}{
+					"tuple_count":   0,
+					"matched_count": 0,
+					"result_count":  0,
+					"mode":          "streaming",
+				},
+			})
 		}
-
-		// Return streaming result - no forced materialization
-		// StreamingRelation enforces single-use semantics via panic if Iterator() called twice
-		// Caller can explicitly call Materialize() if multiple iterations needed
-		return NewStreamingRelationWithProperties(outputSyms, iter, opts, resultProperties)
+		result := newMaterializedRelationFromSet(outputSyms, nil, opts, resultProperties)
+		result.err = buildErr
+		return result
 	}
 
-	// Materialized mode
-	// The build tuples are in hand and size the results, the probe side when
-	// its size is known and smaller; the slice grows past either under fanout.
-	expectedResults := buildCount
-	if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
-		expectedResults = probeSize
-	}
-	results := make([]Tuple, 0, expectedResults)
-
-	// CRITICAL: Check if probe relation was already consumed
-	// This should never happen - it indicates a bug in the executor
-	if sr, ok := probeRel.(*StreamingRelation); ok {
-		sr.mu.Lock()
-		alreadyConsumed := sr.iteratorCalled && !sr.cacheReady
-		sr.mu.Unlock()
-
-		if alreadyConsumed {
-			panic("BUG: HashJoin received a StreamingRelation that was already consumed. " +
-				"Relations passed to Join must either be materialized or not yet iterated. " +
-				"This indicates the executor is reusing relations incorrectly.")
-		}
-	}
-
-	probeIt := probeRel.Iterator()
-
-	probeCount := 0
-	matchCount := 0
-	for probeIt.Next() {
-		probeTuple := probeIt.Tuple()
-		probeCount++
-
-		// Positional probe against the build index — no key materializes,
-		// and the hit is the key's group of held tuples.
-		matches := buildIndex.Probe(probeTuple)
-		if len(matches) == 0 {
-			continue
-		}
-		matchCount++
-		for _, buildTuple := range matches {
-			// Combine tuples via the precomputed projection plan.
-			var joined Tuple
-			if buildIsLeft {
-				joined = combineTuplesIndexed(buildTuple, probeTuple, rightNonJoinIndices, resultWidth)
-			} else {
-				joined = combineTuplesIndexed(probeTuple, buildTuple, rightNonJoinIndices, resultWidth)
-			}
-
-			// Every combined tuple is one the join answers: the join of two
-			// sets is a set (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
-			results = append(results, joined)
-		}
-	}
-	probeErr := probeIt.Error()
-	if closeErr := probeIt.Close(); probeErr == nil {
-		probeErr = closeErr
+	// The result streams: every pull fills the iterator's workspace with one
+	// combined tuple, so the join holds the build index and nothing of its
+	// output (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T3 and T4).
+	// StreamingRelation enforces single-use semantics via panic if Iterator()
+	// is called twice; a caller reading the result twice materializes it.
+	iter := &hashJoinIterator{
+		buildIndex:          buildIndex,
+		probeIt:             probeRel.Iterator(),
+		buildErr:            buildErr,
+		buildIsLeft:         buildIsLeft,
+		rightNonJoinIndices: rightNonJoinIndices,
+		options:             opts,
+		workspace:           make(Tuple, resultWidth),
 	}
 	if opts.Handler != nil {
-		opts.Handler(annotations.Event{
-			Name: annotations.JoinProbe,
-			Data: map[string]interface{}{
-				"tuple_count":   probeCount,
-				"matched_count": matchCount,
-				"result_count":  len(results),
-				"mode":          "materialized",
-			},
-		})
+		iter.metrics = &hashJoinMetrics{}
 	}
-
-	// The results are a set (T1), constructed as one. Carry any deferred
-	// build/probe error onto the result so a failed scan isn't laundered into
-	// an empty/partial join.
-	result := newMaterializedRelationFromSet(outputSyms, results, opts, resultProperties)
-	if buildErr != nil {
-		result.err = buildErr
-	} else if probeErr != nil {
-		result.err = probeErr
-	}
-	return result
+	return NewStreamingRelationWithProperties(outputSyms, iter, opts, resultProperties)
 }
 
 // SemiJoin returns tuples from left that have matches in right
@@ -688,25 +615,6 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 func isStreaming(rel Relation) bool {
 	_, ok := rel.(*StreamingRelation)
 	return ok
-}
-
-// combineTuplesIndexed builds a result tuple by copying `first` into the
-// leading positions, then appending values from `second` at the indices
-// listed in secondNonJoinIndices. `resultWidth` is len(first) +
-// len(secondNonJoinIndices), passed in to avoid a redundant add per call.
-//
-// The projection plan (secondNonJoinIndices, resultWidth) is invariant
-// for the lifetime of a hash join — it depends only on the join's
-// symbols, not on any tuple — so it is computed once in
-// HashJoinWithOptions and reused for every matched tuple.
-func combineTuplesIndexed(first, second Tuple, secondNonJoinIndices []int, resultWidth int) Tuple {
-	result := make(Tuple, resultWidth)
-	copy(result, first)
-	base := len(first)
-	for k, idx := range secondNonJoinIndices {
-		result[base+k] = second[idx]
-	}
-	return result
 }
 
 func crossProduct(left, right Relation) Relation {

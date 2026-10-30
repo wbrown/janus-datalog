@@ -45,8 +45,8 @@ func TestEqualVectorValuesJoin(t *testing.T) {
 	})
 
 	joined := left.HashJoin(right, []query.Symbol{v})
-	if joined.Size() != 1 {
-		t.Fatalf("equal vector join keys must match: expected 1 tuple, got %d", joined.Size())
+	if tuples := collectTuples(joined); len(tuples) != 1 {
+		t.Fatalf("equal vector join keys must match: expected 1 tuple, got %d", len(tuples))
 	}
 }
 
@@ -165,8 +165,8 @@ func TestSignedZeroHashesConsistentlyAcrossSetOperations(t *testing.T) {
 		[]query.Symbol{value, datalog.NewSymbol("?right")},
 		[]Tuple{{negative, "right"}},
 	)
-	if got := HashJoin(left, right, []query.Symbol{value}).Size(); got != 1 {
-		t.Fatalf("signed-zero join keys must match, got %d tuples", got)
+	if got := collectTuples(HashJoin(left, right, []query.Symbol{value})); len(got) != 1 {
+		t.Fatalf("signed-zero join keys must match, got %d tuples", len(got))
 	}
 
 	grouped := executeGroupedAggregation(
