@@ -6,14 +6,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A key map sized from a relation's size answer starts empty when that answer
-// is -1, a stream's size, and admits keys as any map does
+// A set sized from a relation's size answer starts empty when that answer
+// is -1, a stream's size, and admits keys as any set does
 // (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, L8). SemiJoin and AntiJoin
-// size their right side's key map this way.
-func TestTupleKeyMapWithAnUnknownCapacityStartsEmpty(t *testing.T) {
-	keys := NewTupleKeyMapWithCapacity(-1)
-	key := NewTupleKeyFull(Tuple{int64(1), "a"})
-	require.False(t, keys.Exists(key), "a new map holds no key")
-	require.False(t, keys.PutIfAbsent(key, true), "the first put of a key reports it absent")
-	require.True(t, keys.Exists(key), "a put key is held")
+// size their right side's key set this way.
+func TestTupleSet_WithAnUnknownCapacityStartsEmpty(t *testing.T) {
+	positions := allPositions(2)
+	keys := NewTupleSet(positions, positions, -1)
+	key := Tuple{int64(1), "a"}
+	require.False(t, keys.Probe(key), "a new set holds no key")
+	require.Zero(t, keys.Len())
+	keys.Add(key)
+	require.True(t, keys.Probe(key), "an added key is held")
+	require.Equal(t, 1, keys.Len())
 }

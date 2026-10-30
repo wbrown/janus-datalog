@@ -134,12 +134,14 @@ func (w *windowReader) reportWindow() {
 	if w.options.Handler == nil {
 		return
 	}
-	keys := NewTupleKeyMapWithCapacity(len(w.window))
+	keys := NewTupleSet(w.keyPos, w.keyPos, len(w.window))
 	distinct := 0
 	for _, tuple := range w.window {
-		if !keys.PutIfAbsentPositions(tuple, w.keyPos, true) {
-			distinct++
+		if keys.Probe(tuple) {
+			continue
 		}
+		keys.Add(tuple)
+		distinct++
 	}
 	w.options.Handler(annotations.Event{
 		Name:  annotations.ScopeWindow,

@@ -494,16 +494,34 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		return res
 	}
 
-	// Build set of keys from right relation using efficient TupleKeyMap.
-	// If the right side fails, the key set is incomplete — every filter decision
-	// becomes untrustworthy (semi-join would drop real matches), so surface the
-	// error and trust no result tuples.
-	rightKeys := NewTupleKeyMapWithCapacity(right.Size())
+	// The right side's keys, probed by left tuples at the left's join
+	// positions: each member is the right tuple itself at the right's join
+	// positions when the right side's tuples are stable, and a copy of the
+	// key's values at the positions 0 to k−1 when the right side reuses its
+	// workspace (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, L2). If the right
+	// side fails, the key set is incomplete — every filter decision becomes
+	// untrustworthy (semi-join would drop real matches), so surface the error
+	// and trust no result tuples.
+	copyKeys := right.RequiresCopy()
+	storedPos := rightIndices
+	if copyKeys {
+		storedPos = allPositions(len(rightIndices))
+	}
+	rightKeys := NewTupleSet(leftIndices, storedPos, right.Size())
 	rightIt := right.Iterator()
 	for rightIt.Next() {
 		tuple := rightIt.Tuple()
-		key := NewTupleKey(tuple, rightIndices)
-		rightKeys.Put(key, true)
+		if _, held := rightKeys.FindAt(tuple, rightIndices); held {
+			continue
+		}
+		if copyKeys {
+			key := make(Tuple, len(rightIndices))
+			for i, idx := range rightIndices {
+				key[i] = tuple[idx]
+			}
+			tuple = key
+		}
+		rightKeys.Add(tuple)
 	}
 	rerr := rightIt.Error()
 	if cerr := rightIt.Close(); rerr == nil {
@@ -521,7 +539,7 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 	leftIt := left.Iterator()
 	for leftIt.Next() {
 		tuple := leftIt.Tuple()
-		if _, ok := rightKeys.GetPositions(tuple, leftIndices); ok {
+		if rightKeys.Probe(tuple) {
 			if leftNeedsCopy {
 				results = append(results, copyTuple(tuple))
 			} else {
@@ -562,17 +580,35 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		return res
 	}
 
-	// Build set of keys from right relation using efficient TupleKeyMap.
-	// If the right side fails, the key set is incomplete — an anti-join would then
-	// report false "no match" tuples (a missing key from a decode failure is
-	// indistinguishable from a real absence), so surface the error and trust no
-	// result tuples.
-	rightKeys := NewTupleKeyMapWithCapacity(right.Size())
+	// The right side's keys, probed by left tuples at the left's join
+	// positions: each member is the right tuple itself at the right's join
+	// positions when the right side's tuples are stable, and a copy of the
+	// key's values at the positions 0 to k−1 when the right side reuses its
+	// workspace (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, L2). If the right
+	// side fails, the key set is incomplete — an anti-join would then report
+	// false "no match" tuples (a missing key from a decode failure is
+	// indistinguishable from a real absence), so surface the error and trust
+	// no result tuples.
+	copyKeys := right.RequiresCopy()
+	storedPos := rightIndices
+	if copyKeys {
+		storedPos = allPositions(len(rightIndices))
+	}
+	rightKeys := NewTupleSet(leftIndices, storedPos, right.Size())
 	rightIt := right.Iterator()
 	for rightIt.Next() {
 		tuple := rightIt.Tuple()
-		key := NewTupleKey(tuple, rightIndices)
-		rightKeys.Put(key, true)
+		if _, held := rightKeys.FindAt(tuple, rightIndices); held {
+			continue
+		}
+		if copyKeys {
+			key := make(Tuple, len(rightIndices))
+			for i, idx := range rightIndices {
+				key[i] = tuple[idx]
+			}
+			tuple = key
+		}
+		rightKeys.Add(tuple)
 	}
 	rerr := rightIt.Error()
 	if cerr := rightIt.Close(); rerr == nil {
@@ -590,7 +626,7 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 	leftIt := left.Iterator()
 	for leftIt.Next() {
 		tuple := leftIt.Tuple()
-		if _, ok := rightKeys.GetPositions(tuple, leftIndices); !ok {
+		if !rightKeys.Probe(tuple) {
 			if leftNeedsCopy {
 				results = append(results, copyTuple(tuple))
 			} else {

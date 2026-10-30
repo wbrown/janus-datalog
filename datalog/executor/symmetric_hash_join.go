@@ -87,12 +87,15 @@ func SymmetricHashJoinWithOptions(
 		rightJoinPos[i] = query.ContainsSymbol(joinSyms, sym)
 	}
 
-	// Create the symmetric hash join iterator
+	// Create the symmetric hash join iterator. Each side's table is the
+	// join index over that side's tuples at its join positions, probed by
+	// the other side's tuples at theirs
+	// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, P3).
 	iter := &symmetricHashJoinIterator{
 		leftIt:       left.Iterator(),
 		rightIt:      right.Iterator(),
-		leftTable:    NewTupleKeyMapWithCapacity(tableSize),
-		rightTable:   NewTupleKeyMapWithCapacity(tableSize),
+		leftTable:    NewJoinIndex(rightIndices, leftIndices, tableSize),
+		rightTable:   NewJoinIndex(leftIndices, rightIndices, tableSize),
 		leftIndices:  leftIndices,
 		rightIndices: rightIndices,
 		joinSyms:     joinSyms,
@@ -116,7 +119,7 @@ func SymmetricHashJoinWithOptions(
 // symmetricHashJoinIterator implements Iterator for symmetric hash join
 type symmetricHashJoinIterator struct {
 	leftIt, rightIt           Iterator
-	leftTable, rightTable     *TupleKeyMap
+	leftTable, rightTable     *JoinIndex
 	leftIndices, rightIndices []int
 	joinSyms                  []query.Symbol
 	leftSyms, rightSyms       []query.Symbol
@@ -168,27 +171,16 @@ func (it *symmetricHashJoinIterator) processLeftBatch() {
 		copy(leftTupleCopy, leftTuple)
 		leftTuple = leftTupleCopy
 
-		// Extract join key from left tuple
-		key := NewTupleKey(leftTuple, it.leftIndices)
-
 		// Probe right table for matches
-		if rightMatchesVal, ok := it.rightTable.Get(key); ok {
-			rightMatches := rightMatchesVal.([]Tuple)
-			for _, rightTuple := range rightMatches {
-				// Every combined tuple is one the join answers: the join of
-				// two sets is a set
-				// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
-				it.resultQueue = append(it.resultQueue, it.combineTuples(leftTuple, rightTuple, true))
-			}
+		for _, rightTuple := range it.rightTable.Probe(leftTuple) {
+			// Every combined tuple is one the join answers: the join of
+			// two sets is a set
+			// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
+			it.resultQueue = append(it.resultQueue, it.combineTuples(leftTuple, rightTuple, true))
 		}
 
 		// Add to left table (tuple already copied above)
-		if existingVal, ok := it.leftTable.Get(key); ok {
-			existing := existingVal.([]Tuple)
-			it.leftTable.Put(key, append(existing, leftTuple))
-		} else {
-			it.leftTable.Put(key, []Tuple{leftTuple})
-		}
+		it.leftTable.Add(leftTuple)
 
 		processed++
 	}
@@ -211,27 +203,16 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 		copy(rightTupleCopy, rightTuple)
 		rightTuple = rightTupleCopy
 
-		// Extract join key from right tuple
-		key := NewTupleKey(rightTuple, it.rightIndices)
-
 		// Probe left table for matches
-		if leftMatchesVal, ok := it.leftTable.Get(key); ok {
-			leftMatches := leftMatchesVal.([]Tuple)
-			for _, leftTuple := range leftMatches {
-				// Every combined tuple is one the join answers: the join of
-				// two sets is a set
-				// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
-				it.resultQueue = append(it.resultQueue, it.combineTuples(leftTuple, rightTuple, true))
-			}
+		for _, leftTuple := range it.leftTable.Probe(rightTuple) {
+			// Every combined tuple is one the join answers: the join of
+			// two sets is a set
+			// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
+			it.resultQueue = append(it.resultQueue, it.combineTuples(leftTuple, rightTuple, true))
 		}
 
 		// Add to right table (tuple already copied above)
-		if existingVal, ok := it.rightTable.Get(key); ok {
-			existing := existingVal.([]Tuple)
-			it.rightTable.Put(key, append(existing, rightTuple))
-		} else {
-			it.rightTable.Put(key, []Tuple{rightTuple})
-		}
+		it.rightTable.Add(rightTuple)
 
 		processed++
 	}

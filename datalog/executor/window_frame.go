@@ -15,7 +15,9 @@ import "github.com/wbrown/janus-datalog/datalog/query"
 // binds it. A frame carrying no subject symbol has one run for every
 // window, the environment's tuple or the unit relation, so its branches
 // are built at the first window alone. ran holds the keys the frame's
-// windows have run, over the subject positions, so a key a later window
+// windows have run, in the key tuples the runs carried, each probed by a
+// subject tuple at the subject positions and read at the frame positions
+// (docs/proposals/FRAME_RUN_RECORD_PROOF.md), so a key a later window
 // carries again is left out of its run; run is the window's run, computed
 // once per window for the branches framed alike.
 type windowFrame struct {
@@ -23,7 +25,7 @@ type windowFrame struct {
 	subjectPos []int // the subject tuple's positions of the required symbols it carries
 	framePos   []int // the frame-run position of each subjectPos entry
 	envValues  Tuple // the environment's value per frame position, nil where the subject carries the symbol
-	ran        *TupleKeyMap
+	ran        *TupleSet
 	run        *MaterializedRelation
 	runWindow  int
 }
@@ -97,7 +99,7 @@ func windowFrames(plans []branchRun, f framing) ([]windowFrame, []int) {
 			frame.envValues[pos] = f.environment.Get(0)[query.SymbolIndex(f.environment.Symbols(), sym)]
 		}
 		if len(frame.subjectPos) > 0 {
-			frame.ran = NewTupleKeyMap()
+			frame.ran = NewTupleSet(frame.subjectPos, frame.framePos, 0)
 		}
 		frameOf[i] = len(frames)
 		frames = append(frames, frame)
@@ -123,9 +125,9 @@ func (f *windowFrame) windowRun(window []Tuple, ordinal int, opts ExecutorOption
 	if f.runWindow == ordinal {
 		return f.run
 	}
-	var tuples []Tuple
+	tuples := make([]Tuple, 0, len(window))
 	for _, tuple := range window {
-		if f.ran.PutIfAbsentPositions(tuple, f.subjectPos, true) {
+		if f.ran.Probe(tuple) {
 			continue
 		}
 		key := make(Tuple, len(f.required))
@@ -133,6 +135,7 @@ func (f *windowFrame) windowRun(window []Tuple, ordinal int, opts ExecutorOption
 		for i, pos := range f.subjectPos {
 			key[f.framePos[i]] = tuple[pos]
 		}
+		f.ran.Add(key)
 		tuples = append(tuples, key)
 	}
 	f.run = newMaterializedRelationFromSet(f.required, tuples, opts, deduplicatedProperties(f.required))

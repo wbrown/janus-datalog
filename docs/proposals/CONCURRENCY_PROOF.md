@@ -214,7 +214,6 @@ windowedIterator.runWindow
 - A stratum's begin and complete events fire once, and its iterations are numbered in sequence, under W > 1.
 - A pool holds at most W jobs' state beyond the sequential path's.
 - W = 1 runs the sequential code: one code path, the pool of one running inline, so the option off costs nothing (SCOPE goal 7).
-- Each reintroduction lands with its benchmark on memory-trees and badger, before and after, in `PERFORMANCE_STATUS.md`: the per-key seek at a thousand and ten thousand keys for T5, `BenchmarkTransitiveClosure` and `BenchmarkBoundInvocation` for T3, `BenchmarkOrJoinScope`, `BenchmarkOrDefaultJoinScope` and `BenchmarkNotJoinScope` for T4, `BenchmarkComplexQueryCheckpoint` for T6.
 
 ## 8. The resolution
 

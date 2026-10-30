@@ -91,7 +91,6 @@ The change carries these tests, each pinning the theorem named.
 - `TestAPatternOverAJoinResultTakesTheWindow` (executor), `TestRules_InvocationUnderAFormEvaluatesOncePerQuery` and `TestRules_AnInvocationContinuesOneEvaluationWhicheverRouteEachWindowTakes` (storage), run unchanged (T6).
 - `TestSubqueryConstantArgument_ExecutingAnExplainedQueryPlansNothing` (storage), run unchanged (T2).
 - `TestQueriesAnswerAlikeUnderBothOptimizerModes` and `TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation` (storage), the differentials, run unchanged (T6).
-- `make test`, the gate.
 
 ## 6. The change the proof licenses
 
@@ -114,7 +113,7 @@ The change carries these tests, each pinning the theorem named.
 - A phase whose inputs are of tuple or collection shape at a clause's bound set. The walk reads a phase's scalar and relation inputs. The tests of §5 carry none at a windowable clause, and a drift there fires the event (T7).
 - A pattern the attribute-fetch fusion consumes under `EnableAttributeFetchFusion`: its window scope is planned and read by nothing.
 - A windowable clause whose group is held at run time, one after a predicate or an expression: its window scope is planned and read by nothing. That is the cost the former ruling cited, one plan per such clause per database per text, accepted by the decision.
-- The planner's cost on a cold cache. `Explain` carries the whole of it, one plan per scope, form, body and window scope of the query. `BenchmarkPlannerWithoutCache` and `BenchmarkComplexQueryCheckpoint` are the instruments, and their figures belong in `PERFORMANCE_STATUS.md`.
+- The planner's cost on a cold cache. `Explain` carries the whole of it, one plan per scope, form, body and window scope of the query.
 
 ## 8. Alternatives excluded
 

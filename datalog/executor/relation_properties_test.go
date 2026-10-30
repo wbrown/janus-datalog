@@ -636,6 +636,37 @@ func TestSemiAndAntiJoinsCopyWorkspaceReusingLeftInput(t *testing.T) {
 	}
 }
 
+// The right side's keys are read by value: a right side that hands back one
+// reused slice per tuple, with the join symbol at a different position from
+// the left's, still answers the semi-join's matches and the anti-join's
+// misses by each key's values, which a member aliasing the reused slice
+// would lose (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T1, L2).
+func TestSemiAndAntiJoinsReadKeysFromAWorkspaceReusingRightInput(t *testing.T) {
+	id := datalog.NewSymbol("?id")
+	value := datalog.NewSymbol("?value")
+	press := datalog.NewSymbol("?press")
+	left := NewMaterializedRelation([]query.Symbol{id, value}, []Tuple{
+		{int64(1), "one"}, {int64(2), "two"}, {int64(3), "three"},
+	})
+	rightTuples := []Tuple{{"folded", int64(1)}, {"sewn", int64(3)}, {"pressed", int64(1)}}
+	testCases := []struct {
+		name string
+		run  func(Relation, Relation, []query.Symbol) Relation
+		want [][]interface{}
+	}{
+		{name: "semi", run: SemiJoin, want: [][]interface{}{{int64(1), "one"}, {int64(3), "three"}}},
+		{name: "anti", run: AntiJoin, want: [][]interface{}{{int64(2), "two"}}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			right := newReusingWorkspaceStream([]query.Symbol{press, id}, rightTuples)
+			got, err := CollectTuples(testCase.run(left, right, []query.Symbol{id}), nil)
+			require.NoError(t, err)
+			require.Equal(t, testCase.want, got)
+		})
+	}
+}
+
 func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
 	var cacheEnabled *annotations.Event
 	symbol := datalog.NewSymbol("?value")

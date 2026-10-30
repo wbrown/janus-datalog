@@ -63,8 +63,8 @@ Under an as-of handle the hash join's and merge join's `Next` test each candidat
 
 ## 5. Tests
 
-- `TestAsOfZeroTargetProbe`: nine query shapes over an as-of handle at the zero target, in both optimizer modes, each answering nothing. The cardinality-many V-bound open-attribute shape is red before the change and green after; the eight others are green before and after (L3).
-- A test of the non-zero target on the same route, open and constant attribute, in both optimizer modes: a member written at or before the target answers and one written after does not. Green before and after; it pins the second case of L1.
+- `TestAsOfZeroTargetProbe`: nine query shapes over an as-of handle at the zero target, in both optimizer modes, each answering nothing. The cardinality-many V-bound open-attribute shape is the one L3 names as yielding what the handle must not read (L3).
+- A test of the non-zero target on the same route, open and constant attribute, in both optimizer modes: a member written at or before the target answers and one written after does not. It pins the second case of L1.
 - `TestCRDTResolvingIterator_SourceDatomErrorPropagates` and `TestCRDTResolvingIterator_UniqueWalkErrorIsDeferred`, constructing a zero-value matcher in place of nil: their assertions on error propagation are unchanged (L1's last paragraph).
 - Every temporal and resolution test of the `storage` and `db` packages: unchanged by T1.
 - The inlining report for the filter's line after the change (T5).

@@ -362,7 +362,9 @@ func executeGroupedAggregation(
 	// Group tuples by their typed values. TupleKeyMap uses the same hashing and
 	// ValuesEqual semantics as joins and deduplication, so distinct datalog
 	// values cannot collapse through string formatting or delimiter ambiguity.
-	groups := NewTupleKeyMap()
+	// Each group's key tuple is the member the map holds, probed by a source
+	// tuple at the group positions (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, L2).
+	groups := NewTupleKeyMap(groupIndices, allPositions(len(groupIndices)), 0)
 	var groupOrder []*batchAggregateGroup
 
 	it := rel.Iterator()
@@ -382,15 +384,18 @@ func executeGroupedAggregation(
 		tuple := it.Tuple()
 
 		// Probe positionally — the common case is another tuple for an
-		// existing group; the key materializes only when the group is new.
-		groupValue, exists := groups.GetPositions(tuple, groupIndices)
+		// existing group; the key tuple is built only when the group is new.
+		groupValue, exists := groups.Get(tuple)
 		var group *batchAggregateGroup
 		if exists {
 			group = groupValue.(*batchAggregateGroup)
 		} else {
-			key := NewTupleKey(tuple, groupIndices)
+			key := make(Tuple, len(groupIndices))
+			for i, idx := range groupIndices {
+				key[i] = tuple[idx]
+			}
 			group = &batchAggregateGroup{
-				key:    Tuple(key.values),
+				key:    key,
 				values: make([][]interface{}, len(aggregates)),
 			}
 			groups.Put(key, group)
@@ -870,7 +875,9 @@ func (r *StreamingAggregateRelation) fold() (result *MaterializedRelation) {
 
 	// Single pass over source: group and aggregate incrementally. TupleKeyMap
 	// preserves typed datalog equality without allocating formatted string keys.
-	groups := NewTupleKeyMap()
+	// Each group's key tuple is the member the map holds, probed by a source
+	// tuple at the group positions (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, L2).
+	groups := NewTupleKeyMap(groupIndices, allPositions(len(groupIndices)), 0)
 	var groupOrder []*streamingAggregateGroup
 
 	it := r.source.Iterator()
@@ -890,15 +897,18 @@ func (r *StreamingAggregateRelation) fold() (result *MaterializedRelation) {
 		tupleCount++
 
 		// Probe positionally — the common case is another tuple for an
-		// existing group; the key materializes only when the group is new.
-		groupValue, exists := groups.GetPositions(tuple, groupIndices)
+		// existing group; the key tuple is built only when the group is new.
+		groupValue, exists := groups.Get(tuple)
 		var group *streamingAggregateGroup
 		if exists {
 			group = groupValue.(*streamingAggregateGroup)
 		} else {
-			key := NewTupleKey(tuple, groupIndices)
+			key := make(Tuple, len(groupIndices))
+			for i, idx := range groupIndices {
+				key[i] = tuple[idx]
+			}
 			group = &streamingAggregateGroup{
-				key:    Tuple(key.values),
+				key:    key,
 				states: make([]aggregateAccumulator, len(r.aggregates)),
 			}
 			groups.Put(key, group)

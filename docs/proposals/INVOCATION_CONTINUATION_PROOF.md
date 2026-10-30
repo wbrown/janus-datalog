@@ -96,7 +96,6 @@ The change carries these tests, each pinning the theorem named.
 - `TestAFramesInvocationClauseContinuesUnderTheClauseItStandsFor` (executor, new). A clause nothing stands for continues under itself, and a frame's clause continues under the clause it stands for (L2, L3).
 - The other forms of `TestRules_InvocationUnderAFormEvaluatesOncePerQuery`, `TestRules_ABoundInvocationOverARelationInputRunsOnce` and `TestRules_TwoInvocationsUnderAFormKeepTheirOwnSeeds` (storage), run unchanged (T4).
 - `TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation` and `TestQueriesAnswerAlikeUnderBothOptimizerModes` (storage), the differentials over rule evaluation and real queries, run unchanged (T2).
-- `make test`, the gate.
 
 ## 6. The change the proof licenses
 
@@ -110,7 +109,7 @@ The change carries these tests, each pinning the theorem named.
 
 - Two invocation clauses of one form execution whose frames render to one text. Each `executeBoundInvocation` call writes the standing for its clause, and a frame's build between another clause's write and this clause's next continues the other clause's evaluation. Each evaluation is still a fixpoint over the keys it was seeded with, so L5's argument holds for the answers. The evaluations such a pair runs are at most two, where before the change they were at most three: one under the frame's clause for every windowed run of either, and one under each clause for its held runs.
 - A data pattern's frame, which holds no invocation and creates no evaluation.
-- The cost of the standing: one map read per derivation under continuations and one map write per windowed invocation, per run and never per tuple. `BenchmarkComplexQueryCheckpoint` is the instrument, and its figures belong in `PERFORMANCE_STATUS.md`.
+- The cost of the standing: one map read per derivation under continuations and one map write per windowed invocation, per run and never per tuple.
 
 ## 8. Alternatives excluded
 

@@ -68,12 +68,13 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 	// relation answers RequiresCopy true whenever it handed back a tuple.
 	answers := func(t *testing.T, arm string, result Relation, expected []Tuple, workspace bool) int {
 		require.Equal(t, []query.Symbol{e, l, r}, result.Symbols(), arm)
-		want := NewTupleKeyMapWithCapacity(len(expected))
+		positions := allPositions(3)
+		want := NewTupleSet(positions, positions, len(expected))
 		for _, tuple := range expected {
-			require.False(t, want.PutIfAbsent(NewTupleKeyFull(tuple), true),
-				"the reference holds each pair once")
+			require.False(t, want.Probe(tuple), "the reference holds each pair once")
+			want.Add(tuple)
 		}
-		got := NewTupleKeyMapWithCapacity(len(expected))
+		got := NewTupleSet(positions, positions, len(expected))
 		count := 0
 		copies := result.RequiresCopy()
 		var kept Tuple
@@ -86,10 +87,10 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 			if copies {
 				tuple = copyTuple(tuple)
 			}
-			require.True(t, want.Exists(NewTupleKeyFull(tuple)),
+			require.True(t, want.Probe(tuple),
 				"%s answered %v, which is no pair of the join", arm, tuple)
-			require.False(t, got.PutIfAbsent(NewTupleKeyFull(tuple), true),
-				"%s answered %v twice", arm, tuple)
+			require.False(t, got.Probe(tuple), "%s answered %v twice", arm, tuple)
+			got.Add(tuple)
 			count++
 			return nil
 		}))

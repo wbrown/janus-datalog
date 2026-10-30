@@ -204,6 +204,7 @@ func (m *PatternMatcher) matchWithHashJoin(
 		position:     position,
 		constraints:  constraints,
 		hashSet:      hashSet,
+		probe:        make(executor.Tuple, 1),
 		iter:         resolvedIter,
 		workspace:    make(executor.Tuple, len(symbols)),
 		tupleBuilder: m.getTupleBuilder(pattern, symbols),
@@ -369,23 +370,25 @@ func (m *PatternMatcher) scanBoundForValues(index IndexType, e, a, v, tx interfa
 	return ScanBound{Index: index, Prefix: prefix}
 }
 
-// buildHashSet creates a typed hash set from the binding relation. It returns
-// all tuples per key, the distinct keys in the order the relation first yields
-// each, and the tuple count. The keys decide the scan: one key narrows one
-// scan to its value, and several are sought one by one or probed against one
-// scan of the extent (matchWithHashJoin). The tuple count is the size of the
-// binding set, which binding.size reports. The binding relation holds typed
-// bindings alone, selected at the match's entry (MatchWithConstraints), so
-// every tuple joins by its key and none reaches matchesDatom mistyped.
+// buildHashSet creates the index of the binding relation's tuples by their
+// value at position, probed by a one-tuple holding a datom's value at that
+// position (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, L2). It returns the
+// index, the distinct keys in the order the relation first yields each, and
+// the tuple count. The keys decide the scan: one key narrows one scan to its
+// value, and several are sought one by one or probed against one scan of the
+// extent (matchWithHashJoin). The tuple count is the size of the binding set,
+// which binding.size reports. The binding relation holds typed bindings
+// alone, selected at the match's entry (MatchWithConstraints), so every tuple
+// joins by its key and none reaches matchesDatom mistyped.
 func (m *PatternMatcher) buildHashSet(
 	bindingRel executor.Relation,
 	position int,
-) (*executor.TupleKeyMap, []interface{}, int, error) {
+) (*executor.JoinIndex, []interface{}, int, error) {
 	capacity := bindingRel.Size()
 	if capacity < 0 {
 		capacity = 0
 	}
-	hashSet := executor.NewTupleKeyMapWithCapacity(capacity)
+	hashSet := executor.NewJoinIndex([]int{0}, []int{position}, capacity)
 	var keys []interface{}
 	tuples := 0
 
@@ -397,15 +400,11 @@ func (m *PatternMatcher) buildHashSet(
 		}
 
 		tuples++
-		value := tuple[position]
-		if existing, found := hashSet.GetValue(value); found {
-			hashSet.PutValue(value, append(existing.([]executor.Tuple), tuple))
-		} else {
-			// No copy needed: binding relations are materialized
-			// (materializeRelationsForPattern), and sliceIterator returns
-			// distinct slice references without reusing storage.
-			hashSet.PutValue(value, []executor.Tuple{tuple})
-			keys = append(keys, value)
+		// No copy needed: binding relations are materialized
+		// (materializeRelationsForPattern), and sliceIterator returns
+		// distinct slice references without reusing storage.
+		if hashSet.Add(tuple) {
+			keys = append(keys, tuple[position])
 		}
 	}
 	iterErr := iter.Error()
@@ -670,8 +669,9 @@ type hashJoinIterator struct {
 	symbols      []query.Symbol
 	position     int
 	constraints  []executor.StorageConstraint
-	hashSet      *executor.TupleKeyMap // Built upfront - maps key to all matching tuples
-	iter         Iterator              // Storage iterator
+	hashSet      *executor.JoinIndex // Built upfront - the binding tuples by their key
+	probe        executor.Tuple      // The one-tuple a probe fills with the datom's key
+	iter         Iterator            // Storage iterator
 	tupleBuilder *query.InternedTupleBuilder
 	current      executor.Tuple
 	workspace    executor.Tuple // Reusable workspace for tuple building
@@ -706,34 +706,29 @@ func (it *hashJoinIterator) Next() bool {
 			continue
 		}
 
-		// Extract probe key based on position
-		probeKey := extractProbeKey(datom, it.position)
-
-		// Probe hash set (O(1) lookup)
-		if bindingTuplesValue, found := it.hashSet.GetValue(probeKey); found {
-			bindingTuples := bindingTuplesValue.([]executor.Tuple)
-			// Check against ALL binding tuples with this key
-			// (for multi-symbol bindings, there may be multiple tuples per key)
-			for _, bindingTuple := range bindingTuples {
-				// Verify full pattern match
-				if it.matchPlan.matches(it.matcher, datom, bindingTuple) {
-					// Apply storage constraints
-					satisfiesAll := true
-					for _, constraint := range it.constraints {
-						if !constraint.Evaluate(datom) {
-							satisfiesAll = false
-							break
-						}
+		// Probe the index with the datom's value at the key position. Every
+		// binding tuple with this key is checked (for multi-symbol bindings,
+		// there may be multiple tuples per key).
+		it.probe[0] = extractProbeKey(datom, it.position)
+		for _, bindingTuple := range it.hashSet.Probe(it.probe) {
+			// Verify full pattern match
+			if it.matchPlan.matches(it.matcher, datom, bindingTuple) {
+				// Apply storage constraints
+				satisfiesAll := true
+				for _, constraint := range it.constraints {
+					if !constraint.Evaluate(datom) {
+						satisfiesAll = false
+						break
 					}
+				}
 
-					if satisfiesAll {
-						it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
-						it.current = it.workspace
-						if it.report != nil {
-							it.report.matched++
-						}
-						return true
+				if satisfiesAll {
+					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+					it.current = it.workspace
+					if it.report != nil {
+						it.report.matched++
 					}
+					return true
 				}
 			}
 		}

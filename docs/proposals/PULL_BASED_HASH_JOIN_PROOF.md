@@ -107,7 +107,7 @@ Every name below is the code's, given a symbol for the proof.
 
 **T6 (the route).** A join result answers -1 for its size. A later pattern or invocation sharing its symbols takes the windowed route, which reads the join result once and answers the tuples the matcher's route answers. A scan failure on that route surfaces when the result is driven, where the matcher's route surfaced it from the call. At the public boundary a query whose final relation is a join result, or a projection of one, answers -1 for its size, as a query ending in a scan does (P8), and a caller that counts iterates.
 
-**T7 (cost).** The per-pair path loses the call to `combineTuplesIndexed` and the allocation it made, and gains no call: the fill is written in `hashJoinIterator.Next`. The benchmarks in §5 measure the change, and their figures are recorded in `PERFORMANCE_STATUS.md`.
+**T7 (cost).** The per-pair path loses the call to `combineTuplesIndexed` and the allocation it made, and gains no call: the fill is written in `hashJoinIterator.Next`.
 
 ## 4. Lemmas
 
@@ -175,10 +175,6 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - The binder: `TestBindQueryInputsAnswersAHeldRelation` (executor, new). The relation `BindQueryInputs` answers for two relation inputs sharing a symbol reports its size and is read twice (L4). The `:in` tests of `bind_query_inputs_streaming_test.go` run unchanged.
 - The key map: `TestTupleKeyMapWithAnUnknownCapacityStartsEmpty` (executor, new). `NewTupleKeyMapWithCapacity(-1)` answers an empty map that admits a key (L8).
 - The route: `TestAPatternOverAJoinResultTakesTheWindow` (executor, new). A pattern after a join of two groups is answered through the windowed route, the window event reporting the pattern's form, and the answers equal the matcher route's over the same data (T6, L7).
-- Gate 7, focused benchmarks on valid inputs: `BenchmarkHashJoinIdentityKeys`, `BenchmarkHashJoinIdentityHighFanout`, `BenchmarkHashJoinIdentityLargeResult`, `BenchmarkHashJoinMaterializedVsStreaming` and `BenchmarkSymmetricHashJoin`, before and after (T4, T7).
-- Gate 8: `BenchmarkComplexQueryCheckpoint` (`datalog/storage/optimization_matrix_test.go`), before and after, the before on this branch at the commit before the change.
-- Gate 9: `make test`, the executor package under `-race`, and the fixed-seed rules test above.
-- The failure: the reproduction's `unfilled` query through the CLI, before and after, with its allocation profile.
 
 ## 6. The change the proof licenses
 
@@ -196,13 +192,13 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - `tuple_key.go`: `NewTupleKeyMapWithCapacity`'s doc states that a negative size, a stream's size answer, starts the map empty. The code is unchanged, since `make` reads a negative hint so.
 - `datalog/storage/database.go`: `DefaultPlannerOptions`'s comment on `EnableStreamingJoins` says the option selects nothing in the hash join.
 - Tests: the new assertions and tests of §5. The cases of `TestAJoinOfTwoSetsAnswersEachPairOnce` that assert the materialized arm's probe event mode assert the streaming mode.
-- `docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md`: the completed changes gain this one. `PERFORMANCE_STATUS.md` records the benchmarks and the reproduction.
+- `docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md`: the completed changes gain this one.
 
 ## 7. What the proof does not cover
 
 - A probe side that already carries a recorded failure, a materialized relation whose collection failed or a stream whose cache completed with an error, under an empty build. The join opens nothing, so the failure is not raised here. It surfaces where the relation is next driven, and a relation nothing else drives keeps it unraised. Today the materialized arm drains the probe and raises it. The alternative, opening the probe's iterator and closing it without a pull, raises a materialized relation's recorded failure and records an incomplete materialization on a caching stream.
 - The symmetric arm, which `ChooseJoinStrategy` selects under `EnableSymmetricHashJoin`. It builds its tuples fresh and answers `RequiresCopy` false as before.
 - `crossProduct`, reached by `Join` on sides sharing no symbol. It opens its right side once per left tuple and so cannot take a stream as its right side. No consumer in the enumeration hands it a join result as its right side: `Collapse` joins only groups sharing a symbol, and `findOuterRelation` joins under the common symbols, empty or not, through the hash join.
-- The cost of the windowed route against the matcher's route for a pattern after a join. Gate 8 and the reproduction measure it, and this proof does not bound it.
+- The cost of the windowed route against the matcher's route for a pattern after a join, which this proof does not bound.
 - `reportJoin`'s size reads of the left and right sides, which it makes of every side that is not a `StreamingRelation`. The record lists annotation realization among its remaining opportunities.
 - Whether `EnableStreamingJoins` is retired from `ExecutorOptions` and `PlannerOptions`. It selects nothing in the hash join under this change and stays where it is.

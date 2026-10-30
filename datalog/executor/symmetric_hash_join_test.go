@@ -301,14 +301,15 @@ func TestSymmetricHashJoinNextAdvancesAndTupleAnswersTheCurrent(t *testing.T) {
 		t.Fatal("the join of three matching pairs answers a first tuple")
 	}
 	first := it.Tuple()
-	if again := it.Tuple(); !tupleValuesEqual(first, again) {
+	positions := allPositions(len(first))
+	if again := it.Tuple(); !tupleKeysMatch(first, positions, again, positions) {
 		t.Fatalf("Tuple answers the current tuple until the next Next: got %v then %v", first, again)
 	}
 	if !it.Next() {
 		t.Fatal("the join of three matching pairs answers a second tuple")
 	}
 	second := it.Tuple()
-	if tupleValuesEqual(first, second) {
+	if tupleKeysMatch(first, positions, second, positions) {
 		t.Fatalf("Next advances to the next joined tuple: got %v twice", first)
 	}
 	pulled := 2
@@ -318,6 +319,36 @@ func TestSymmetricHashJoinNextAdvancesAndTupleAnswersTheCurrent(t *testing.T) {
 	if pulled != 3 {
 		t.Fatalf("a reader pulling with Next alone reaches the end: pulled %d of 3 pairs", pulled)
 	}
+}
+
+// A key held by two tuples of the left side and by two of the right answers
+// one joined tuple per pair agreeing on it, each holding that pair's values,
+// with the join symbol last on the left and first on the right, so each
+// side's index is probed at the other side's positions
+// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T1, P3, L3).
+func TestSymmetricHashJoin_AKeyHeldTwiceOnEitherSideAnswersEachPair(t *testing.T) {
+	quire, leaves, press := datalog.NewSymbol("?quire"), datalog.NewSymbol("?leaves"), datalog.NewSymbol("?press")
+	q1, q2 := datalog.NewIdentity("shj:quire1"), datalog.NewIdentity("shj:quire2")
+	left := NewStreamingRelation([]query.Symbol{leaves, quire}, &sliceIterator{tuples: []Tuple{
+		{int64(8), q1}, {int64(12), q2}, {int64(16), q1},
+	}, pos: -1})
+	right := NewStreamingRelation([]query.Symbol{quire, press}, &sliceIterator{tuples: []Tuple{
+		{q1, "folded"}, {q2, "sewn"}, {q1, "pressed"},
+	}, pos: -1})
+
+	result := SymmetricHashJoin(left, right, []query.Symbol{quire})
+	assert.Equal(t, []query.Symbol{leaves, quire, press}, result.Symbols())
+	var joined []Tuple
+	it := result.Iterator()
+	for it.Next() {
+		joined = append(joined, it.Tuple())
+	}
+	assert.NoError(t, it.Close())
+	assert.ElementsMatch(t, []Tuple{
+		{int64(8), q1, "folded"}, {int64(8), q1, "pressed"},
+		{int64(16), q1, "folded"}, {int64(16), q1, "pressed"},
+		{int64(12), q2, "sewn"},
+	}, joined)
 }
 
 // BenchmarkSymmetricHashJoin compares symmetric vs standard hash join

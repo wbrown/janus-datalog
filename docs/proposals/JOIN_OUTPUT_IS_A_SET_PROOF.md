@@ -42,7 +42,7 @@ Every name below is the code's, given a symbol for the proof.
 
 **T5 (semi-join and anti-join).** For L a set, the tuples `SemiJoin` and `AntiJoin` keep form a set, and the `deduplicateTuples` pass `materializeFilteredLeft` runs for a keyless left removes nothing.
 
-**T6 (cost).** Per combined tuple, the materialized and streaming arms stop computing a hash of the whole tuple and probing or inserting a map entry; the symmetric arm the same; and no arm allocates the map or grows it with the result. No call is added on any path, so the compiler's inlining report has nothing to decide; the benchmarks in §5 measure the change, and their figures are recorded in `PERFORMANCE_STATUS.md`.
+**T6 (cost).** Per combined tuple, the materialized and streaming arms stop computing a hash of the whole tuple and probing or inserting a map entry; the symmetric arm the same; and no arm allocates the map or grows it with the result. No call is added on any path, so the compiler's inlining report has nothing to decide.
 
 ## 4. Lemmas
 
@@ -76,13 +76,9 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - Gate 2, the shapes: the same test's cases for an empty side, one tuple on each side, a key repeated on one side alone, on both sides, and a large input (T1).
 - Gate 3, iterator and close errors: the executor's iterator-contract tests of the join's build and probe errors, run unchanged; the change touches no error path.
 - Gate 4, workspace reuse: a case of the new test whose probe side is a workspace-reusing stream (`newReusingWorkspaceStream`), asserting the same pair set (T1).
-- Gate 5, keys: `TestJoinPropertiesDeriveTheCompositeOfEachSidesKeys` (executor, new, red first): a left key and a right key neither within J derive their composite; a left key within J keeps the right keys and adds no second copy of the composite they equal; a side with no key contributes no composite (T3). The existing `TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey`, `TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey`, `TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey`, `TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys` and `TestRelationPropertyPropagation` keep every key assertion, each of which T3 leaves as it is, and lose their assertions on the `seen` field (T4).
+- Gate 5, keys: `TestJoinPropertiesDeriveTheCompositeOfEachSidesKeys` (executor, new): a left key and a right key neither within J derive their composite; a left key within J keeps the right keys and adds no second copy of the composite they equal; a side with no key contributes no composite (T3). The existing `TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey`, `TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey`, `TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey`, `TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys` and `TestRelationPropertyPropagation` keep every key assertion, each of which T3 leaves as it is, and lose their assertions on the `seen` field (T4).
 - P2, the equality: `TestValuesEqualIsAnEquivalenceAndEqualValuesHashAlike` (datalog, new): a table of the domain's representations partitioned into classes, asserted equal within a class in both directions, unequal across classes in both directions, reflexive on every member, and hashed alike within a class, with two tuples equal at every position hashed alike. L1 and L4 read E as an equivalence, and P1's set criterion reads the hash as agreeing with E.
 - Gate 6, the physical path: the new test reads the join's events through a handler and asserts that the `JoinProbe` event's result count equals the pair count in each hash arm and that the `JoinStrategy` event reports the symmetric arm for the symmetric case, so every pair was emitted and none rejected (T2).
-- Gate 7, focused benchmarks on valid inputs: `BenchmarkHashJoinIdentityKeys`, `BenchmarkHashJoinIdentityHighFanout`, `BenchmarkHashJoinIdentityLargeResult`, `BenchmarkHashJoinMaterializedVsStreaming` and `BenchmarkSymmetricHashJoin`, before and after (T6). `BenchmarkHashJoinIdentityDuplicates` is deleted: the record rejects a benchmark that violates the set contract.
-- Gate 8: `BenchmarkComplexQueryCheckpoint` (`datalog/storage/optimization_matrix_test.go`), before and after.
-- Gate 9: `make test`, the executor package under `-race`, and the fixed-seed rules test above.
-- The failure: the reproduction's `unfilled` query through the CLI, before and after.
 - `TestSemiAndAntiJoinsPreserveLeftProperties` and `TestSemiAndAntiJoinsCopyWorkspaceReusingLeftInput`, unchanged, pin T5; `TestSemiAndAntiJoinsDeduplicateUnkeyedLeftInput` is deleted with the contract violation it was built on.
 
 ## 6. The change the proof licenses
@@ -91,12 +87,12 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - `join.go`: the materialized arm appends every combined tuple and builds no map; the streaming arm builds no map and `hashJoinIterator` has no `seen` field; `hashJoinIterator.Next` emits every combined tuple. `SemiJoin` and `AntiJoin` construct their result through `newMaterializedRelationFromSet` over the left's symbols and properties, and `materializeFilteredLeft` is deleted.
 - `symmetric_hash_join.go`: `symmetricHashJoinIterator` has no `seen` field and both batch loops emit every combined tuple.
 - Tests: the three fixtures are deleted; `mockIterator` and `newMockIterator` are deleted, a raw tuple stream being `sliceIterator` over its slice and a relation input being a set built through `NewMaterializedRelation`; the `seen` assertions leave the property tests; the two new tests land.
-- `docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md`: the candidate-key origins gain the composite of a join's two sides, the consumers lose the hash join's dedup elision, and the completed changes gain this one. `PERFORMANCE_STATUS.md` records the benchmarks.
+- `docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md`: the candidate-key origins gain the composite of a join's two sides, the consumers lose the hash join's dedup elision, and the completed changes gain this one.
 
 ## 7. What the proof does not cover
 
 - The input side of P1. A caller that hands a join a relation that is not a set gets a result that is not a set, where today it got one deduplicated by seen. The record names such inputs invalid, and no production constructor admits one.
-- The default path. The streaming and symmetric arms are proven alike and measured by their own benchmarks; P9 keeps them opt-in, and this change does not alter the default.
+- The default path. The streaming and symmetric arms are proven alike. P9 keeps them opt-in, and this change does not alter the default.
 - The order a body's clauses run in, which decides how many relations a delta copy joins before its delta; the planner is not touched.
 - `derivedSet.absorb`, which keys every tuple a body answers into the predicate's set. That is the union across bodies and iterations, which the record requires to restore set semantics, and it stays.
 - `crossProduct`, which constructs through `NewMaterializedRelationWithOptions` and so runs a dedup pass over a product of sets; the record lists it as avoidable, and no failure names it.

@@ -467,15 +467,17 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 }
 
 // derivedSet accumulates a predicate's tuples over its canonical symbols,
-// each once.
+// each once, each held in the set under its whole-tuple key
+// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T4).
 type derivedSet struct {
 	symbols []query.Symbol
 	tuples  []Tuple
-	keys    *TupleKeyMap
+	keys    *TupleSet
 }
 
 func newDerivedSet(symbols []query.Symbol) *derivedSet {
-	return &derivedSet{symbols: symbols, keys: NewTupleKeyMap()}
+	positions := allPositions(len(symbols))
+	return &derivedSet{symbols: symbols, keys: NewTupleSet(positions, positions, 0)}
 }
 
 // absorb adds the tuples of rel the set does not hold, as they are pulled,
@@ -485,7 +487,7 @@ func newDerivedSet(symbols []query.Symbol) *derivedSet {
 // so one the set holds is rejected without a copy, and is held as it is from
 // a stable source or copied once, on admission, from a reusing one. A tuple
 // in another layout is read out at the set's positions into a copy before it
-// is probed. Every key holds the held tuple by reference.
+// is probed. The held tuple is the set's member.
 func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
 	positions, err := query.SymbolIndexTable(rel.Symbols(), s.symbols)
 	if err != nil {
@@ -505,13 +507,13 @@ func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
 			}
 			tuple = held
 		}
-		if s.keys.Exists(NewTupleKeyFull(tuple)) {
+		if s.keys.Probe(tuple) {
 			return nil
 		}
 		if sameLayout && copies {
 			tuple = copyTuple(tuple)
 		}
-		s.keys.PutIfAbsent(NewTupleKeyFull(tuple), struct{}{})
+		s.keys.Add(tuple)
 		s.tuples = append(s.tuples, tuple)
 		added = append(added, tuple)
 		return nil

@@ -56,10 +56,10 @@ func TestEqualVectorValuesJoin(t *testing.T) {
 // equality chain.
 func TestDistinctVectorValuesHashWithSpread(t *testing.T) {
 	hashes := make(map[uint64]bool)
+	positions := allPositions(1)
 	for i := 0; i < 100; i++ {
 		vec := []interface{}{int64(i), "tag"}
-		key := NewTupleKeyFull(Tuple{vec})
-		hashes[key.hash] = true
+		hashes[hashTuplePositions(Tuple{vec}, positions)] = true
 	}
 	// Content hashing should give ~100 distinct hashes; the address-constant
 	// default gives exactly 1. Any threshold between rules out the defect
@@ -84,7 +84,7 @@ func TestNonValueTypeHashPanics(t *testing.T) {
 			t.Fatalf("panic should name the value-domain violation, got: %v", r)
 		}
 	}()
-	NewTupleKeyFull(Tuple{map[string]interface{}{"k": "v"}})
+	hashTuplePositions(Tuple{map[string]interface{}{"k": "v"}}, allPositions(1))
 }
 
 // Typed slices are part of the value domain by the equality layer's own
@@ -102,17 +102,17 @@ func TestTypedSliceValuesHashLikeVectors(t *testing.T) {
 		t.Fatal("precondition: ValuesEqual treats []string and []interface{} with equal elements as equal")
 	}
 
-	keyTyped := NewTupleKeyFull(Tuple{typed})
-	keyGeneric := NewTupleKeyFull(Tuple{generic})
-	if keyTyped.hash != keyGeneric.hash {
-		t.Fatalf("cross-representation equal slices must hash equally: %d != %d", keyTyped.hash, keyGeneric.hash)
+	positions := allPositions(1)
+	hashTyped := hashTuplePositions(Tuple{typed}, positions)
+	hashGeneric := hashTuplePositions(Tuple{generic}, positions)
+	if hashTyped != hashGeneric {
+		t.Fatalf("cross-representation equal slices must hash equally: %d != %d", hashTyped, hashGeneric)
 	}
 
 	// And distinct typed slices must not collapse onto one hash.
 	hashes := make(map[uint64]bool)
 	for i := 0; i < 100; i++ {
-		key := NewTupleKeyFull(Tuple{[]string{"tag", string(rune('a' + i%26)), string(rune('0' + i/26))}})
-		hashes[key.hash] = true
+		hashes[hashTuplePositions(Tuple{[]string{"tag", string(rune('a' + i%26)), string(rune('0' + i/26))}}, positions)] = true
 	}
 	if len(hashes) < 90 {
 		t.Fatalf("expected ≥90 distinct hashes for 100 distinct typed slices, got %d", len(hashes))
@@ -129,10 +129,11 @@ func TestEqualVectorValuesHashConsistently(t *testing.T) {
 		t.Fatal("precondition: vectors must be ValuesEqual")
 	}
 
-	keyA := NewTupleKeyFull(Tuple{vecA})
-	keyB := NewTupleKeyFull(Tuple{vecB})
-	if keyA.hash != keyB.hash {
-		t.Fatalf("ValuesEqual values must hash equally: %d != %d", keyA.hash, keyB.hash)
+	positions := allPositions(1)
+	hashA := hashTuplePositions(Tuple{vecA}, positions)
+	hashB := hashTuplePositions(Tuple{vecB}, positions)
+	if hashA != hashB {
+		t.Fatalf("ValuesEqual values must hash equally: %d != %d", hashA, hashB)
 	}
 }
 
@@ -143,10 +144,11 @@ func TestSignedZeroHashesConsistentlyAcrossSetOperations(t *testing.T) {
 		t.Fatal("precondition: signed zero values must be equal")
 	}
 
-	positiveKey := NewTupleKeyFull(Tuple{positive})
-	negativeKey := NewTupleKeyFull(Tuple{negative})
-	if positiveKey.hash != negativeKey.hash {
-		t.Fatalf("equal signed zeros must hash equally: %d != %d", positiveKey.hash, negativeKey.hash)
+	positions := allPositions(1)
+	positiveHash := hashTuplePositions(Tuple{positive}, positions)
+	negativeHash := hashTuplePositions(Tuple{negative}, positions)
+	if positiveHash != negativeHash {
+		t.Fatalf("equal signed zeros must hash equally: %d != %d", positiveHash, negativeHash)
 	}
 
 	value := datalog.NewSymbol("?value")
@@ -251,8 +253,9 @@ func assertEqualValuesHashEqually(
 		t.Fatalf("case %d: generated values are not equal: %T(%v), %T(%v)",
 			caseIndex, left, left, right, right)
 	}
-	leftHash := NewTupleKeyFull(Tuple{left}).hash
-	rightHash := NewTupleKeyFull(Tuple{right}).hash
+	positions := allPositions(1)
+	leftHash := hashTuplePositions(Tuple{left}, positions)
+	rightHash := hashTuplePositions(Tuple{right}, positions)
 	if leftHash != rightHash {
 		t.Fatalf("case %d: equal values hash differently: %d != %d (%T, %T)",
 			caseIndex, leftHash, rightHash, left, right)

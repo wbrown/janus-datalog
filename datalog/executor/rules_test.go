@@ -752,17 +752,19 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 				}
 				for i := 0; i < f.arity; i++ {
 					bound := mustParse(t, fmt.Sprintf(`[:find %s :in $ %% %s :where (%s %s)]`, head, vars[i], f.predicate, head))
-					values := NewTupleKeyMap()
+					values := NewTupleSet([]int{i}, []int{i}, 0)
 					for _, tuple := range all {
-						if values.PutIfAbsent(NewTupleKeyFull(Tuple{tuple[i]}), struct{}{}) {
+						if values.Probe(tuple) {
 							continue
 						}
+						values.Add(tuple)
 						v := tuple[i]
-						want := NewTupleKeyMap()
+						positions := allPositions(len(tuple))
+						want := NewTupleSet(positions, positions, 0)
 						wantCount := 0
 						for _, w := range all {
 							if datalog.ValuesEqual(w[i], v) {
-								want.PutIfAbsent(NewTupleKeyFull(w), struct{}{})
+								want.Add(w)
 								wantCount++
 							}
 						}
@@ -779,7 +781,7 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 							t.Errorf("position %d bound to %v: got %d tuples, want %d", i, v, len(got), wantCount)
 						}
 						for _, g := range got {
-							if !want.Exists(NewTupleKeyFull(g)) {
+							if !want.Probe(g) {
 								t.Errorf("position %d bound to %v: %v is not among the whole invocation's tuples", i, v, g)
 							}
 						}
@@ -832,16 +834,18 @@ func tuplesBoundTo(t *testing.T, exec *Executor, rs *query.RuleSet, q *query.Que
 // pages given.
 func requireSamePages(t *testing.T, label string, got []Tuple, want ...datalog.Identity) {
 	t.Helper()
-	have := NewTupleKeyMap()
+	have := NewTupleSet([]int{0}, []int{0}, len(got))
 	for _, tuple := range got {
-		have.PutIfAbsent(NewTupleKeyFull(tuple), struct{}{})
+		if !have.Probe(tuple) {
+			have.Add(tuple)
+		}
 	}
 	if len(got) != len(want) {
 		t.Errorf("%s = %v, want %v", label, got, want)
 		return
 	}
 	for _, p := range want {
-		if !have.Exists(NewTupleKeyFull(Tuple{p})) {
+		if !have.Probe(Tuple{p}) {
 			t.Errorf("%s = %v, want %v", label, got, want)
 			return
 		}
