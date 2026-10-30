@@ -167,7 +167,7 @@ func (m *PatternMatcher) matchWithHashJoin(
 			},
 		}
 		if seeks != nil {
-			// One run per key and no single one: the count of scans opened
+			// One run per key and no single one: the count of runs addressed
 			// stands in the bound's place.
 			report.strategy = annotations.ScanPerKeySeek
 		} else {
@@ -179,7 +179,7 @@ func (m *PatternMatcher) matchWithHashJoin(
 	// PHASE 3: Create storage iterator
 	var storageIter Iterator
 	if seeks != nil {
-		storageIter = &perKeySeekIterator{reader: m.reader, report: report, bounds: seeks}
+		storageIter = &perKeySeekIterator{reader: m.reader, report: report, extent: bound, bounds: seeks}
 	} else {
 		storageIter, err = OpenKeyScan(m.reader, report, bound)
 		if err != nil {

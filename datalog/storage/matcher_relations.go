@@ -2000,9 +2000,9 @@ func (m *PatternMatcher) matchVectorWithBindings(
 				},
 				matchErr == nil,
 				map[string]interface{}{
-					annotations.KeyPattern:     pattern,
-					annotations.KeyStrategy:    annotations.ScanPerBinding,
-					annotations.KeyScansOpened: resolutions,
+					annotations.KeyPattern:       pattern,
+					annotations.KeyStrategy:      annotations.ScanPerBinding,
+					annotations.KeyRunsAddressed: resolutions,
 				})
 		}()
 	}

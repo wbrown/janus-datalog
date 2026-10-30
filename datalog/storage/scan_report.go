@@ -113,11 +113,11 @@ func (r *scanReport) close(completed bool) {
 		addBoundFields(data, *r.run)
 	}
 	// An arm is described one way or the other: by the run it addressed, or —
-	// having no single one — by how many peer runs it opened. Reported even at
-	// zero, which is a real outcome on a path whose short-circuit answers
+	// having no single one — by how many peer runs it addressed. Reported even
+	// at zero, which is a real outcome on a path whose short-circuit answers
 	// without opening a scan of its own.
 	if r.run == nil {
-		data[annotations.KeyScansOpened] = r.peers
+		data[annotations.KeyRunsAddressed] = r.peers
 	}
 	emitScanCompletion(r.handler, annotations.StorageScanComplete, r.opened,
 		scanFunnel{scanned: r.scanned, resolved: r.resolved, matched: r.matched},

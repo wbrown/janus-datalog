@@ -57,9 +57,9 @@ type ExecutorOptions struct {
 
 // SmallBindingBoundary is the size at or below which a binding set is small
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.6). The matcher seeks
-// a small set's distinct keys one by one, each by its own narrowed scan, and
-// joins a large set against one scan of the pattern's extent, by a hash join
-// or a merge join (chooseJoinStrategy in datalog/storage/hash_join_matcher.go).
+// a small set's distinct keys one by one in one scan of the pattern's extent,
+// and joins a large set against one scan of the extent, by a hash join or a
+// merge join (chooseJoinStrategy in datalog/storage/hash_join_matcher.go).
 // Declared here rather than beside the matcher because the window's cap
 // defaults to it and storage imports this package.
 const SmallBindingBoundary = 1000

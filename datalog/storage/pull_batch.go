@@ -89,7 +89,7 @@ func (d *Database) ResolveAllAttributesMany(
 			data := map[string]interface{}{
 				annotations.KeyDatomsScanned: report.scanned,
 				annotations.KeyValuesServed:  served,
-				annotations.KeyScansOpened:   1,
+				annotations.KeyRunsAddressed: 1,
 			}
 			addBoundFields(data, bound)
 			d.plannerOptions.Handler(annotations.Event{

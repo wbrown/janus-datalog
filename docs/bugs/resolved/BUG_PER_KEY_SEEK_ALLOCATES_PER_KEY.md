@@ -1,13 +1,20 @@
 # The per-key seek opens one scan per key, and the opens cost nothing the one scan does not
 
-**Status**: Resolved.
+**Status**: Resolved, and its measurement superseded. `BenchmarkPerKeySeek`
+opened its database with the EA cache on, under which a binding at the
+entity position is served from the cache and the per-key seek arm never
+runs, so every figure below is the cache path's and not the arm's. The
+benchmark opens the cache off now, and the arm opens one scan over the
+pattern's extent sought per key (`docs/proposals/ONE_SCAN_SOUGHT_PER_KEY_PROOF.md`);
+its figures are in `PERFORMANCE_STATUS.md` under "One scan sought per key".
 
 The seek answers the keys' datoms, so no answer is wrong. This was a cost
 item. The one measured class the window branch loses to its merge-base is
 the one where the per-key seek replaces a scan, and the allocation each
-seek pays had not been measured. `BenchmarkPerKeySeek` measured it. The
-seek's opens and encodings cost nothing the one scan under the same binding
-does not, so no change to the strategy follows.
+seek pays had not been measured. `BenchmarkPerKeySeek` was taken to have
+measured it, and the conclusion drawn, that the seek's opens and encodings
+cost nothing the one scan under the same binding does not, rested on the
+cache path.
 
 ## The strategy
 

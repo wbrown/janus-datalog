@@ -932,7 +932,7 @@ func (m *PatternMatcher) LookupAllAttributes(
 					annotations.KeyAttribute:     attr,
 					annotations.KeyDatomsScanned: report.scanned,
 					annotations.KeyValuesServed:  len(values),
-					annotations.KeyScansOpened:   report.peers,
+					annotations.KeyRunsAddressed: report.peers,
 				},
 			})
 		}()

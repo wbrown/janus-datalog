@@ -609,7 +609,7 @@ func testPatternLessReadsReportUnderEntityAndAttribute(t *testing.T, mode optimi
 		require.Equal(t, tag, ev.Data[annotations.KeyAttribute])
 		require.NotContains(t, ev.Data, annotations.KeyIndex,
 			"the peek and the resolution are two runs, and neither speaks for the other")
-		require.Equal(t, 2, ev.Data[annotations.KeyScansOpened])
+		require.Equal(t, 2, ev.Data[annotations.KeyRunsAddressed])
 		require.Equal(t, 1, ev.Data[annotations.KeyValuesServed])
 		// The peek advances once to read the first datom's Op and closes; add-wins
 		// resolution then reads the whole (E, A) group, since membership is not
@@ -661,7 +661,7 @@ func testBulkReadsReportUnderNoSingleSubject(t *testing.T, mode optimizerMode) {
 		require.NotNil(t, ev, "a warm that read the index owes a completion")
 		require.NotContains(t, ev.Data, annotations.KeyIndex,
 			"one scan per entity: naming an index would name whichever came last")
-		require.Equal(t, 2, ev.Data[annotations.KeyScansOpened])
+		require.Equal(t, 2, ev.Data[annotations.KeyRunsAddressed])
 		require.Equal(t, 4, ev.Data[annotations.KeyEntriesPopulated],
 			"alice carries three attributes and bob one")
 		require.NotContains(t, ev.Data, annotations.KeyValuesServed,
@@ -693,7 +693,7 @@ func testBulkReadsReportUnderNoSingleSubject(t *testing.T, mode optimizerMode) {
 		require.NotNil(t, ev)
 		require.Equal(t, EATV, ev.Data[annotations.KeyIndex],
 			"one traversal shared across the entity set, and it is nameable")
-		require.Equal(t, 1, ev.Data[annotations.KeyScansOpened])
+		require.Equal(t, 1, ev.Data[annotations.KeyRunsAddressed])
 		require.Equal(t, 3, ev.Data[annotations.KeyValuesServed])
 		require.Positive(t, ev.Data[annotations.KeyDatomsScanned])
 	})
