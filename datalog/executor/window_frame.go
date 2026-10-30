@@ -127,7 +127,8 @@ func (f *windowFrame) windowRun(window []Tuple, ordinal int, opts ExecutorOption
 	}
 	tuples := make([]Tuple, 0, len(window))
 	for _, tuple := range window {
-		if f.ran.Probe(tuple) {
+		_, hash, held := f.ran.Find(tuple)
+		if held {
 			continue
 		}
 		key := make(Tuple, len(f.required))
@@ -135,7 +136,7 @@ func (f *windowFrame) windowRun(window []Tuple, ordinal int, opts ExecutorOption
 		for i, pos := range f.subjectPos {
 			key[f.framePos[i]] = tuple[pos]
 		}
-		f.ran.Add(key)
+		f.ran.Add(key, hash)
 		tuples = append(tuples, key)
 	}
 	f.run = newMaterializedRelationFromSet(f.required, tuples, opts, deduplicatedProperties(f.required))

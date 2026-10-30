@@ -189,10 +189,11 @@ func TestJoinIndex_AKeyOfOneTupleAllocatesNoGroup(t *testing.T) {
 }
 
 // An index given a capacity hint allocates nothing at construction beyond
-// its own struct: the table and the members are built at the first add,
-// sized to the hint, so a build that turns out empty costs the struct alone,
-// and adds up to the hint allocate nothing beyond that first build
-// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T3, L4).
+// its own struct: the tags, the table and the members are built at the
+// first add, sized to the hint, so a build that turns out empty costs the
+// struct alone, and adds up to the hint allocate nothing beyond that first
+// build (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T3, L4;
+// docs/proposals/TAGGED_SLOT_PROBE_PROOF.md, T4).
 func TestJoinIndex_ACapacityHintAllocatesNothingBeforeTheFirstAdd(t *testing.T) {
 	const hint = 1000
 	// The positions are the caller's, made once outside the measured calls.
@@ -211,7 +212,7 @@ func TestJoinIndex_ACapacityHintAllocatesNothingBeforeTheFirstAdd(t *testing.T) 
 			ix.Add(tuple)
 		}
 	})
-	assert.LessOrEqual(t, filled, 3.0, "the struct, the table and the members, for adds up to the hint")
+	assert.LessOrEqual(t, filled, 4.0, "the struct, the tags, the table and the members, for adds up to the hint")
 	assert.Equal(t, hint, ix.Len())
 }
 

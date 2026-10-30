@@ -301,14 +301,15 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, r
 	}()
 	for iter.Next() {
 		tuple := iter.Tuple()
-		if seen.Probe(tuple) {
+		_, hash, held := seen.Find(tuple)
+		if held {
 			continue
 		}
 		combo := make(Tuple, len(symIndices))
 		for i, idx := range symIndices {
 			combo[i] = tuple[idx]
 		}
-		seen.Add(combo)
+		seen.Add(combo, hash)
 		combos = append(combos, combo)
 	}
 	if e := iter.Error(); resultErr == nil {
@@ -359,14 +360,15 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 		iter := rel.Iterator()
 		for iter.Next() {
 			tuple := iter.Tuple()
-			if _, ok := seen.FindAt(tuple, symIndices); ok {
+			_, hash, held := seen.FindAt(tuple, symIndices)
+			if held {
 				continue
 			}
 			projected := make(Tuple, len(syms))
 			for i, idx := range symIndices {
 				projected[i] = tuple[idx]
 			}
-			seen.Add(projected)
+			seen.Add(projected, hash)
 			allTuples = append(allTuples, projected)
 		}
 		// Capture a branch's deferred scan error so the union doesn't drop it.

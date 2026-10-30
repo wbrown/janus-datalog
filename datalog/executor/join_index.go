@@ -36,7 +36,8 @@ func NewJoinIndex(probePos, storedPos []int, capacity int) *JoinIndex {
 // source reusing its workspace has had it copied already.
 func (ix *JoinIndex) Add(tuple Tuple) bool {
 	ix.held++
-	if i, ok := ix.keys.FindAt(tuple, ix.keys.storedPos); ok {
+	i, hash, ok := ix.keys.FindAt(tuple, ix.keys.storedPos)
+	if ok {
 		if ix.groups == nil {
 			// Sized to the keys held, not to the members' capacity, which the
 			// hint sets from the tuple count.
@@ -50,7 +51,7 @@ func (ix *JoinIndex) Add(tuple Tuple) bool {
 		ix.fanout = true
 		return false
 	}
-	ix.keys.Add(tuple)
+	ix.keys.Add(tuple, hash)
 	if ix.groups != nil {
 		ix.groups = append(ix.groups, nil)
 	}
@@ -62,7 +63,7 @@ func (ix *JoinIndex) Add(tuple Tuple) bool {
 // slice of one over the members, capped at one so an append cannot reach
 // the next member.
 func (ix *JoinIndex) Probe(tuple Tuple) []Tuple {
-	i, ok := ix.keys.Find(tuple)
+	i, _, ok := ix.keys.Find(tuple)
 	if !ok {
 		return nil
 	}

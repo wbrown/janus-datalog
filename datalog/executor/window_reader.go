@@ -137,10 +137,11 @@ func (w *windowReader) reportWindow() {
 	keys := NewTupleSet(w.keyPos, w.keyPos, len(w.window))
 	distinct := 0
 	for _, tuple := range w.window {
-		if keys.Probe(tuple) {
+		_, hash, held := keys.Find(tuple)
+		if held {
 			continue
 		}
-		keys.Add(tuple)
+		keys.Add(tuple, hash)
 		distinct++
 	}
 	w.options.Handler(annotations.Event{

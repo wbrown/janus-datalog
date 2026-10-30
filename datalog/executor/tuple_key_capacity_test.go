@@ -14,9 +14,10 @@ func TestTupleSet_WithAnUnknownCapacityStartsEmpty(t *testing.T) {
 	positions := allPositions(2)
 	keys := NewTupleSet(positions, positions, -1)
 	key := Tuple{int64(1), "a"}
-	require.False(t, keys.Probe(key), "a new set holds no key")
+	_, hash, held := keys.Find(key)
+	require.False(t, held, "a new set holds no key")
 	require.Zero(t, keys.Len())
-	keys.Add(key)
+	keys.Add(key, hash)
 	require.True(t, keys.Probe(key), "an added key is held")
 	require.Equal(t, 1, keys.Len())
 }

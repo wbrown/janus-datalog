@@ -507,13 +507,14 @@ func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
 			}
 			tuple = held
 		}
-		if s.keys.Probe(tuple) {
+		_, hash, held := s.keys.Find(tuple)
+		if held {
 			return nil
 		}
 		if sameLayout && copies {
 			tuple = copyTuple(tuple)
 		}
-		s.keys.Add(tuple)
+		s.keys.Add(tuple, hash)
 		s.tuples = append(s.tuples, tuple)
 		added = append(added, tuple)
 		return nil

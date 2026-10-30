@@ -12,7 +12,7 @@ func TestTupleSet_UnifiesIntegerWidths(t *testing.T) {
 	positions := allPositions(1)
 	h64 := hashTuplePositions(Tuple{int64(5)}, positions)
 	s := NewTupleSet(positions, positions, 0)
-	s.Add(Tuple{int64(5)})
+	s.Add(Tuple{int64(5)}, h64)
 
 	for _, probe := range []Tuple{{int(5)}, {int8(5)}, {int16(5)}, {int32(5)}} {
 		if h := hashTuplePositions(probe, positions); h != h64 {

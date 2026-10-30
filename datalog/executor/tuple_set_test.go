@@ -15,12 +15,12 @@ import (
 // contract below is the subject of one test.
 
 // tupleSetOver holds the tuples, keyed at position 0 on both sides, each
-// added when a probe finds its key absent.
+// added under its find's hash when the find finds its key absent.
 func tupleSetOver(tuples ...Tuple) *TupleSet {
 	s := NewTupleSet([]int{0}, []int{0}, 0)
 	for _, tuple := range tuples {
-		if !s.Probe(tuple) {
-			s.Add(tuple)
+		if _, hash, held := s.Find(tuple); !held {
+			s.Add(tuple, hash)
 		}
 	}
 	return s
@@ -33,21 +33,44 @@ func tupleSetOver(tuples ...Tuple) *TupleSet {
 func TestTupleSet_FindAnswersTheMembersIndexAtThePositionsGiven(t *testing.T) {
 	e1, e2, e3 := datalog.NewIdentity("ts:e1"), datalog.NewIdentity("ts:e2"), datalog.NewIdentity("ts:e3")
 	s := NewTupleSet([]int{0}, []int{1}, 0)
-	first := s.Add(Tuple{"folded", e1})
-	second := s.Add(Tuple{"sewn", e2})
+	folded, sewn := Tuple{"folded", e1}, Tuple{"sewn", e2}
+	first := s.Add(folded, hashTuplePositions(folded, s.storedPos))
+	second := s.Add(sewn, hashTuplePositions(sewn, s.storedPos))
 	assert.Equal(t, 0, first)
 	assert.Equal(t, 1, second)
 
-	idx, ok := s.Find(Tuple{e2})
+	idx, _, ok := s.Find(Tuple{e2})
 	assert.True(t, ok)
 	assert.Equal(t, second, idx)
-	idx, ok = s.FindAt(Tuple{"first quire", "pressed", e1}, []int{2})
+	idx, _, ok = s.FindAt(Tuple{"first quire", "pressed", e1}, []int{2})
 	assert.True(t, ok, "the key read at the positions given per probe")
 	assert.Equal(t, first, idx)
-	_, ok = s.FindAt(Tuple{"third quire", "pressed", e3}, []int{2})
+	_, _, ok = s.FindAt(Tuple{"third quire", "pressed", e3}, []int{2})
 	assert.False(t, ok)
-	_, ok = s.Find(Tuple{e3})
+	_, _, ok = s.Find(Tuple{e3})
 	assert.False(t, ok)
+}
+
+// A find of an absent key answers the hash hashTuplePositions computes at
+// the probing positions, and a member added under that hash is found by a
+// probe at the set's positions and at positions given per probe
+// (docs/proposals/TAGGED_SLOT_PROBE_PROOF.md, T3, L3).
+func TestTupleSet_FindAnswersTheKeysHashAndAddHoldsTheMemberUnderIt(t *testing.T) {
+	e1 := datalog.NewIdentity("ts:e1")
+	s := NewTupleSet([]int{0}, []int{1}, 0)
+	idx, hash, ok := s.Find(Tuple{e1})
+	assert.False(t, ok, "the key is absent from the empty set")
+	assert.Equal(t, hashTuplePositions(Tuple{e1}, []int{0}), hash, "the hash answered is the key's at the probing positions")
+
+	member := Tuple{"folded", e1}
+	idx = s.Add(member, hash)
+	found, again, ok := s.Find(Tuple{e1})
+	assert.True(t, ok, "the member is held under the find's hash")
+	assert.Equal(t, idx, found)
+	assert.Equal(t, hash, again, "a find of a held key answers the same hash")
+	found, _, ok = s.FindAt(Tuple{"first quire", "pressed", e1}, []int{2})
+	assert.True(t, ok, "the member is found at positions given per probe")
+	assert.Equal(t, idx, found)
 }
 
 // The set holds one member per distinct key, probed by the probing
@@ -65,8 +88,9 @@ func TestTupleSet_HoldsOneMemberPerKeyProbedByThePositionsGiven(t *testing.T) {
 
 	t.Run("one position", func(t *testing.T) {
 		s := NewTupleSet([]int{2}, []int{0}, 0)
-		s.Add(Tuple{e1, int64(5)})
-		s.Add(Tuple{e2, int64(3)})
+		for _, member := range []Tuple{{e1, int64(5)}, {e2, int64(3)}} {
+			s.Add(member, hashTuplePositions(member, s.storedPos))
+		}
 		assert.True(t, s.Probe(Tuple{"first quire", "folded", e1}))
 		assert.True(t, s.Probe(Tuple{"second quire", "sewn", e2}))
 		assert.False(t, s.Probe(Tuple{"third quire", "pressed", e3}))
@@ -74,9 +98,9 @@ func TestTupleSet_HoldsOneMemberPerKeyProbedByThePositionsGiven(t *testing.T) {
 	t.Run("two positions", func(t *testing.T) {
 		// Held as [sheet quire], probed as [quire sheet].
 		s := NewTupleSet([]int{0, 1}, []int{1, 0}, 0)
-		s.Add(Tuple{int64(1), e1})
-		s.Add(Tuple{int64(2), e1})
-		s.Add(Tuple{int64(1), e2})
+		for _, member := range []Tuple{{int64(1), e1}, {int64(2), e1}, {int64(1), e2}} {
+			s.Add(member, hashTuplePositions(member, s.storedPos))
+		}
 		assert.True(t, s.Probe(Tuple{e1, int64(1)}))
 		assert.True(t, s.Probe(Tuple{e1, int64(2)}))
 		assert.True(t, s.Probe(Tuple{e2, int64(1)}))
@@ -132,11 +156,12 @@ func TestTupleSet_ProbeAllocatesNothing(t *testing.T) {
 func TestTupleSet_AMemberIsHeldAsGiven(t *testing.T) {
 	first := Tuple{datalog.NewIdentity("ts:first"), "x"}
 	s := NewTupleSet([]int{0}, []int{0}, 0)
-	s.Add(first)
+	s.Add(first, hashTuplePositions(first, s.storedPos))
 	require.Len(t, s.members, 1)
 	assert.Same(t, &first[0], &s.members[0][0], "the set holds the slice it was given")
 	for i := 0; i < 64; i++ {
-		s.Add(Tuple{datalog.NewIdentity(fmt.Sprintf("ts:later%d", i)), "y"})
+		later := Tuple{datalog.NewIdentity(fmt.Sprintf("ts:later%d", i)), "y"}
+		s.Add(later, hashTuplePositions(later, s.storedPos))
 	}
 	require.Len(t, s.members, 65, "the table doubled under the later members")
 	assert.Same(t, &first[0], &s.members[0][0], "the first member is the slice given, after the doublings")
@@ -158,7 +183,7 @@ func TestTupleSet_AddAllocatesOnlyItsGrowth(t *testing.T) {
 	}
 	next := 0
 	perAdd := testing.AllocsPerRun(runs, func() {
-		s.Add(members[next])
+		s.Add(members[next], hashTuplePositions(members[next], s.storedPos))
 		next++
 	})
 	assert.Less(t, perAdd, 0.1, "allocations per add, beyond the set's growth")
@@ -197,19 +222,21 @@ func TestTupleSet_KeysAgreeingInTheirLowHashBitsSpreadOverTheTable(t *testing.T)
 	positions := allPositions(1)
 	s := NewTupleSet(positions, positions, members)
 	for i := 0; i < members; i++ {
-		s.Add(Tuple{int64(i) << 32})
+		member := Tuple{int64(i) << 32}
+		s.Add(member, hashTuplePositions(member, positions))
 	}
-	mask := uint64(len(s.table) - 1)
+	mask := uint64(len(s.tags) - 1)
 	longest := 0
-	for slot, idx := range s.table {
-		if idx < 0 {
+	for slot, tag := range s.tags {
+		if tag == 0 {
 			continue
 		}
+		member := s.members[s.table[slot]]
 		alone := NewTupleSet(positions, positions, members)
-		alone.Add(s.members[idx])
-		require.Len(t, alone.table, len(s.table), "a set hinted alike builds a table of the same size")
+		alone.Add(member, hashTuplePositions(member, positions))
+		require.Len(t, alone.tags, len(s.tags), "a set hinted alike builds a table of the same size")
 		home := 0
-		for alone.table[home] < 0 {
+		for alone.tags[home] == 0 {
 			home++
 		}
 		if run := int((uint64(slot) - uint64(home)) & mask); run > longest {
@@ -217,4 +244,48 @@ func TestTupleSet_KeysAgreeingInTheirLowHashBitsSpreadOverTheTable(t *testing.T)
 		}
 	}
 	assert.LessOrEqual(t, longest, longestRun, "the longest run, in slots, from a member's home over %d members whose hashes agree in their low 32 bits", members)
+}
+
+// A probe of an absent key compares no member whose key's tag differs from
+// its own. The set holds members whose keys take the probing key's slot and
+// carry tags other than its own, so the probe walks every one of them, and
+// it allocates what its hash allocates and nothing more. A hash of a
+// typed-vector key boxes each element, and a compare of two such keys boxes
+// each element it compares, so the compares a walk makes are read in the
+// probe's allocations beyond the hash's
+// (docs/proposals/TAGGED_SLOT_PROBE_PROOF.md, T2, L1, L6).
+func TestTupleSet_AProbeComparesNoMemberWhoseTagDiffers(t *testing.T) {
+	const hint = 16
+	const walked = 8
+	positions := allPositions(1)
+	probe := Tuple{[]int64{0, 0}}
+	probeHash := hashTuplePositions(probe, positions)
+
+	// The width a set hinted alike takes, read from one holding a member.
+	sized := NewTupleSet(positions, positions, hint)
+	first := Tuple{[]int64{1, 1}}
+	sized.Add(first, hashTuplePositions(first, positions))
+	probeMixed := probeHash * goldenRatioFraction
+	home, probeTag := sized.slot(probeMixed), sized.tag(probeMixed)
+
+	s := NewTupleSet(positions, positions, hint)
+	for n := int64(1); s.Len() < walked; n++ {
+		member := Tuple{[]int64{n, 0}}
+		hash := hashTuplePositions(member, positions)
+		mixed := hash * goldenRatioFraction
+		if sized.slot(mixed) != home || sized.tag(mixed) == probeTag {
+			continue
+		}
+		s.Add(member, hash)
+	}
+	require.Len(t, s.tags, len(sized.tags), "a set hinted alike builds a table of the same size")
+	require.False(t, s.Probe(probe), "the probing key is absent")
+
+	var hash uint64
+	hashAllocs := testing.AllocsPerRun(100, func() { hash = hashTuplePositions(probe, positions) })
+	require.Equal(t, 2.0, hashAllocs, "a hash of a two-element typed vector boxes each element")
+	var held bool
+	probeAllocs := testing.AllocsPerRun(100, func() { held = s.Probe(probe) })
+	assert.Equal(t, hashAllocs, probeAllocs, "allocations of a probe walking %d members of other tags, beyond its hash's", walked)
+	_, _ = hash, held
 }

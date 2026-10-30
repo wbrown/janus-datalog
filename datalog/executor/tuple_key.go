@@ -25,7 +25,7 @@ func NewTupleKeyMap(probePos, storedPos []int, capacity int) *TupleKeyMap {
 // Get answers the value held under tuple's key at the probing positions,
 // and whether one is held.
 func (m *TupleKeyMap) Get(tuple Tuple) (any, bool) {
-	i, ok := m.keys.Find(tuple)
+	i, _, ok := m.keys.Find(tuple)
 	if !ok {
 		return nil, false
 	}
@@ -35,29 +35,31 @@ func (m *TupleKeyMap) Get(tuple Tuple) (any, bool) {
 // Put holds value under member's key at the stored positions. A key held
 // keeps its member and takes the value.
 func (m *TupleKeyMap) Put(member Tuple, value any) {
-	if i, ok := m.keys.FindAt(member, m.keys.storedPos); ok {
+	i, hash, ok := m.keys.FindAt(member, m.keys.storedPos)
+	if ok {
 		m.values[i] = value
 		return
 	}
-	m.hold(member, value)
+	m.hold(member, value, hash)
 }
 
 // PutIfAbsent holds value under member's key at the stored positions when
 // the key is new, and reports whether the key was held.
 func (m *TupleKeyMap) PutIfAbsent(member Tuple, value any) (existed bool) {
-	if _, ok := m.keys.FindAt(member, m.keys.storedPos); ok {
+	_, hash, ok := m.keys.FindAt(member, m.keys.storedPos)
+	if ok {
 		return true
 	}
-	m.hold(member, value)
+	m.hold(member, value, hash)
 	return false
 }
 
-// hold adds a member whose key no member holds and its value at the index
-// the set gives it. The values take the members' capacity when they are
-// full, so that they grow with the set and no put between the set's
-// doublings grows them.
-func (m *TupleKeyMap) hold(member Tuple, value any) {
-	m.keys.Add(member)
+// hold adds a member whose key no member holds, under the hash the find
+// answered, and its value at the index the set gives it. The values take
+// the members' capacity when they are full, so that they grow with the set
+// and no put between the set's doublings grows them.
+func (m *TupleKeyMap) hold(member Tuple, value any, hash uint64) {
+	m.keys.Add(member, hash)
 	if len(m.values) == cap(m.values) {
 		values := make([]any, len(m.values), cap(m.keys.members))
 		copy(values, m.values)

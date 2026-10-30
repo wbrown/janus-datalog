@@ -312,13 +312,14 @@ func (it *DedupIterator) Next() bool {
 			positions := allPositions(len(tuple))
 			it.seen = NewTupleSet(positions, positions, it.hint)
 		}
-		if it.seen.Probe(tuple) {
+		_, hash, held := it.seen.Find(tuple)
+		if held {
 			continue
 		}
 		if it.copyTuples {
 			tuple = copyTuple(tuple)
 		}
-		it.seen.Add(tuple)
+		it.seen.Add(tuple, hash)
 		it.current = tuple
 		return true
 	}

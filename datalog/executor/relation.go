@@ -538,10 +538,11 @@ func deduplicateTuples(tuples []Tuple) []Tuple {
 	result := make([]Tuple, 0, len(tuples))
 
 	for _, tuple := range tuples {
-		if seen.Probe(tuple) {
+		_, hash, held := seen.Find(tuple)
+		if held {
 			continue
 		}
-		seen.Add(tuple)
+		seen.Add(tuple, hash)
 		result = append(result, tuple)
 	}
 

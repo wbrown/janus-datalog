@@ -10,23 +10,32 @@ import "math/bits"
 // positions given at construction or per probe. A key is read from its
 // member and never copied, so a member is held as given and is stable for
 // the set's life. A probe allocates nothing. The hash is hashTuplePositions',
-// the one every tuple key of this package hashes by, computed from a member
-// at its stored positions whenever the table is built. The table is
+// the one every tuple key of this package hashes by. A find answers the hash
+// it computed and an add takes it, so a key found absent and then added is
+// hashed once (docs/proposals/TAGGED_SLOT_PROBE_PROOF.md, T3). The table is
 // open-addressed over member indices, a power of two in length and at most
 // half full, probed linearly from the slot the hash names, the top bits of
 // the hash's product with the golden ratio's fraction, so keys whose hashes
 // agree in their low bits, an interned pointer's address among them, spread
-// over the table; two members under one hash sit in two slots and are told
-// apart by their keys' values. A capacity hint sizes the table and the
-// members at the first add, and nothing before it.
+// over the table. Each slot carries a tag beside the index, the eight bits
+// of the product below the slot's with the lowest set, and a walk reads a
+// member's key only at a slot whose tag agrees with the probing key's
+// (TAGGED_SLOT_PROBE_PROOF.md, T2); two members under one hash sit in two
+// slots and are told apart by their keys' values. A capacity hint sizes the
+// table and the members at the first add, and nothing before it.
 type TupleSet struct {
 	probePos  []int
 	storedPos []int
 	hint      int
 	members   []Tuple
-	table     []int32 // each slot a member's index, or -1 when empty
+	tags      []uint8 // each slot the member's key's tag, or zero when empty
+	table     []int32 // each slot the member's index, read where the tag agrees
 	shift     uint    // 64 less the table's width in bits, the shift a slot is taken by
 }
+
+// goldenRatioFraction is the constant a hash is multiplied by before its
+// slot and its tag are read from the product.
+const goldenRatioFraction = 0x9E3779B97F4A7C15
 
 // NewTupleSet is an empty set over the key's positions in the probing tuples
 // and in the held tuples, sized at its first add for capacity members when
@@ -36,87 +45,103 @@ func NewTupleSet(probePos, storedPos []int, capacity int) *TupleSet {
 }
 
 // Find answers the index of the member whose key equals tuple's key at the
-// probing positions, and whether one exists.
-func (s *TupleSet) Find(tuple Tuple) (int, bool) {
+// probing positions, the key's hash, and whether such a member exists.
+func (s *TupleSet) Find(tuple Tuple) (int, uint64, bool) {
 	return s.FindAt(tuple, s.probePos)
 }
 
 // FindAt is Find with the probing positions given.
-func (s *TupleSet) FindAt(tuple Tuple, probePos []int) (int, bool) {
-	if len(s.table) == 0 {
-		return 0, false
+func (s *TupleSet) FindAt(tuple Tuple, probePos []int) (int, uint64, bool) {
+	hash := hashTuplePositions(tuple, probePos)
+	if len(s.tags) == 0 {
+		return 0, hash, false
 	}
-	mask := uint64(len(s.table) - 1)
-	for slot := s.slot(hashTuplePositions(tuple, probePos)); ; slot = (slot + 1) & mask {
-		idx := s.table[slot]
-		if idx < 0 {
-			return 0, false
+	mask := uint64(len(s.tags) - 1)
+	mixed := hash * goldenRatioFraction
+	tag := s.tag(mixed)
+	for slot := s.slot(mixed); ; slot = (slot + 1) & mask {
+		slotTag := s.tags[slot]
+		if slotTag == 0 {
+			return 0, hash, false
 		}
-		if tupleKeysMatch(s.members[idx], s.storedPos, tuple, probePos) {
-			return int(idx), true
+		if slotTag != tag {
+			continue
+		}
+		if idx := s.table[slot]; tupleKeysMatch(s.members[idx], s.storedPos, tuple, probePos) {
+			return int(idx), hash, true
 		}
 	}
 }
 
-// slot is the table slot a key's hash names, the first slot of the key's
-// probe run: the top bits of the hash's product with the golden ratio's
-// fraction, as many as the table is wide.
-func (s *TupleSet) slot(hash uint64) uint64 {
-	return (hash * 0x9E3779B97F4A7C15) >> s.shift
+// slot is the table slot a key's mixed hash names, the first slot of the
+// key's walk: the top bits of the mix, as many as the table is wide.
+func (s *TupleSet) slot(mixed uint64) uint64 {
+	return mixed >> s.shift
+}
+
+// tag is the mark a key's mixed hash leaves in its slot: the eight bits of
+// the mix below the slot's, with the lowest set, so that a tag is never the
+// zero an empty slot holds.
+func (s *TupleSet) tag(mixed uint64) uint8 {
+	return uint8(mixed>>(s.shift-8)) | 1
 }
 
 // Probe reports whether a member's key equals tuple's key at the probing
 // positions.
 func (s *TupleSet) Probe(tuple Tuple) bool {
-	_, ok := s.Find(tuple)
+	_, _, ok := s.Find(tuple)
 	return ok
 }
 
 // Add holds member under its key at the stored positions and answers the
-// index it took. The caller has found no member holding its key.
-func (s *TupleSet) Add(member Tuple) int {
-	if 2*(len(s.members)+1) > len(s.table) {
+// index it took. hash is the key's, as the find that found no member holding
+// it answered it, or as hashTuplePositions computes it at the stored
+// positions.
+func (s *TupleSet) Add(member Tuple, hash uint64) int {
+	if 2*(len(s.members)+1) > len(s.tags) {
 		s.grow()
 	}
 	s.members = append(s.members, member)
 	idx := len(s.members) - 1
-	s.place(int32(idx))
+	s.place(int32(idx), hash)
 	return idx
 }
 
 // grow builds the table, at the first add from eight slots or the power of
 // two at or above twice the hint, and by doubling after, gives the members
 // the capacity the table admits before its next doubling, so that no add
-// between doublings grows them, and places every member again.
+// between doublings grows them, and places every member again under its
+// key's hash at the stored positions. The tags are made zero, the empty
+// mark, so the table needs no fill.
 func (s *TupleSet) grow() {
-	size := 2 * len(s.table)
+	size := 2 * len(s.tags)
 	if size == 0 {
 		size = 8
 		for size < 2*s.hint {
 			size *= 2
 		}
 	}
+	s.tags = make([]uint8, size)
 	s.table = make([]int32, size)
-	for i := range s.table {
-		s.table[i] = -1
-	}
 	s.shift = uint(64 - bits.TrailingZeros(uint(size)))
 	members := make([]Tuple, len(s.members), size/2)
 	copy(members, s.members)
 	s.members = members
 	for idx := range s.members {
-		s.place(int32(idx))
+		s.place(int32(idx), hashTuplePositions(s.members[idx], s.storedPos))
 	}
 }
 
-// place writes a member's index into the first empty slot at or after the
-// slot its key's hash names.
-func (s *TupleSet) place(idx int32) {
-	mask := uint64(len(s.table) - 1)
-	slot := s.slot(hashTuplePositions(s.members[idx], s.storedPos))
-	for s.table[slot] >= 0 {
+// place writes a member's index and its key's tag into the first empty slot
+// at or after the slot the key's hash names.
+func (s *TupleSet) place(idx int32, hash uint64) {
+	mask := uint64(len(s.tags) - 1)
+	mixed := hash * goldenRatioFraction
+	slot := s.slot(mixed)
+	for s.tags[slot] != 0 {
 		slot = (slot + 1) & mask
 	}
+	s.tags[slot] = s.tag(mixed)
 	s.table[slot] = idx
 }
 

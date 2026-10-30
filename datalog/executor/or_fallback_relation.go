@@ -875,10 +875,11 @@ func (it *OrFallbackIterator) recordAnswered(branchIdx int, branchSyms []query.S
 		it.answered[branchIdx] = answered
 	}
 	for _, tuple := range tuples {
-		if _, held := answered.keys.FindAt(tuple, answered.branchPos); held {
+		_, hash, held := answered.keys.FindAt(tuple, answered.branchPos)
+		if held {
 			continue
 		}
-		answered.keys.Add(tuple)
+		answered.keys.Add(tuple, hash)
 	}
 }
 
@@ -911,7 +912,7 @@ func (it *OrFallbackIterator) unanswered(run *MaterializedRelation, branchIdx in
 		answered := false
 		for j := 0; j < branchIdx && !answered; j++ {
 			if earlier := it.answered[j]; earlier != nil {
-				_, answered = earlier.keys.FindAt(tuple, runPos[j])
+				_, _, answered = earlier.keys.FindAt(tuple, runPos[j])
 			}
 		}
 		if !answered {
@@ -952,10 +953,11 @@ func (it *OrFallbackIterator) answer() bool {
 			continue
 		}
 		if it.seen != nil {
-			if it.seen.Probe(it.currentTuple) {
+			_, hash, held := it.seen.Find(it.currentTuple)
+			if held {
 				continue
 			}
-			it.seen.Add(it.currentTuple)
+			it.seen.Add(it.currentTuple, hash)
 		}
 		return true
 	}

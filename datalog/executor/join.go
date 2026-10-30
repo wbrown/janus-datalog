@@ -511,7 +511,8 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 	rightIt := right.Iterator()
 	for rightIt.Next() {
 		tuple := rightIt.Tuple()
-		if _, held := rightKeys.FindAt(tuple, rightIndices); held {
+		_, hash, held := rightKeys.FindAt(tuple, rightIndices)
+		if held {
 			continue
 		}
 		if copyKeys {
@@ -521,7 +522,7 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 			}
 			tuple = key
 		}
-		rightKeys.Add(tuple)
+		rightKeys.Add(tuple, hash)
 	}
 	rerr := rightIt.Error()
 	if cerr := rightIt.Close(); rerr == nil {
@@ -598,7 +599,8 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 	rightIt := right.Iterator()
 	for rightIt.Next() {
 		tuple := rightIt.Tuple()
-		if _, held := rightKeys.FindAt(tuple, rightIndices); held {
+		_, hash, held := rightKeys.FindAt(tuple, rightIndices)
+		if held {
 			continue
 		}
 		if copyKeys {
@@ -608,7 +610,7 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 			}
 			tuple = key
 		}
-		rightKeys.Add(tuple)
+		rightKeys.Add(tuple, hash)
 	}
 	rerr := rightIt.Error()
 	if cerr := rightIt.Close(); rerr == nil {

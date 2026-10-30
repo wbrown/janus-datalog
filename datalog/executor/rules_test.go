@@ -754,17 +754,18 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 					bound := mustParse(t, fmt.Sprintf(`[:find %s :in $ %% %s :where (%s %s)]`, head, vars[i], f.predicate, head))
 					values := NewTupleSet([]int{i}, []int{i}, 0)
 					for _, tuple := range all {
-						if values.Probe(tuple) {
+						_, hash, held := values.Find(tuple)
+						if held {
 							continue
 						}
-						values.Add(tuple)
+						values.Add(tuple, hash)
 						v := tuple[i]
 						positions := allPositions(len(tuple))
 						want := NewTupleSet(positions, positions, 0)
 						wantCount := 0
 						for _, w := range all {
 							if datalog.ValuesEqual(w[i], v) {
-								want.Add(w)
+								want.Add(w, hashTuplePositions(w, positions))
 								wantCount++
 							}
 						}
@@ -836,8 +837,8 @@ func requireSamePages(t *testing.T, label string, got []Tuple, want ...datalog.I
 	t.Helper()
 	have := NewTupleSet([]int{0}, []int{0}, len(got))
 	for _, tuple := range got {
-		if !have.Probe(tuple) {
-			have.Add(tuple)
+		if _, hash, held := have.Find(tuple); !held {
+			have.Add(tuple, hash)
 		}
 	}
 	if len(got) != len(want) {

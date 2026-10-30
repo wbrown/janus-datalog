@@ -71,8 +71,9 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 		positions := allPositions(3)
 		want := NewTupleSet(positions, positions, len(expected))
 		for _, tuple := range expected {
-			require.False(t, want.Probe(tuple), "the reference holds each pair once")
-			want.Add(tuple)
+			_, hash, held := want.Find(tuple)
+			require.False(t, held, "the reference holds each pair once")
+			want.Add(tuple, hash)
 		}
 		got := NewTupleSet(positions, positions, len(expected))
 		count := 0
@@ -89,8 +90,9 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 			}
 			require.True(t, want.Probe(tuple),
 				"%s answered %v, which is no pair of the join", arm, tuple)
-			require.False(t, got.Probe(tuple), "%s answered %v twice", arm, tuple)
-			got.Add(tuple)
+			_, hash, held := got.Find(tuple)
+			require.False(t, held, "%s answered %v twice", arm, tuple)
+			got.Add(tuple, hash)
 			count++
 			return nil
 		}))
