@@ -747,6 +747,16 @@ func (d *Database) AsOf(target datalog.ElementID) *Database {
 	return handle
 }
 
+// AsOfTx reports the transaction an AsOf handle reads as of, and whether this handle is one.
+// The live database reads the store as it stands, and a History handle reads every datom ever
+// written, so neither reads as of a transaction and ok is false for both.
+func (d *Database) AsOfTx() (txID datalog.ElementID, ok bool) {
+	if d.temporalTxID == nil || *d.temporalTxID == (datalog.ElementID{}) {
+		return datalog.ElementID{}, false
+	}
+	return *d.temporalTxID, true
+}
+
 // History returns a read-only Database handle that returns all raw datoms
 // without CRDT resolution. Every write is visible, including superseded values.
 //

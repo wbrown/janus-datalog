@@ -8,6 +8,8 @@
 //   - Close() on a temporal handle does not close the parent's store
 //   - NewExecutorWithOptions() on a temporal handle applies temporal mode
 //   - NewExecutorWithOptions() on a regular handle applies schema and cache
+//   - AsOfTx() reports the transaction an AsOf handle reads as of, and none
+//     for the live database or a History handle
 
 package storage
 
@@ -199,4 +201,22 @@ func TestNewExecutorWithOptions_HasSchemaAndCache(t *testing.T) {
 				"NewExecutorWithOptions should use schema-aware matcher; cardinality-many should return all members")
 		})
 	}
+}
+
+// TestTemporalHandle_AsOfTx_ReportsTheTransactionAnAsOfHandleReadsAsOf states what AsOfTx
+// yields: the transaction an AsOf handle reads as of, and whether the handle is one. The live
+// database reads the store as it stands, and a History handle reads every datom ever written,
+// so neither reads as of a transaction.
+func TestTemporalHandle_AsOfTx_ReportsTheTransactionAnAsOfHandleReadsAsOf(t *testing.T) {
+	db, txID := setupTemporalTestDB(t, optimizerModes[0])
+
+	tx, ok := db.AsOf(txID).AsOfTx()
+	assert.True(t, ok, "an AsOf handle reads as of the transaction it was opened at")
+	assert.Equal(t, txID, tx, "the transaction an AsOf handle reports is the one it was opened at")
+
+	_, ok = db.AsOfTx()
+	assert.False(t, ok, "the live database reads the store as it stands, as of no transaction")
+
+	_, ok = db.History().AsOfTx()
+	assert.False(t, ok, "a History handle reads every datom ever written, as of no transaction")
 }
