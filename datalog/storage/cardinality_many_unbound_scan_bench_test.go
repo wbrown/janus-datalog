@@ -17,7 +17,8 @@ import (
 // re-runs the query after a warm-up, so the cache arm is steady state.
 //
 // Run:
-//   go test ./datalog/storage/ -run '^$' -bench 'BenchmarkCardinalityManyUnboundScan' -benchmem
+//
+//	go test ./datalog/storage/ -run '^$' -bench 'BenchmarkCardinalityManyUnboundScan' -benchmem
 //
 // allocs/op is the signal: a set served from the cache allocates no cursor,
 // accumulator, key or state per entity.

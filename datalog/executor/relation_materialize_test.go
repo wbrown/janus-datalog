@@ -230,9 +230,9 @@ func (it *gatedSliceIterator) Next() bool {
 	return it.pos < len(it.tuples)
 }
 
-func (it *gatedSliceIterator) Tuple() Tuple        { return it.tuples[it.pos] }
-func (it *gatedSliceIterator) Close() error        { return nil }
-func (it *gatedSliceIterator) Error() error        { return nil }
+func (it *gatedSliceIterator) Tuple() Tuple       { return it.tuples[it.pos] }
+func (it *gatedSliceIterator) Close() error       { return nil }
+func (it *gatedSliceIterator) Error() error       { return nil }
 func (it *gatedSliceIterator) RequiresCopy() bool { return false }
 
 // TestSizeBlocksWhileCaching verifies that Size() called while the cache is
