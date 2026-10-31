@@ -2,10 +2,11 @@
 
 **Status**: resolved; each item below names the proof it is resolved under.
 
-The reproduction is the `unfilled` query of `JANUS_REPRO_FILLED.md` over
-`janus-repro/kernel-facts.jdzl`, with the rule set under that document's
-heading "The rules" passed as the `%` input. Its answer is the empty
-relation. Every figure below is read on the tree at `a495238` on an Apple
+The reproduction is the `unfilled` query of the downstream's first report,
+over the dump and the rule set that report shipped, which the tree does not
+carry; the tree carries the downstream's later export,
+`datalog/storage/testdata/janus-repro/kernel-facts.jdzl`. Its answer is the
+empty relation. Every figure below is read on the tree at `a495238` on an Apple
 M5. The store holds 980 cells under `[?x :cell/ends true]` and 9,348
 `:cell/next` datoms, counted by one query over the dump.
 

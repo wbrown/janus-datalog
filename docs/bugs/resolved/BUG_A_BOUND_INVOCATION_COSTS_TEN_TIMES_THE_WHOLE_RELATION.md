@@ -2,10 +2,10 @@
 
 **Status**: resolved. Each item below names the proof that resolves it, and `PERFORMANCE_STATUS.md` carries the timings under the entry named for each proof.
 
-The reproduction is the downstream report `docs/plans/JANUS_REPRO_FILLED.md`
-in the tarball `janus-repro-filled-2026-10-30.tar.gz`, over the tarball's
-`testdata/janus-repro/kernel-facts.jdzl` with the rule set its
-`kernel-facts.jdzl.queries.edn` carries as the `%` input. The whole relation
+The reproduction is the downstream's dump,
+`datalog/storage/testdata/janus-repro/kernel-facts.jdzl`, with the rule set
+the `kernel-facts.jdzl.queries.edn` beside it carries as the `%` input. The
+whole relation
 is `[:find ?m ?c :in $ % :where (unfilled ?m ?c)]`. The bound query is
 `[:find ?r :in $ % :where [?r :relies/cell ?c] [?r :relies/mem ?m] (unfilled ?m ?c)]`.
 The figures below are read on the tree at a14c607 through
