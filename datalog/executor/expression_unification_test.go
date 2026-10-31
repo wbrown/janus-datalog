@@ -92,13 +92,17 @@ func TestExpressionOntoBoundVariableUnifies(t *testing.T) {
 					if err != nil {
 						t.Fatalf("execute failed: %v", err)
 					}
-					if result.Size() != 1 {
-						for i := 0; i < result.Size(); i++ {
-							t.Logf("tuple %d: %v", i, result.Get(i))
-						}
-						t.Fatalf("expected exactly the unifying entity (1 tuple), got %d", result.Size())
+					tuples, err := CollectTuples(result, nil)
+					if err != nil {
+						t.Fatalf("collecting the results: %v", err)
 					}
-					tuple := result.Get(0)
+					if len(tuples) != 1 {
+						for i, tuple := range tuples {
+							t.Logf("tuple %d: %v", i, tuple)
+						}
+						t.Fatalf("expected exactly the unifying entity (1 tuple), got %d", len(tuples))
+					}
+					tuple := tuples[0]
 					if !datalog.ValuesEqual(tuple[0], int64(1)) || !datalog.ValuesEqual(tuple[1], int64(2)) {
 						t.Fatalf("expected [1 2], got %v", tuple)
 					}

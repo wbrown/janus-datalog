@@ -43,8 +43,8 @@ func datomsMatchingBound(t *testing.T, all []*datalog.Datom, bound ScanBound) []
 	t.Helper()
 	order, err := componentOrder(bound.Index)
 	require.NoError(t, err)
-	probe, err := boundProbeDatom(order, bound)
-	require.NoError(t, err)
+	probe := &datalog.Datom{}
+	require.NoError(t, fillProbeDatom(probe, order, bound))
 
 	var want []*datalog.Datom
 	for _, d := range all {

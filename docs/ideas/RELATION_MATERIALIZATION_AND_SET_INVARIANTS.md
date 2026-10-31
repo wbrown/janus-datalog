@@ -149,13 +149,14 @@ Candidate keys prove more than setness. Current proof origins include:
 - Complete output symbols after explicit typed deduplication.
 - Preserved outer keys through safe OR/fallback shapes.
 - Join keys derived by one-to-one or many-to-one natural joins.
+- The composite of a natural join's two sides: each left key followed by the
+  symbols of each right key not among its own, a key of the join whatever the
+  join symbols are.
 
 Proofs are consumed by:
 
 - Projection dedup elision.
 - Unique hash-build specialization.
-- Hash-join result dedup elision.
-- Semi/anti join result construction.
 - OR/fallback dedup decisions.
 
 Relation bindings apply positional ρ-renaming to ordering and key symbols.
@@ -262,6 +263,67 @@ Complex checkpoint:
 Projection, predicate filtering, and deterministic extension construct lazy
 derived relations. Random access realizes only the required prefix. Full sorting
 retains explicit complete realization.
+
+### Join output as a set
+
+The hash join's materialized and streaming arms and the symmetric arm keyed
+every combined tuple into a full-tuple `seen` table whenever `joinProperties`
+derived no candidate key for the result. A join of two keyed relations on a
+proper subset of either side's symbols derived none, since the composite of the
+two sides' keys was not among the origins, so every body join of two fixpoint
+relations in a recursive stratum ran the table.
+
+A join of two sets is a set (`docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md`,
+T1). No arm builds the table. `joinProperties` derives the composite of each
+left key with each right key (T3). `SemiJoin` and `AntiJoin` construct through
+the proven-set constructor over the left's symbols and properties (T5).
+
+The reproduction of `docs/bugs/JANUS_REPRO_FILLED.md`, its `unfilled` query over
+the kernel's facts through the CLI:
+
+| | Before | After |
+|---|---:|---:|
+| wall | 10 min 27 s | 4 min 38 s |
+| user CPU | 1041 s | 581 s |
+
+### A pull-based hash join
+
+Every body join of a recursive stratum realized its whole output on every
+iteration:
+
+- The materialized arm appended one combined tuple per pair to a results
+  slice.
+- The streaming arm, selected by `EnableStreamingJoins`, built one fresh tuple
+  per pair and copied every probe tuple of a workspace-reusing probe.
+
+The join is pull-based (`docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md`, T1 to
+T6):
+
+- The join answers the streaming relation in every setting of the option.
+- Its iterator fills one workspace of the result's width per pull and answers
+  `RequiresCopy` true.
+- The probe tuple is read as its iterator hands it back.
+- An empty build answers the empty relation without opening its probe side.
+- The join holds its build index and nothing of its output.
+- `BindQueryInputs` holds its fold of several entries, since its reader reads
+  the bound group twice.
+- A join result reports no size, so a later pattern or invocation sharing its
+  symbols takes the windowed route.
+- A query whose final relation is a join result answers -1 for its size, as
+  one ending in a scan does.
+
+The reproduction of `docs/bugs/JANUS_REPRO_FILLED.md`, its `unfilled` query over
+the kernel's facts through the CLI. The before column is the set change's
+after: its wall and user figures are the table above's, and its allocation
+figures are those the "Join output is a set" entry of `PERFORMANCE_STATUS.md`
+records:
+
+| | Before | After |
+|---|---:|---:|
+| wall | 4 min 38 s | 19.3 s |
+| user CPU | 581 s | 26.5 s |
+| allocated | 465 GB | 8.65 GB |
+| objects | 2.64 billion | 69.4 million |
 
 ## Correctness Hardening Completed
 

@@ -6,58 +6,66 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// perKeySeekIterator yields the datoms of one narrowed scan per key, in turn,
-// as one stream: the storage source of a hash join whose binding's keys are
-// sought one by one (matchWithHashJoin). Each scan is acquired through the
-// arm's report, so its intake accrues into the report as it closes and the
-// scans are counted as the arm's peers, one run per key and no single run.
+// perKeySeekIterator yields the datoms of every key's run, in turn, as one
+// stream: the storage source of a hash join whose binding's keys are sought
+// one by one (matchWithHashJoin). One scan is opened over the pattern's
+// extent at the first pull, through the arm's report, and sought to each
+// key's run in the keys' order, so the intake of every run accrues into the
+// report when the one scan closes, and the keys are counted as the arm's
+// peers, one run per key and no single run
+// (docs/proposals/ONE_SCAN_SOUGHT_PER_KEY_PROOF.md, T1 to T3).
 //
-// A scan's failure ends the stream. The scan's deferred error and its close
-// error are kept, the first of them, before the next key would be opened, so
-// a failed seek never reads as the key having no datoms.
+// A failure ends the stream. The scan's deferred error, a seek's among them,
+// is kept before the next key would be sought, so a failed seek never reads
+// as the key having no datoms.
 type perKeySeekIterator struct {
 	reader StoreReader
 	report *scanReport
-	bounds []ScanBound
+	extent ScanBound   // the bound the one scan is opened over, holding every key's run
+	bounds []ScanBound // each key's run, in the keys' order
 
-	next    int      // the position in bounds of the scan to open next
-	scan    Iterator // the scan open now; nil between keys and once the keys are spent
-	scanned int      // the intake of the scans closed so far
+	next    int      // the position in bounds of the key to seek next
+	scan    Iterator // the one scan; nil before the first pull and after Close
+	inRun   bool     // whether the scan is inside a key's run it has not exhausted
+	scanned int      // the scan's intake, taken at Close
 	err     error
 }
 
 func (it *perKeySeekIterator) Next() bool {
-	for {
-		if it.scan != nil {
+	for it.err == nil {
+		if it.inRun {
 			if it.scan.Next() {
 				return true
 			}
-			if err := it.scan.Error(); err != nil && it.err == nil {
+			if err := it.scan.Error(); err != nil {
 				it.err = err
-			}
-			it.scanned += it.scan.Scanned()
-			if err := it.scan.Close(); err != nil && it.err == nil {
-				it.err = err
-			}
-			it.scan = nil
-			if it.err != nil {
 				return false
 			}
+			it.inRun = false
 		}
 		if it.next >= len(it.bounds) {
 			return false
 		}
-		scan, err := OpenKeyScan(it.reader, it.report, it.bounds[it.next])
+		if it.scan == nil {
+			scan, err := OpenKeyScan(it.reader, it.report, it.extent)
+			if err != nil {
+				it.err = err
+				return false
+			}
+			it.scan = scan
+		}
+		it.scan.Seek(it.bounds[it.next])
 		it.next++
-		if err != nil {
+		if err := it.scan.Error(); err != nil {
 			it.err = err
 			return false
 		}
 		if it.report != nil {
 			it.report.peers++
 		}
-		it.scan = scan
+		it.inRun = true
 	}
+	return false
 }
 
 // Datom is the open scan's current datom, under that scan's workspace
@@ -80,24 +88,25 @@ func (it *perKeySeekIterator) Seek(bound ScanBound) {
 	panic(fmt.Sprintf("BUG: Seek(%v) on a per-key seek stream, which has one run per key and no one run to reposition", bound))
 }
 
-// Scanned is the intake of every scan opened so far, the open one included.
+// Scanned is the one scan's intake over every run sought so far.
 func (it *perKeySeekIterator) Scanned() int {
 	if it.scan == nil {
 		return it.scanned
 	}
-	return it.scanned + it.scan.Scanned()
+	return it.scan.Scanned()
 }
 
 func (it *perKeySeekIterator) Error() error { return it.err }
 
-// Close closes the scan open now, and the keys after it are never opened. The
-// report is the arm's and closes with the arm.
+// Close closes the one scan, and the keys after the one sought are never
+// sought. The report is the arm's and closes with the arm.
 func (it *perKeySeekIterator) Close() error {
 	if it.scan == nil {
 		return nil
 	}
-	it.scanned += it.scan.Scanned()
+	it.scanned = it.scan.Scanned()
 	err := it.scan.Close()
 	it.scan = nil
+	it.inRun = false
 	return err
 }

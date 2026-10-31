@@ -122,22 +122,58 @@ func NeededStrata(rs *query.RuleSet, invoked query.Symbol) []query.Stratum {
 // same-stratum predicate produces without any delta. Delta holds, per
 // same-stratum occurrence of a body, at the top level, in a branch or in a
 // subquery body, the copy whose occurrence invokes the predicate's delta
-// symbol, run each iteration after the first. Lower holds, per occurrence
-// of a seed-restricted predicate of a lower stratum, the copy whose
-// occurrence invokes that predicate's delta symbol, run at a later window's
-// iteration zero over the tuples the window added to that predicate.
+// symbol, in the pass order (passOrder): a pass visits each copy once in
+// this order and runs it over the tuples its marked predicate gained since
+// the copy last ran
+// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md).
+// Lower holds, per occurrence of a seed-restricted predicate of a lower
+// stratum, the copy whose occurrence invokes that predicate's delta symbol,
+// run at a later window's iteration zero over the tuples the window added
+// to that predicate.
 type Bodies struct {
 	Plain []PlannedBody
 	Delta []PlannedBody
 	Lower []PlannedBody
 }
 
-// PlannedBody is one body a stratum runs: its rule, its plan, and for a
-// lower body the lower-stratum predicate its copy is marked on.
+// passOrder is the stratum's predicates in the pass order: the postorder of
+// a depth-first walk of the stratum's dependency graph, started at each
+// predicate not yet visited in the stratum's order, a predicate's
+// successors the same-stratum predicates its rules invoke, visited in the
+// order of its rules and of each body's invocations. A predicate stands
+// after every predicate its walk reached from it, so a pass carries a
+// derivation along every edge of the graph but a back edge
+// (A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, §1, L6).
+func passOrder(rs *query.RuleSet, predicates []query.Symbol, inStratum map[query.Symbol]bool) []query.Symbol {
+	visited := map[query.Symbol]bool{}
+	order := make([]query.Symbol, 0, len(predicates))
+	var visit func(p query.Symbol)
+	visit = func(p query.Symbol) {
+		visited[p] = true
+		for _, rule := range rs.Rules(p) {
+			for _, inv := range query.Invocations(rule.Body) {
+				if inStratum[inv.Name] && !visited[inv.Name] {
+					visit(inv.Name)
+				}
+			}
+		}
+		order = append(order, p)
+	}
+	for _, p := range predicates {
+		if !visited[p] {
+			visit(p)
+		}
+	}
+	return order
+}
+
+// PlannedBody is one body a stratum runs: its rule, its plan, and the
+// predicate whose delta symbol its copy invokes, the predicate of the
+// occurrence the copy is marked on, nil for a plain body.
 type PlannedBody struct {
-	Rule  *query.Rule
-	Plan  *RealizedPlan
-	Lower query.Symbol
+	Rule   *query.Rule
+	Plan   *RealizedPlan
+	Marked query.Symbol
 }
 
 // PlanStratum plans every body of the stratum under the rule set, through
@@ -151,6 +187,9 @@ func PlanStratum(p QueryPlanner, rs *query.RuleSet, stratum query.Stratum, handl
 		inStratum[predicate] = true
 	}
 	var bodies Bodies
+	// deltas holds each predicate's delta copies, by rule and then by
+	// occurrence, emitted below in the pass order.
+	deltas := map[query.Symbol][]PlannedBody{}
 	for _, predicate := range stratum.Predicates {
 		for _, rule := range rs.Rules(predicate) {
 			occurrences := 0
@@ -181,23 +220,28 @@ func PlanStratum(p QueryPlanner, rs *query.RuleSet, stratum query.Stratum, handl
 				bodies.Plain = append(bodies.Plain, PlannedBody{Rule: rule, Plan: plan})
 			}
 			for j := 0; j < occurrences; j++ {
-				plan, err := planBody(p, rs, rule, markDelta(rule.Body, inStratum, j), handler)
+				copied, marked := markDelta(rule.Body, inStratum, j)
+				plan, err := planBody(p, rs, rule, copied, handler)
 				if err != nil {
 					return Bodies{}, err
 				}
-				bodies.Delta = append(bodies.Delta, PlannedBody{Rule: rule, Plan: plan})
+				deltas[predicate] = append(deltas[predicate], PlannedBody{Rule: rule, Plan: plan, Marked: marked})
 			}
 			for _, name := range lowerOrder {
 				marked := map[query.Symbol]bool{name: true}
 				for j := 0; j < lowerCount[name]; j++ {
-					plan, err := planBody(p, rs, rule, markDelta(rule.Body, marked, j), handler)
+					copied, predicate := markDelta(rule.Body, marked, j)
+					plan, err := planBody(p, rs, rule, copied, handler)
 					if err != nil {
 						return Bodies{}, err
 					}
-					bodies.Lower = append(bodies.Lower, PlannedBody{Rule: rule, Plan: plan, Lower: name})
+					bodies.Lower = append(bodies.Lower, PlannedBody{Rule: rule, Plan: plan, Marked: predicate})
 				}
 			}
 		}
+	}
+	for _, predicate := range passOrder(rs, stratum.Predicates, inStratum) {
+		bodies.Delta = append(bodies.Delta, deltas[predicate]...)
 	}
 	return bodies, nil
 }
@@ -205,9 +249,9 @@ func PlanStratum(p QueryPlanner, rs *query.RuleSet, stratum query.Stratum, handl
 // planBody plans a rule body as a query finding the rule's head, under the
 // rule set the body's invocations resolve against, with the fixpoint's
 // predicates held (query.HeldByFixpoint). The planner reads from each
-// invoked predicate's name whether a seed restricts its relation: a magic or
-// adorned predicate, or the delta of one, leads the body's patterns, and any
-// other invocation joins them at collapse.
+// invoked predicate's name what its relation holds: a delta leads its copy
+// (DELTA_LEADS_ITS_COPY_PROOF.md), a magic or adorned predicate leads the
+// body's patterns, and any other invocation joins them at collapse.
 func planBody(p QueryPlanner, rs *query.RuleSet, rule *query.Rule, body []query.Clause, handler annotations.Handler) (*RealizedPlan, error) {
 	find := make([]query.FindElement, len(rule.Head))
 	for i, head := range rule.Head {
@@ -254,38 +298,48 @@ func neededPredicates(rs *query.RuleSet, invoked query.Symbol) map[query.Symbol]
 // markDelta copies clauses with the target-th invocation of a predicate in
 // marked, in clause order at the top level, inside or-join branches and
 // inside subquery bodies at any depth, replaced by a copy invoking the
-// predicate's delta symbol. The or-join forms and the subqueries on the path
-// are copied, a subquery over its inner query derived over the walked
+// predicate's delta symbol, and answers that predicate beside them, nil when
+// no invocation was replaced. The or-join forms and the subqueries on the
+// path are copied, a subquery over its inner query derived over the walked
 // clauses, and every other clause is shared: a same-stratum invocation
 // stands nowhere else, since the bodies walked are the inferred ones the
 // rule set holds, whose every form carries a header.
-func markDelta(clauses []query.Clause, marked map[query.Symbol]bool, target int) []query.Clause {
-	counter := 0
-	return markDeltaWalk(clauses, marked, target, &counter)
+func markDelta(clauses []query.Clause, marked map[query.Symbol]bool, target int) ([]query.Clause, query.Symbol) {
+	mark := &deltaMark{target: target}
+	return markDeltaWalk(clauses, marked, mark), mark.predicate
 }
 
-func markDeltaWalk(clauses []query.Clause, marked map[query.Symbol]bool, target int, counter *int) []query.Clause {
+// deltaMark is the walk's count of the marked invocations passed, the
+// ordinal of the one to replace, and the predicate of the one replaced.
+type deltaMark struct {
+	counter   int
+	target    int
+	predicate query.Symbol
+}
+
+func markDeltaWalk(clauses []query.Clause, marked map[query.Symbol]bool, mark *deltaMark) []query.Clause {
 	out := make([]query.Clause, len(clauses))
 	for i, clause := range clauses {
 		switch c := clause.(type) {
 		case *query.RuleInvocation:
 			out[i] = c
 			if marked[c.Name] {
-				if *counter == target {
+				if mark.counter == mark.target {
 					out[i] = &query.RuleInvocation{Name: query.DeltaSymbol(c.Name), Args: c.Args}
+					mark.predicate = c.Name
 				}
-				*counter++
+				mark.counter++
 			}
 		case *query.OrJoinClause:
 			out[i] = c
-			if branches, found := markDeltaBranches(c.Branches, marked, target, counter); found {
+			if branches, found := markDeltaBranches(c.Branches, marked, mark); found {
 				out[i] = &query.OrJoinClause{RequiredVars: c.RequiredVars, OutputVars: c.OutputVars, Branches: branches}
 			}
 		case *query.SubqueryPattern:
 			out[i] = c
-			before := *counter
-			walked := markDeltaWalk(c.Query.Where, marked, target, counter)
-			if before <= target && target < *counter {
+			before := mark.counter
+			walked := markDeltaWalk(c.Query.Where, marked, mark)
+			if before <= mark.target && mark.target < mark.counter {
 				out[i] = &query.SubqueryPattern{Query: c.Query.WithWhere(walked), Inputs: c.Inputs, Binding: c.Binding}
 			}
 		default:
@@ -298,11 +352,11 @@ func markDeltaWalk(clauses []query.Clause, marked map[query.Symbol]bool, target 
 // markDeltaBranches walks a form's branches and reports whether the target
 // occurrence fell inside them, which is when the walked copy replaces the
 // form; otherwise the form is shared.
-func markDeltaBranches(branches [][]query.Clause, marked map[query.Symbol]bool, target int, counter *int) ([][]query.Clause, bool) {
-	before := *counter
+func markDeltaBranches(branches [][]query.Clause, marked map[query.Symbol]bool, mark *deltaMark) ([][]query.Clause, bool) {
+	before := mark.counter
 	walked := make([][]query.Clause, len(branches))
 	for b, branch := range branches {
-		walked[b] = markDeltaWalk(branch, marked, target, counter)
+		walked[b] = markDeltaWalk(branch, marked, mark)
 	}
-	return walked, before <= target && target < *counter
+	return walked, before <= mark.target && mark.target < mark.counter
 }

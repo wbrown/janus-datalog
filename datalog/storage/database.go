@@ -799,7 +799,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableSymmetricHashJoin: false, // Conservative for now
 
 		// Other executor options
-		EnableStreamingJoins:       false, // Keep false for stability
+		EnableStreamingJoins:       false, // Selects nothing in the hash join, which streams in every setting
 		EnableStreamingAggregation: true,  // Streaming aggregation
 
 		// Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple
@@ -3379,7 +3379,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 			data := map[string]interface{}{
 				annotations.KeyDatomsScanned: report.scanned,
 				annotations.KeyValuesServed:  served,
-				annotations.KeyScansOpened:   1,
+				annotations.KeyRunsAddressed: 1,
 			}
 			addBoundFields(data, bound)
 			d.plannerOptions.Handler(annotations.Event{

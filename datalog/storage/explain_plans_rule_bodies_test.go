@@ -201,17 +201,19 @@ func TestExplain_AcceptsARuleBodyAsQueryDoes(t *testing.T) {
 	}
 }
 
-// Executing a query Explain has planned plans no body: the plan cache's
-// misses and size are what the planner left them, under a free invocation, a
-// bound one with its adorned bodies, a recursive predicate with its delta
-// copies, a lower seed-restricted predicate with its lower copies, an
-// invocation inside an or-join branch and inside a subquery, and a required
-// predicate the executor derives at its clause inside a body. An invocation
-// bound at the top level is bound by a constant, since a plan is served
-// under the symbols bound when it is made
+// Executing a query Explain has planned plans nothing
+// (docs/proposals/EXECUTION_PLANS_NOTHING_PROOF.md T2, T3): the planner
+// reports no plan made, and the plan cache's misses and size are what the
+// planner left them, on a first run and on a second, under a free
+// invocation, a bound one with its adorned bodies, a recursive predicate with
+// its delta copies, a lower seed-restricted predicate with its lower copies,
+// an invocation inside an or-join branch and inside a subquery, and a
+// required predicate the executor derives at its clause inside a body. An
+// invocation bound at the top level is bound by a constant, since a plan is
+// served under the symbols bound when it is made
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md goal 10), so a scalar
 // input would have Query plan the query itself again under its symbol.
-func TestExplain_ExecutingAnExplainedQueryPlansNoBody(t *testing.T) {
+func TestExplain_ExecutingAnExplainedQueryPlansNothing(t *testing.T) {
 	const closure = `[(p ?a ?b) [?a :edge ?b]] [(p ?a ?c) [?a :edge ?b] (p ?b ?c)]`
 	const required = `[(nb [?x] ?y) [?x :edge ?y]] [(q ?x ?z) [?x :edge ?z]] [(q ?x ?z) [?x :edge ?y] (q ?y ?w) (not (nb ?w ?u)) [?w :edge ?z]]`
 	g := newPathGraph()
@@ -225,7 +227,8 @@ func TestExplain_ExecutingAnExplainedQueryPlansNoBody(t *testing.T) {
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			made := &plansMade{}
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: made.handle})
 			commitFacts(t, d, g.facts())
 			for _, c := range cases {
 				t.Run(c.name, func(t *testing.T) {
@@ -234,10 +237,14 @@ func TestExplain_ExecutingAnExplainedQueryPlansNoBody(t *testing.T) {
 					_, err := d.Explain(c.query, inputs...)
 					require.NoError(t, err)
 					_, plannedMisses, plannedSize := d.PlanCache().Stats()
-					require.NoError(t, runToEnd(d, c.query, inputs...), "the query runs to its end")
-					_, misses, size := d.PlanCache().Stats()
-					require.Equal(t, plannedMisses, misses, "executing a planned query plans nothing the planner did not")
-					require.Equal(t, plannedSize, size, "executing a planned query adds no plan to the cache")
+					for _, run := range []string{"the first run", "the second run"} {
+						made.reset()
+						require.NoError(t, runToEnd(d, c.query, inputs...), "the query runs to its end")
+						require.Empty(t, made.made(), "%s of a planned query makes no plan; the plans made:\n%v", run, made.made())
+						_, misses, size := d.PlanCache().Stats()
+						require.Equal(t, plannedMisses, misses, "%s plans nothing the planner did not", run)
+						require.Equal(t, plannedSize, size, "%s adds no plan to the cache", run)
+					}
 				})
 			}
 		})

@@ -6,97 +6,63 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// TestTupleKeyMapAllocations pins the allocation cost of the tuple-key
-// machinery that every join build, dedup set, and group table rides on.
-//
-// Pinned costs:
-//   - storing a NEW key: 1 allocation (the key's owned values slice; the
-//     single-entry bucket lives inline in the map slot)
-//   - probing an EXISTING key by tuple positions: 0 allocations
-//   - PutIfAbsent on an existing key by tuple positions: 0 allocations
-func TestTupleKeyMapAllocations(t *testing.T) {
+// A put of a new key allocates nothing beyond the map's growth, a probe of a
+// held key at the probing positions allocates nothing, and a put-if-absent of
+// a held key allocates nothing (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T3).
+// The members are held at the positions 0 and 1, and probed at the positions
+// 0 and 2 of a wider tuple. AllocsPerRun runs its function once unmeasured
+// before the runs it counts, so the keys outnumber the runs by one.
+func TestTupleKeyMap_PutAllocatesOnlyItsGrowthAndAProbeNothing(t *testing.T) {
 	kwA := datalog.NewKeyword(":alloc/a")
 	kwB := datalog.NewKeyword(":alloc/b")
-	tuple := Tuple{kwA, int64(42), kwB}
-	indices := []int{0, 2}
-	single := []int{1}
+	probePos := []int{0, 2}
+	storedPos := allPositions(2)
 
-	t.Run("put new key costs one allocation", func(t *testing.T) {
-		m := NewTupleKeyMap()
-		i := int64(0)
-		allocs := testing.AllocsPerRun(100, func() {
-			i++
-			key := NewTupleKey(Tuple{kwA, i, kwB}, indices)
-			m.Put(key, struct{}{})
+	t.Run("a put of a new key allocates only the growth", func(t *testing.T) {
+		const runs = 1000
+		keys := make([]Tuple, runs+1)
+		for i := range keys {
+			keys[i] = Tuple{kwA, int64(i)}
+		}
+		m := NewTupleKeyMap(probePos, storedPos, 0)
+		next := 0
+		perPut := testing.AllocsPerRun(runs, func() {
+			m.Put(keys[next], struct{}{})
+			next++
 		})
-		// One allocation for the key's values slice. The map's own internal
-		// growth amortizes to under one object per insertion and rounds to
-		// zero over the run; the per-key bucket backing array must be gone.
-		if allocs > 2 {
-			t.Errorf("storing a new key allocated %v objects per run, want <= 2 (values slice + amortized map growth)", allocs)
+		if perPut >= 0.1 {
+			t.Errorf("a put of a new key allocated %v objects per run beyond the map's growth", perPut)
+		}
+		if m.Len() != len(keys) {
+			t.Errorf("the map holds %d keys, want %d", m.Len(), len(keys))
 		}
 	})
 
-	t.Run("positional probe hit allocates nothing", func(t *testing.T) {
-		m := NewTupleKeyMap()
-		m.Put(NewTupleKey(tuple, indices), "stored")
-		m.Put(NewTupleKey(tuple, single), "single")
-
+	t.Run("a probe of a held key allocates nothing", func(t *testing.T) {
+		m := NewTupleKeyMap(probePos, storedPos, 0)
+		m.Put(Tuple{kwA, kwB}, "stored")
+		tuple := Tuple{kwA, int64(42), kwB}
 		allocs := testing.AllocsPerRun(100, func() {
-			if _, ok := m.GetPositions(tuple, indices); !ok {
-				t.Fatal("positional probe must find the stored multi-position key")
-			}
-			if _, ok := m.GetPositions(tuple, single); !ok {
-				t.Fatal("positional probe must find the stored single-position key")
-			}
-		})
-		if allocs != 0 {
-			t.Errorf("positional probe hit allocated %v objects per run, want 0", allocs)
-		}
-	})
-
-	t.Run("positional PutIfAbsent on existing key allocates nothing", func(t *testing.T) {
-		m := NewTupleKeyMap()
-		m.PutIfAbsentPositions(tuple, indices, struct{}{})
-
-		allocs := testing.AllocsPerRun(100, func() {
-			if existed := m.PutIfAbsentPositions(tuple, indices, struct{}{}); !existed {
-				t.Fatal("existing key must report existed")
+			if got, ok := m.Get(tuple); !ok || got != "stored" {
+				t.Fatalf("the probe at the probing positions must find the held key: got %v, found %v", got, ok)
 			}
 		})
 		if allocs != 0 {
-			t.Errorf("positional PutIfAbsent hit allocated %v objects per run, want 0", allocs)
+			t.Errorf("a probe of a held key allocated %v objects per run, want 0", allocs)
 		}
 	})
-}
 
-// TestTupleKeyPositionalConsistency pins that positional operations and
-// TupleKey-constructing operations address the same entries: same hashing
-// (including the single-position case, which hashes the bare value rather
-// than FNV-folding it), same equality, in both directions.
-func TestTupleKeyPositionalConsistency(t *testing.T) {
-	kwA := datalog.NewKeyword(":consist/a")
-	tuple := Tuple{kwA, int64(7), "text"}
-
-	for _, indices := range [][]int{{1}, {0, 2}, {0, 1, 2}} {
-		m := NewTupleKeyMap()
-
-		// Stored via TupleKey, probed positionally.
-		m.Put(NewTupleKey(tuple, indices), "via-key")
-		if got, ok := m.GetPositions(tuple, indices); !ok || got != "via-key" {
-			t.Errorf("indices %v: positional probe missed a TupleKey-stored entry", indices)
+	t.Run("a put-if-absent of a held key allocates nothing", func(t *testing.T) {
+		m := NewTupleKeyMap(probePos, storedPos, 0)
+		member := Tuple{kwA, kwB}
+		m.PutIfAbsent(member, struct{}{})
+		allocs := testing.AllocsPerRun(100, func() {
+			if existed := m.PutIfAbsent(member, struct{}{}); !existed {
+				t.Fatal("a held key must report held")
+			}
+		})
+		if allocs != 0 {
+			t.Errorf("a put-if-absent of a held key allocated %v objects per run, want 0", allocs)
 		}
-
-		// Stored positionally, probed via TupleKey.
-		m2 := NewTupleKeyMap()
-		if existed := m2.PutIfAbsentPositions(tuple, indices, "via-positions"); existed {
-			t.Errorf("indices %v: fresh positional insert reported existed", indices)
-		}
-		if got, ok := m2.Get(NewTupleKey(tuple, indices)); !ok || got != "via-positions" {
-			t.Errorf("indices %v: TupleKey probe missed a positionally-stored entry", indices)
-		}
-		if existed := m2.PutIfAbsentPositions(tuple, indices, "again"); !existed {
-			t.Errorf("indices %v: second positional insert must report existed", indices)
-		}
-	}
+	})
 }

@@ -1,0 +1,63 @@
+;; the rule set, given as the queries' % input
+[
+ [(vector ?m) [?r :relies/mem ?m]]
+ [(uses-vector ?c) [?r :relies/cell ?c]]
+ [(calls ?c ?k) [?c :cell/callee ?k]]
+ [(calls ?c ?k) [?d :dispatch/cell ?c] [?d :dispatch/candidate ?k]]
+ [(calls ?c ?k) [?c :cell/callee ?j] [?j :word/runs ?k]]
+ [(threads ?c ?t) [?c :cell/callee ?j] [?j :word/thread ?t]]
+ [(leaves ?c) [?c :cell/callee ?k] [?e :effect/word ?k] [?e :effect/variant :effect.variant/own] [?e :effect/diverges true] [?e :effect/resets false]]
+ [(flows ?c ?n) [?c :cell/next ?n] (not (leaves ?c))]
+ [(reach ?c) [?s :seg/entry ?w] [?w :word/entry ?c]]
+ [(reach ?n) (reach ?c) (flows ?c ?n)]
+ [(reach ?e) (reach ?c) (calls ?c ?k) [?k :word/entry ?e]]
+ [(reach ?t) (reach ?c) (threads ?c ?t)]
+ [(dispatcher ?k) [?e :effect/word ?k] [?e :effect/variant :effect.variant/own] [?e :effect/dispatches true]]
+ [(dispatcher ?k) [?e :effect/word ?k] [?e :effect/variant :effect.variant/own] [?e :effect/unknown-at ?r] [?r :reason/kind :reason.kind/jumps-through]]
+ [(complete ?w) [?e :effect/word ?w] [?e :effect/variant :effect.variant/own] [?e :effect/known true]]
+ [(complete ?w) [?e :effect/word ?w] [?e :effect/variant :effect.variant/own] [?e :effect/diverges true] [?e :effect/read-in true]]
+ [(wildcell ?c) [?d :dispatch-any/cell ?c]]
+ [(wildcell ?c) [?c :cell/callee ?k] (dispatcher ?k) [?c :cell/word ?w] (not (complete ?w))]
+ [(wild ?s) (reach ?c) (wildcell ?c) [?s :seg/entry ?w]]
+ [(reach ?e) (wild ?s) [?k :word/entry ?e]]
+ [(open ?c ?m) (vector ?m) [?c :cell/kind ?kind]
+  (not-join [?c ?m] [?s :store-site/cell ?c] [?s :store-site/mem ?m])]
+ [(plain ?c) [?c :cell/kind ?kind] (not-join [?c] [?c :cell/callee ?k] [?k :word/entry ?e])]
+ [(inner ?c ?k) [?c :cell/callee ?k] [?k :word/entry ?e]]
+ [(between ?c) (plain ?c)
+  (not-join [?c] [?s :store-site/cell ?c]) (not (uses-vector ?c))
+  (not-join [?c] [?d :dispatch/cell ?c]) (not (wildcell ?c))
+  (not-join [?c] [?c :cell/ends true]) (not-join [?c] [?w :word/entry ?c])
+  (not-join [?c] [?j :word/thread ?c]) (not-join [?c] [?c :cell/callee ?j] [?j :word/thread ?t])
+  (not-join [?c] [?c :cell/callee ?j] [?j :word/runs ?k])]
+ [(kept ?c) [?c :cell/kind ?kind] (not (between ?c))]
+ [(run ?a ?b) (kept ?a) (flows ?a ?b)]
+ [(run ?a ?c) (run ?a ?b) (between ?b) (flows ?b ?c)]
+ [(step ?a ?b) (run ?a ?b) (kept ?b)]
+ [(through ?c ?m) (open ?c ?m) (plain ?c)]
+ [(through ?c ?m) (open ?c ?m) (inner ?c ?k) (passes ?k ?m)]
+ [(called ?k) (reach ?c) (inner ?c ?k)]
+ [(called ?k) (wild ?s) [?k :word/entry ?e]]
+ [(clear ?m ?k ?e) (vector ?m) (called ?k) [?k :word/entry ?e]]
+ [(clear ?m ?k ?n) (clear ?m ?k ?c) (step ?c ?n) (through ?c ?m)]
+ [(passes ?k ?m) (clear ?m ?k ?x) [?x :cell/ends true]]
+ [(unfilled ?m ?c) (vector ?m) [?s :seg/entry ?w] [?w :word/entry ?c]]
+ [(unfilled ?m ?n) (unfilled ?m ?c) (step ?c ?n) (through ?c ?m)]
+ [(unfilled ?m ?e) (unfilled ?m ?c) (calls ?c ?k) [?k :word/entry ?e]]
+ [(unfilled ?m ?t) (unfilled ?m ?c) (threads ?c ?t)]
+ [(wildly ?m) (unfilled ?m ?c) (wildcell ?c)]
+ [(unfilled ?m ?e) (wildly ?m) [?k :word/entry ?e]]
+]
+
+;; the cells reached from the entry, whole
+[:find ?c :in $ % :where (reach ?c)]
+
+;; the cells reached with a vector unfilled, whole
+[:find ?m ?c :in $ % :where (unfilled ?m ?c)]
+
+;; the cells reached from the entry
+[:find (count ?c) :in $ % :where (reach ?c)]
+
+;; the reproduction (docs/plans/JANUS_REPRO_FILLED.md): unfilled invoked bound, the
+;; magic-sets rewrite; several times the unbound query above
+[:find ?r :in $ % :where [?r :relies/cell ?c] [?r :relies/mem ?m] (unfilled ?m ?c)]

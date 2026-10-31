@@ -3,6 +3,7 @@ package executor
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -211,8 +212,9 @@ func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInv
 // deriveInvocation evaluates an invocation's predicate at its clause: the
 // clause's evaluation, continued across the windows of the form execution
 // the clause stands in when the context carries that execution's
-// continuations, and otherwise an evaluation of this one run, completed at
-// once. The evaluation is created at the clause's first run through
+// continuations, under the clause it stands for (ruleContinuations), and
+// otherwise an evaluation of this one run, completed at once. The
+// evaluation is created at the clause's first run through
 // invocationEvaluation, over what the plan planned for the clause, and
 // extended by every run with the seed the run's bindings give at the
 // positions the plan has bound. The relation is returned with its head, the
@@ -225,13 +227,15 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 	}
 	planned := e.plan.Evaluations[inv]
 	var eval *ruleEvaluation
+	var under *query.RuleInvocation
 	if ctx.continued != nil {
-		eval = ctx.continued.byClause[inv]
+		under = ctx.continued.clauseOf(inv)
+		eval = ctx.continued.byClause[under]
 	}
 	if eval == nil {
 		eval = e.invocationEvaluation(inv, planned)
 		if ctx.continued != nil {
-			ctx.continued.byClause[inv] = eval
+			ctx.continued.byClause[under] = eval
 		}
 	}
 	var seed Relation
@@ -388,12 +392,21 @@ type ruleEvaluation struct {
 }
 
 // stratumState is one stratum of an evaluation across its windows: the
-// stratum, its planned bodies, its sets, whether it began, when, its
-// iterations summed over the windows, and whether it completed.
+// stratum, its planned bodies, its sets, the marks of its delta copies,
+// whether it began, when, its iterations summed over the windows, and
+// whether it completed.
 type stratumState struct {
-	stratum    query.Stratum
-	eval       *stratumEvaluation
-	full       map[query.Symbol]*derivedSet
+	stratum query.Stratum
+	eval    *stratumEvaluation
+	full    map[query.Symbol]*derivedSet
+	// marks holds, per delta copy in the pass order of eval.bodies.Delta,
+	// the count of the copy's marked predicate's set at the start of the
+	// copy's last run, zero before its first: the copy's delta at a run is
+	// the set's tuples from its mark to the set's count, and the marks
+	// persist across the windows with the sets
+	// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md,
+	// §1, L4).
+	marks      []int
 	begun      bool
 	start      time.Time
 	iterations int
@@ -427,7 +440,7 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 	if ev.windows == 1 {
 		for _, planned := range ev.planned.Strata {
 			eval := ev.executor.prepareStratum(ev.rs, planned)
-			s := &stratumState{stratum: planned.Stratum, eval: eval, full: map[query.Symbol]*derivedSet{}}
+			s := &stratumState{stratum: planned.Stratum, eval: eval, full: map[query.Symbol]*derivedSet{}, marks: make([]int, len(eval.bodies.Delta))}
 			for _, p := range planned.Stratum.Predicates {
 				s.full[p] = newDerivedSet(eval.symbols[p])
 			}
@@ -444,7 +457,7 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 		}
 		changed := ev.windows == 1 || stratumSeed != nil
 		for _, body := range s.eval.bodies.Lower {
-			if len(added[body.Lower]) > 0 {
+			if len(added[body.Marked]) > 0 {
 				changed = true
 				break
 			}
@@ -464,15 +477,43 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 }
 
 // derivedSet accumulates a predicate's tuples over its canonical symbols,
-// each once.
+// each once, each held in the set under its whole-tuple key
+// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T4), and keeps, per key its
+// joins read, an index over its tuples by ordinal
+// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md).
 type derivedSet struct {
 	symbols []query.Symbol
 	tuples  []Tuple
-	keys    *TupleKeyMap
+	keys    *TupleSet
+	indexes []*ordinalIndex
 }
 
 func newDerivedSet(symbols []query.Symbol) *derivedSet {
-	return &derivedSet{symbols: symbols, keys: NewTupleKeyMap()}
+	positions := allPositions(len(symbols))
+	return &derivedSet{symbols: symbols, keys: NewTupleSet(positions, positions, 0)}
+}
+
+// index is the set's index at the key positions, asked for through a view
+// of count tuples: made at the first ask over the tuples then held, and
+// extended to the set's count when the view's count is past the tuples it
+// holds, so a probe bounded at the view's count finds every tuple of the
+// view (A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, L1, L5).
+func (s *derivedSet) index(positions []int, count int) *ordinalIndex {
+	var ix *ordinalIndex
+	for _, kept := range s.indexes {
+		if slices.Equal(kept.positions, positions) {
+			ix = kept
+			break
+		}
+	}
+	if ix == nil {
+		ix = newOrdinalIndex(slices.Clone(positions))
+		s.indexes = append(s.indexes, ix)
+	}
+	if ix.held < count {
+		ix.extend(s.tuples)
+	}
+	return ix
 }
 
 // absorb adds the tuples of rel the set does not hold, as they are pulled,
@@ -482,7 +523,7 @@ func newDerivedSet(symbols []query.Symbol) *derivedSet {
 // so one the set holds is rejected without a copy, and is held as it is from
 // a stable source or copied once, on admission, from a reusing one. A tuple
 // in another layout is read out at the set's positions into a copy before it
-// is probed. Every key holds the held tuple by reference.
+// is probed. The held tuple is the set's member.
 func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
 	positions, err := query.SymbolIndexTable(rel.Symbols(), s.symbols)
 	if err != nil {
@@ -502,13 +543,14 @@ func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
 			}
 			tuple = held
 		}
-		if s.keys.Exists(NewTupleKeyFull(tuple)) {
+		_, hash, held := s.keys.Find(tuple)
+		if held {
 			return nil
 		}
 		if sameLayout && copies {
 			tuple = copyTuple(tuple)
 		}
-		s.keys.PutIfAbsent(NewTupleKeyFull(tuple), struct{}{})
+		s.keys.Add(tuple, hash)
 		s.tuples = append(s.tuples, tuple)
 		added = append(added, tuple)
 		return nil
@@ -516,10 +558,14 @@ func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
 	return added, err
 }
 
-// relation is the set as a relation over the tuples added so far.
-func (s *derivedSet) relation(opts ExecutorOptions) Relation {
+// relation is the set as a relation over the tuples added so far: a view
+// carrying the set, so a join into it probes the index the set keeps
+// (A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2).
+func (s *derivedSet) relation(opts ExecutorOptions) *MaterializedRelation {
 	n := len(s.tuples)
-	return newMaterializedRelationFromSet(s.symbols, s.tuples[:n:n], opts, deduplicatedProperties(s.symbols))
+	view := newMaterializedRelationFromSet(s.symbols, s.tuples[:n:n], opts, deduplicatedProperties(s.symbols))
+	view.set = s
+	return view
 }
 
 // stratumEvaluation is a stratum's planned bodies (planner.Bodies), under
@@ -583,11 +629,16 @@ func (s *stratumEvaluation) run(ctx *Context, held map[query.Symbol]Relation, bo
 // event fires; at a later window the copies marked on a lower predicate that
 // gained tuples in the window run over those tuples, held under the
 // predicate's delta symbol, and a window that adds no seed tuple and has no
-// such copy runs nothing. Then each iteration runs the same-stratum copies
-// over the previous iteration's deltas until none is left, the iteration
-// bound counted from the window's first iteration and the tuple bound over
-// the evaluation's total; a seed's tuples are given, not derived, and are
-// not counted.
+// such copy runs nothing. Then the stratum runs passes until one runs no
+// copy: a pass visits each delta copy once, in the pass order, and runs it
+// when its marked predicate's set holds tuples past the copy's mark, over
+// those tuples under the predicate's delta symbol and the sets as they
+// stand, absorbing its result before the next copy is visited
+// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md). The
+// iteration event reports what each pass added, the iteration bound counts
+// the passes from the window's first, and the tuple bound counts over the
+// evaluation's total; a seed's tuples are given, not derived, and are not
+// counted.
 func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relation, lower map[query.Symbol][]Tuple) (map[query.Symbol][]Tuple, error) {
 	e := ev.executor
 	handler := e.options.Handler
@@ -678,7 +729,7 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 	if ev.windows > 1 {
 		bodies = nil
 		for _, body := range s.eval.bodies.Lower {
-			if len(lower[body.Lower]) > 0 {
+			if len(lower[body.Marked]) > 0 {
 				bodies = append(bodies, body)
 			}
 		}
@@ -700,31 +751,56 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 	}
 	for p, tuples := range grown {
 		delta[p] = append(delta[p], tuples...)
+		held[p] = s.full[p].relation(e.options)
 	}
 	emitIteration(delta)
-	for stratum.Recursive && len(delta) > 0 {
+	for stratum.Recursive {
 		if err := ctx.cancelled(); err != nil {
 			return nil, err
 		}
-		iteration++
-		if limit := e.options.MaxRuleIterations; limit > 0 && iteration > limit {
-			return nil, &query.RuleIterationLimitError{Predicates: stratum.Predicates, Limit: limit, Reached: iteration}
+		// A pass. A copy runs when its marked predicate's set holds tuples
+		// past its mark, over those tuples under the delta symbol, with the
+		// sets as they stand after the copies before it; its result is
+		// absorbed, and the view of each predicate it added to is taken
+		// again, before the next copy is visited. The pass that runs no copy
+		// ends the stratum: every mark is then at its set's count, so the
+		// sets are closed under the bodies
+		// (A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, L2, L5, L6).
+		ran := false
+		passAdded := map[query.Symbol][]Tuple{}
+		for i, body := range s.eval.bodies.Delta {
+			set := s.full[body.Marked]
+			count := len(set.tuples)
+			if s.marks[i] >= count {
+				continue
+			}
+			if !ran {
+				iteration++
+				if limit := e.options.MaxRuleIterations; limit > 0 && iteration > limit {
+					return nil, &query.RuleIterationLimitError{Predicates: stratum.Predicates, Limit: limit, Reached: iteration}
+				}
+				ran = true
+			}
+			symbols := s.eval.symbols[body.Marked]
+			held[query.DeltaSymbol(body.Marked)] = newMaterializedRelationFromSet(symbols, set.tuples[s.marks[i]:count:count], e.options, deduplicatedProperties(symbols))
+			s.marks[i] = count
+			results, err := s.eval.run(ctx, held, []planner.PlannedBody{body})
+			if err != nil {
+				return nil, err
+			}
+			grown, err := absorb(results)
+			if err != nil {
+				return nil, err
+			}
+			for p, tuples := range grown {
+				passAdded[p] = append(passAdded[p], tuples...)
+				held[p] = s.full[p].relation(e.options)
+			}
 		}
-		// The run holds the last iteration's delta of each predicate under
-		// the predicate's delta symbol, beside the relations as they stand.
-		held = view()
-		for _, p := range stratum.Predicates {
-			held[query.DeltaSymbol(p)] = newMaterializedRelationFromSet(s.eval.symbols[p], delta[p], e.options, deduplicatedProperties(s.eval.symbols[p]))
+		if !ran {
+			break
 		}
-		results, err := s.eval.run(ctx, held, s.eval.bodies.Delta)
-		if err != nil {
-			return nil, err
-		}
-		delta, err = absorb(results)
-		if err != nil {
-			return nil, err
-		}
-		emitIteration(delta)
+		emitIteration(passAdded)
 	}
 	s.iterations += iteration
 	for _, p := range stratum.Predicates {
@@ -762,14 +838,38 @@ func (ev *ruleEvaluation) complete() {
 // windows, by the invocation clause each evaluates: the outermost form's
 // iterator creates them, every scope under it shares them through the
 // context, and that iterator completes them at the subject's exhaustion and
-// at its close.
+// at its close. An invocation has one clause in its scope's plan and, where
+// a window reads it through a frame, a second in the frame's plan
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.1). The frame's clause
+// stands for the scope's, and an evaluation at either continues under the
+// scope's.
 type ruleContinuations struct {
-	byClause map[*query.RuleInvocation]*ruleEvaluation
+	byClause  map[*query.RuleInvocation]*ruleEvaluation
+	standsFor map[*query.RuleInvocation]*query.RuleInvocation
 }
 
 // newRuleContinuations is a form execution's continuations, holding none.
 func newRuleContinuations() *ruleContinuations {
-	return &ruleContinuations{byClause: map[*query.RuleInvocation]*ruleEvaluation{}}
+	return &ruleContinuations{
+		byClause:  map[*query.RuleInvocation]*ruleEvaluation{},
+		standsFor: map[*query.RuleInvocation]*query.RuleInvocation{},
+	}
+}
+
+// standFor records that framed, the invocation clause of the frame planned
+// for inv, stands for inv.
+func (c *ruleContinuations) standFor(framed, inv *query.RuleInvocation) {
+	c.standsFor[framed] = inv
+}
+
+// clauseOf is the clause an evaluation at inv continues under: the clause
+// inv stands for when inv is a frame's invocation clause, and inv itself
+// otherwise.
+func (c *ruleContinuations) clauseOf(inv *query.RuleInvocation) *query.RuleInvocation {
+	if stood, ok := c.standsFor[inv]; ok {
+		return stood
+	}
+	return inv
 }
 
 // complete completes every evaluation held.

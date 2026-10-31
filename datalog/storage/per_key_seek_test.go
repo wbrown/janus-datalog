@@ -137,7 +137,7 @@ func (f *seekFixture) tagTuples(keys int) [][]interface{} {
 // TestPerKeySeekAtOrBelowTheBoundary pins the scope design's §4.6
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md): a binding relation of
 // several keys at or below executor.SmallBindingBoundary is served by one
-// narrowed scan per key, read through the per-key completion event's scan
+// scan sought per key, read through the per-key completion event's run
 // count and its intake, which is the keys' datoms and nothing of the rest of
 // the attribute; one above the boundary by the hash-join scan, whose intake is
 // the attribute's extent; a binding at the attribute position per key at any
@@ -230,8 +230,8 @@ func testPerKeySeekAtOrBelowTheBoundary(t *testing.T, mode optimizerMode) {
 			require.Equal(t, tc.binding.Size(), complete.Data[annotations.KeyBindingSize])
 			switch tc.strategy {
 			case annotations.ScanPerKeySeek:
-				require.Equal(t, tc.keys, complete.Data[annotations.KeyScansOpened],
-					"one narrowed scan per distinct key")
+				require.Equal(t, tc.keys, complete.Data[annotations.KeyRunsAddressed],
+					"one run per distinct key")
 				require.NotContains(t, complete.Data, annotations.KeyIndex,
 					"a path of one run per key names no single run")
 				require.Nil(t, lastScanComplete(events, annotations.ScanHashJoin),
@@ -248,7 +248,7 @@ func testPerKeySeekAtOrBelowTheBoundary(t *testing.T, mode optimizerMode) {
 // TestQueryBindingIsSoughtPerKeyAtOrBelowTheBoundary pins that the per-key
 // seek is reached from a query on both planner paths: a collection input of
 // entities at or below the boundary drives [?e :seek/n ?v] through one
-// narrowed scan per key, and one above the boundary through the hash-join
+// scan sought per key, and one above the boundary through the hash-join
 // scan, each answering the reference. Attribute-fetch fusion is off, since a
 // fused fetch reads the EA cache per tuple and never reaches the matcher's
 // binding-driven paths.
@@ -286,8 +286,8 @@ func TestQueryBindingIsSoughtPerKeyAtOrBelowTheBoundary(t *testing.T) {
 						"a collection input of %d entities is served by the %s strategy, and no completion among %d events reports it",
 						tc.keys, tc.strategy, len(events))
 					if tc.strategy == annotations.ScanPerKeySeek {
-						require.Equal(t, tc.keys, complete.Data[annotations.KeyScansOpened],
-							"one narrowed scan per distinct key")
+						require.Equal(t, tc.keys, complete.Data[annotations.KeyRunsAddressed],
+							"one run per distinct key")
 					}
 				})
 			}

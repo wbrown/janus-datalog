@@ -277,39 +277,51 @@ func (it *FunctionEvaluatorIterator) Error() error {
 	return it.source.Error()
 }
 
-// DedupIterator removes duplicate tuples based on full tuple equality
+// DedupIterator answers each distinct tuple of its source once, by whole
+// tuple equality. Each admitted tuple is held in the set under its
+// whole-tuple key (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T4).
 type DedupIterator struct {
 	source     Iterator
-	seen       *TupleKeyMap
+	seen       *TupleSet // built at the first tuple, whose width is the key's
+	hint       int
 	current    Tuple
 	copyTuples bool
 }
 
-// NewDedupIterator creates an iterator that removes duplicates. The seen-key
-// map retains each admitted tuple by reference, so copyTuples must be true
-// when the source iterator reuses workspace memory across Next() calls
-// (storage scan iterators); it may be false only when the source yields a
-// fresh tuple per call (ProjectIterator and other composing transforms).
+// NewDedupIterator creates an iterator that removes duplicates, its set sized
+// at its first tuple for expectedSize tuples when that is above zero. The set
+// retains each admitted tuple by reference, so copyTuples must be true when
+// the source iterator reuses workspace memory across Next() calls (storage
+// scan iterators); it may be false only when the source yields a fresh tuple
+// per call (ProjectIterator and other composing transforms).
 func NewDedupIterator(source Iterator, expectedSize int, copyTuples bool) *DedupIterator {
 	return &DedupIterator{
 		source:     source,
-		seen:       NewTupleKeyMapWithCapacity(expectedSize),
+		hint:       expectedSize,
 		copyTuples: copyTuples,
 	}
 }
 
-// Next advances to the next unique tuple
+// Next advances to the next unique tuple. A tuple is probed as the source
+// hands it, so a duplicate is rejected without a copy, and an admitted tuple
+// is copied once, on admission, from a reusing source.
 func (it *DedupIterator) Next() bool {
 	for it.source.Next() {
 		tuple := it.source.Tuple()
+		if it.seen == nil {
+			positions := allPositions(len(tuple))
+			it.seen = NewTupleSet(positions, positions, it.hint)
+		}
+		_, hash, held := it.seen.Find(tuple)
+		if held {
+			continue
+		}
 		if it.copyTuples {
 			tuple = copyTuple(tuple)
 		}
-		key := NewTupleKeyFull(tuple)
-		if !it.seen.PutIfAbsent(key, true) {
-			it.current = tuple
-			return true
-		}
+		it.seen.Add(tuple, hash)
+		it.current = tuple
+		return true
 	}
 	return false
 }

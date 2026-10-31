@@ -213,9 +213,18 @@ func (m *PatternMatcher) MatchWithConstraints(
 	var rel executor.Relation
 	switch strategy.Type {
 	case SinglePositionReuse:
-		// For V-bound cardinality-one queries, use candidate + validate pattern
-		// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 4
+		// A value binding on an attribute resolving as cardinality one is
+		// served by candidates validated per key, Theorem 5 of
+		// docs/reference/INDEX_SELECTION_PROOF.md, at or below the boundary.
+		// Above it, on a constant attribute, the binding is probed against
+		// one resolved scan of the attribute under AETV, whose first entry
+		// per entity is the current value, which answers the same entities
+		// (A_VALUE_BINDING_ABOVE_THE_BOUNDARY_SCANS_ONCE_PROOF.md).
 		if strategy.NeedsValidation {
+			if strategy.BoundA != nil && bindingRel.Size() > executor.SmallBindingBoundary {
+				rel, err = m.matchWithHashJoin(pattern, bindingRel, symbols, strategy.Position, AETV, constraints)
+				break
+			}
 			rel, err = m.matchWithVValidation(pattern, bindingRel, symbols, strategy, constraints)
 			break
 		}
@@ -263,10 +272,11 @@ func (m *PatternMatcher) MatchWithConstraints(
 }
 
 // restoreScanSetSemantics returns rel unchanged when the pattern scan
-// provably emits a set: materialized results are born deduplicated by their
-// constructors (matchFromCache, matchWithBindingsFromCache), and streaming
-// scans whose projection covers a candidate key of the emitted stream are
-// injective (scanProjectionPreservesSet). Every other streaming scan wraps a
+// provably emits a set: a held result is a set by its constructor, the
+// deduplicating one or the proven-set one its producer chose (matchFromCache,
+// matchWithBindingsFromCache), and streaming scans whose projection covers a
+// candidate key of the emitted stream are injective
+// (scanProjectionPreservesSet). Every other streaming scan wraps a
 // deduplicating pass so the relation is a set at birth. Scan iterators reuse
 // workspace tuples, so the dedup's seen-keys copy.
 func (m *PatternMatcher) restoreScanSetSemantics(rel executor.Relation, pattern *query.DataPattern, symbols []query.Symbol) executor.Relation {
@@ -1540,6 +1550,20 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		v = m.extractValue(elem)
 	}
 
+	// Under a constant attribute a binding carrying the pattern's value
+	// variable answers the datoms agreeing with it at the value too, as every
+	// scan arm answers (docs/proposals/BOUND_VALUE_CACHE_MATCH_PROOF.md, T2).
+	// The typed selection admits no vector at that position under a constant
+	// attribute, so the value is a key of an entry's set. Under a variable
+	// attribute the value is read from no binding, and the vector arm, reached
+	// under a variable attribute alone, compares the pattern's constant alone.
+	vSymIdx := -1
+	if aSymIdx < 0 {
+		if vVar, ok := pattern.GetV().(query.Variable); ok {
+			vSymIdx = query.SymbolIndex(bindingRel.Symbols(), vVar.Name)
+		}
+	}
+
 	// Get tuple builder
 	tupleBuilder := m.getTupleBuilder(pattern, symbols)
 
@@ -1594,8 +1618,13 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		}()
 	}
 
-	// Iterate bindings and collect results from cache
+	// Iterate bindings and collect results from cache. The bindings' count is
+	// the result's under cardinality one and its floor under cardinality
+	// many, so the result is sized to it when the relation reports one.
 	var resultTuples []executor.Tuple
+	if size := bindingRel.Size(); size > 0 {
+		resultTuples = make([]executor.Tuple, 0, size)
+	}
 	iter := bindingRel.Iterator()
 	defer iter.Close()
 
@@ -1610,6 +1639,14 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		// (MatchWithConstraints): an Identity at the entity position and a
 		// Keyword at the attribute position.
 		eIdent := tuple[eSymIdx].(datalog.Identity)
+
+		// The value the binding bounds this match to: its own, when it
+		// carries the pattern's value variable under a constant attribute,
+		// else the pattern's constant.
+		boundV := v
+		if vSymIdx >= 0 {
+			boundV = tuple[vSymIdx]
+		}
 
 		// Determine A and cardinality for this tuple
 		var tupleCard datalog.Keyword
@@ -1666,7 +1703,7 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			if val == nil {
 				continue // No value for this E
 			}
-			if v != nil && !datalog.ValuesEqual(val, v) {
+			if boundV != nil && !datalog.ValuesEqual(val, boundV) {
 				continue // Value doesn't match bound V
 			}
 			resultTuples = append(resultTuples, buildTuple(eIdent, val, entry.Version()))
@@ -1676,14 +1713,14 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			if len(set) == 0 {
 				continue
 			}
-			if v != nil {
+			if boundV != nil {
 				// Membership check
-				lookupKey := v
+				lookupKey := boundV
 				if b, ok := lookupKey.([]byte); ok {
 					lookupKey = string(b)
 				}
 				if _, exists := set[lookupKey]; exists {
-					resultTuples = append(resultTuples, buildTuple(eIdent, v, entry.Version()))
+					resultTuples = append(resultTuples, buildTuple(eIdent, boundV, entry.Version()))
 				}
 			} else {
 				// Return all set members
@@ -1711,6 +1748,26 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 	}
 
 	matched = len(resultTuples)
+	// Bindings carrying the positions this match reads alone answer distinct
+	// tuples. The read positions are the entity, the attribute under a
+	// variable attribute, and the value under a constant attribute when the
+	// bindings carry it. The bindings are a set, each answers distinct tuples
+	// carrying its own values at the read positions, and a pattern names each
+	// variable at one position (query.UnifyPatterns). Bindings carrying
+	// another of the pattern's variables can repeat the read positions and so
+	// repeat tuples, which the deduplicating constructor removes
+	// (docs/proposals/BINDING_MATCH_PROOF.md, T3, and
+	// docs/proposals/BOUND_VALUE_CACHE_MATCH_PROOF.md, T3).
+	readPositions := 1
+	if aSymIdx >= 0 {
+		readPositions = 2
+	}
+	if vSymIdx >= 0 {
+		readPositions++
+	}
+	if len(bindingRel.Symbols()) == readPositions {
+		return executor.NewMaterializedRelationFromSet(symbols, resultTuples, m.options), true, nil
+	}
 	return executor.NewMaterializedRelationWithOptions(symbols, resultTuples, m.options), true, nil
 }
 
@@ -1952,9 +2009,9 @@ func (m *PatternMatcher) matchVectorWithBindings(
 				},
 				matchErr == nil,
 				map[string]interface{}{
-					annotations.KeyPattern:     pattern,
-					annotations.KeyStrategy:    annotations.ScanPerBinding,
-					annotations.KeyScansOpened: resolutions,
+					annotations.KeyPattern:       pattern,
+					annotations.KeyStrategy:      annotations.ScanPerBinding,
+					annotations.KeyRunsAddressed: resolutions,
 				})
 		}()
 	}

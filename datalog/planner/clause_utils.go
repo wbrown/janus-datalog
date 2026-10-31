@@ -160,14 +160,20 @@ func (s selection) clauseSelectable(clause query.Clause) bool {
 // scansAWholeExtent reports whether a clause reads nothing bound under the
 // symbols available now: a data pattern with no constant at a position other
 // than the attribute and no available variable, an invocation with no
-// constant argument, no available argument and a predicate the seed does not
-// restrict, or any other clause none of whose variables is available, a form
-// whose header nothing binds, a subquery with no available input, or an
-// expression over constants alone. The selection takes such a clause only
-// when no other clause is selectable, since a scan placed before an
-// invocation the seed's bindings reach multiplies that invocation's magic set
-// by the scan's extent, and a form placed before the pattern binding its
-// header runs over the unit relation (REWRITE_ORDER_PROOF.md T2, T3, F7).
+// constant argument, no available argument, a predicate the seed does not
+// restrict and a predicate that is no delta, or any other clause none of
+// whose variables is available, a form whose header nothing binds, a
+// subquery with no available input, or an expression over constants alone.
+// A constant at a position other than the attribute narrows the pattern to
+// that constant's extent, which the selection takes as visible selectivity;
+// whether the rewrite binds an invocation's position from such a pattern is
+// the rewrite's own rule (REWRITE_ORDER_PROOF.md F5). A delta's relation is
+// the tuples the iteration before added (DELTA_LEADS_ITS_COPY_PROOF.md). The
+// selection takes such a clause only when no other clause is selectable,
+// since a scan placed before an invocation the seed's bindings reach
+// multiplies that invocation's magic set by the scan's extent, and a form
+// placed before the pattern binding its header runs over the unit relation
+// (REWRITE_ORDER_PROOF.md T2, T3, F7).
 func scansAWholeExtent(clause query.Clause, available map[query.Symbol]bool, rules *query.RuleSet) bool {
 	switch c := clause.(type) {
 	case *query.DataPattern:
@@ -185,7 +191,7 @@ func scansAWholeExtent(clause query.Clause, available map[query.Symbol]bool, rul
 		}
 		return true
 	case *query.RuleInvocation:
-		if query.SeedRestricted(c.Name) {
+		if query.SeedRestricted(c.Name) || query.IsDeltaSymbol(c.Name) {
 			return false
 		}
 		for _, arg := range c.Args {
@@ -225,7 +231,10 @@ func scansAWholeExtent(clause query.Clause, available map[query.Symbol]bool, rul
 // scan's every value, the product REWRITE_ORDER_PROOF.md T2 names. An
 // invocation of a predicate the seed restricts derives nothing at its clause:
 // it reads a relation holding only what the seed reaches, and scoreClause
-// gives it the lead over every pattern, so it waits on no provider.
+// gives it the lead over every pattern, so it waits on no provider. An
+// invocation of a delta reads the tuples the iteration before added and
+// leads its copy, so it waits on no provider either
+// (DELTA_LEADS_ITS_COPY_PROOF.md).
 //
 // The provider scan carries subqueryDependsOnPendingProvider's restrictions,
 // so deferral cannot block progress:
@@ -238,7 +247,7 @@ func scansAWholeExtent(clause query.Clause, available map[query.Symbol]bool, rul
 //     the loop can select some provider this iteration, so the phase always
 //     advances.
 func (s selection) invocationDependsOnPendingProvider(inv *query.RuleInvocation) bool {
-	if query.SeedRestricted(inv.Name) {
+	if query.SeedRestricted(inv.Name) || query.IsDeltaSymbol(inv.Name) {
 		return false
 	}
 	bound := false

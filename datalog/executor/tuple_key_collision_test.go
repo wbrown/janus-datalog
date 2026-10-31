@@ -101,30 +101,29 @@ func TestUnionRelations_NoCollisionAcrossTupleBoundaries(t *testing.T) {
 }
 
 // TestTupleKeyMap_DistinguishesAdversarialPairs is a baseline test verifying
-// that TupleKey / TupleKeyMap correctly distinguishes the same adversarial
-// pairs that collide under the stringification-based key.
+// that TupleKeyMap correctly distinguishes the same adversarial pairs that
+// collide under the stringification-based key.
 //
-// Exercises: tuple_key.go TupleKey, TupleKeyMap
+// Exercises: tuple_key.go TupleKeyMap
 func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
 	for _, tc := range adversarialTuplePairs {
 		t.Run(tc.name, func(t *testing.T) {
-			m := NewTupleKeyMap()
-			ka := NewTupleKeyFull(tc.a)
-			kb := NewTupleKeyFull(tc.b)
+			positions := allPositions(len(tc.a))
+			m := NewTupleKeyMap(positions, positions, 0)
 
-			m.Put(ka, struct{}{})
-			if !m.Exists(ka) {
+			m.Put(tc.a, struct{}{})
+			if _, ok := m.Get(tc.a); !ok {
 				t.Fatal("first key should exist after Put")
 			}
 
-			if m.Exists(kb) {
+			if _, ok := m.Get(tc.b); ok {
 				t.Errorf("TupleKeyMap conflated distinct tuples %+v and %+v",
 					tc.a, tc.b)
 			}
 
-			m.Put(kb, struct{}{})
-			if !m.Exists(ka) || !m.Exists(kb) {
-				t.Error("both keys should exist after both Puts")
+			m.Put(tc.b, struct{}{})
+			if m.Len() != 2 {
+				t.Errorf("both keys should exist after both Puts, held %d", m.Len())
 			}
 		})
 	}
@@ -132,37 +131,34 @@ func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
 
 // TestTupleKeyMap_BytesAreDistinguishedByContent verifies that []byte values are
 // keyed by content in a TupleKeyMap: equal content hashes equally (so it lands in
-// the same bucket and is found), and different content does not match. HashValue
-// has a dedicated []byte case that hashes by content (hashBytes). Without it,
-// []byte fell through to a pointer-address hash, so equal slices landed in
-// DIFFERENT buckets and the ValuesEqual fallback — which only resolves collisions
-// WITHIN a bucket — never ran. That made byte-valued joins/dedup miss; it surfaced
-// as resolved/BUG_VBOUND_BYTES_WRONG_RESULTS_UNDER_RACE (a join on a byte key
-// dropped tuples, only reliably under -race because the bogus address hash happened
-// to collide otherwise).
+// the same slot run and is found), and different content does not match.
+// HashValue has a dedicated []byte case that hashes by content (hashBytes).
+// Without it, []byte fell through to a pointer-address hash, so equal slices
+// hashed to DIFFERENT slots and the ValuesEqual comparison — which only runs on
+// the slots a hash reaches — never ran. That made byte-valued joins/dedup miss;
+// it surfaced as resolved/BUG_VBOUND_BYTES_WRONG_RESULTS_UNDER_RACE (a join on a
+// byte key dropped tuples, only reliably under -race because the bogus address
+// hash happened to collide otherwise).
 //
-// Exercises: datalog.HashValue and tuple_key.go's TupleKey/TupleKeyMap with []byte values
+// Exercises: datalog.HashValue and tuple_key.go's TupleKeyMap with []byte values
 func TestTupleKeyMap_BytesAreDistinguishedByContent(t *testing.T) {
 	a := []byte{1, 2, 3}
 	bSameContent := []byte{1, 2, 3} // distinct slice, equal content
 	cDifferent := []byte{1, 2, 4}
+	positions := allPositions(1)
 
-	ka := NewTupleKeyFull(Tuple{a})
-	kb := NewTupleKeyFull(Tuple{bSameContent})
-	kc := NewTupleKeyFull(Tuple{cDifferent})
-
-	// Equal content must hash equally — landing in the same bucket by design,
+	// Equal content must hash equally — reaching the same slots by design,
 	// not by an accidental pointer-address collision.
-	if ka.hash != kb.hash {
-		t.Fatalf("equal []byte content must hash equally: got %d != %d", ka.hash, kb.hash)
+	if ha, hb := hashTuplePositions(Tuple{a}, positions), hashTuplePositions(Tuple{bSameContent}, positions); ha != hb {
+		t.Fatalf("equal []byte content must hash equally: got %d != %d", ha, hb)
 	}
 
-	m := NewTupleKeyMap()
-	m.Put(ka, struct{}{})
-	if !m.Exists(kb) {
+	m := NewTupleKeyMap(positions, positions, 0)
+	m.Put(Tuple{a}, struct{}{})
+	if _, ok := m.Get(Tuple{bSameContent}); !ok {
 		t.Error("equal-content []byte must be found")
 	}
-	if m.Exists(kc) {
+	if _, ok := m.Get(Tuple{cDifferent}); ok {
 		t.Error("different-content []byte must not match")
 	}
 }

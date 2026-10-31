@@ -278,7 +278,11 @@ func TestRelationInput_PropagatesMatcherErrorAfterAnEarlierPattern(t *testing.T)
 
 			exec := NewExecutorWithOptions(fm, nil, mode.plannerOptions())
 
-			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
+			// The later pattern runs over the join result through the window,
+			// whose scan failure surfaces when the result is driven.
+			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
+			require.NoError(t, err, "the matcher error surfaces at the drive, not the call")
+			_, err = CollectTuples(result, nil)
 			require.Error(t, err, "matcher error after partial success must not be silently dropped")
 			require.True(t, errors.Is(err, errInjectedMatcher),
 				"error must unwrap to the injected sentinel; got %v", err)

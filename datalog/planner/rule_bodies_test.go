@@ -149,22 +149,112 @@ func TestPlanStratum_AnOccurrenceInsideASubqueryBodyIsADeltaCopy(t *testing.T) {
 	}
 }
 
-// A rule no magic predicate guards derives an unrestricted relation, so its
-// plan scans the pattern first and joins the delta afterwards, on both
-// planner paths.
-func TestPlanStratum_UnguardedBodyKeepsThePatternFirst(t *testing.T) {
+// Every copy opens with its delta invocation, whatever its predicate: the
+// delta holds the tuples the iteration before added, so the copy's joins
+// read them and what they reach, on both planner paths
+// (docs/proposals/DELTA_LEADS_ITS_COPY_PROOF.md, T2). The closure no magic
+// predicate guards has one delta copy; rewritten for a bound first
+// position, its adorned stratum has one delta copy and two lower copies.
+func TestPlanStratum_ADeltaCopyLeadsWithItsDelta(t *testing.T) {
 	rs, err := query.NewRuleSet(followsRules())
 	require.NoError(t, err)
+	follows := sym("follows")
 	for _, algebra := range []bool{true, false} {
-		bodies, err := PlanStratum(NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: algebra}), rs, rs.Strata()[0], nil)
+		p := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: algebra})
+		whole, err := PlanStratum(p, rs, rs.Strata()[0], nil)
 		require.NoError(t, err)
-		require.NotEmpty(t, bodies.Delta, "algebra=%v", algebra)
-		for _, body := range bodies.Delta {
+		magic, err := Rewrite(p, rs, follows, []bool{true, false}, nil)
+		require.NoError(t, err)
+		adorned, err := PlanStratum(p, magic.Rules, magic.Rules.Strata()[1], nil)
+		require.NoError(t, err)
+		var copies []PlannedBody
+		copies = append(copies, whole.Delta...)
+		copies = append(copies, adorned.Delta...)
+		copies = append(copies, adorned.Lower...)
+		require.Len(t, copies, 4, "algebra=%v", algebra)
+		for _, body := range copies {
 			first := body.Plan.Phases[0].Query.Where[0]
-			_, ok := first.(*query.DataPattern)
-			require.True(t, ok, "algebra=%v: the recursive body's first clause is %v, want the edge pattern before the delta occurrence:\n%s", algebra, first, body.Plan)
+			inv, ok := first.(*query.RuleInvocation)
+			require.True(t, ok && inv.Name == query.DeltaSymbol(body.Marked), "algebra=%v: the copy of %s marked on %s opens with %v, want %s:\n%s", algebra, body.Rule.Name, body.Marked, first, query.DeltaSymbol(body.Marked), body.Plan)
 		}
 	}
+}
+
+// Each copy is marked on the predicate whose delta symbol it invokes: a
+// delta copy on the predicate of its occurrence, in the occurrences' order,
+// an occurrence inside an or-join branch among them; a lower copy on its
+// lower predicate; a plain body on none
+// (docs/proposals/DELTA_COPY_RUNS_ON_ITS_DELTA_PROOF.md, T4).
+func TestPlanStratum_ACopyIsMarkedOnThePredicateOfItsOccurrence(t *testing.T) {
+	rs, err := parser.ParseRules(`[[(near ?a ?b) [?a :page/next ?b]]
+	                               [(far ?a ?c) (near ?a ?b) (or-join [?b ?c] (far ?b ?c) [?b :page/next ?c])]
+	                               [(near ?a ?c) (far ?a ?b) [?b :page/next ?c]]]`)
+	require.NoError(t, err)
+	near, far := sym("near"), sym("far")
+	strata := rs.Strata()
+	require.Len(t, strata, 1, "near and far are one stratum")
+	p := NewClauseBasedPlanner(nil, PlannerOptions{})
+	bodies, err := PlanStratum(p, rs, strata[0], nil)
+	require.NoError(t, err)
+	require.Len(t, bodies.Plain, 1)
+	require.Nil(t, bodies.Plain[0].Marked, "a plain body is marked on no predicate")
+	marked := map[query.Symbol][]query.Symbol{}
+	for _, body := range bodies.Delta {
+		marked[body.Rule.Name] = append(marked[body.Rule.Name], body.Marked)
+	}
+	require.Equal(t, []query.Symbol{near, far}, marked[far], "far's body: the top-level occurrence of near, then the branch's occurrence of far")
+	require.Equal(t, []query.Symbol{far}, marked[near], "near's recursive body: its one occurrence of far")
+
+	follows, err := query.NewRuleSet(followsRules())
+	require.NoError(t, err)
+	magic, err := Rewrite(p, follows, sym("follows"), []bool{true, false}, nil)
+	require.NoError(t, err)
+	adorned, err := PlanStratum(p, magic.Rules, magic.Rules.Strata()[1], nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, adorned.Lower, "the adorned stratum's bodies invoke the magic predicate of the stratum below")
+	for _, body := range adorned.Lower {
+		require.Equal(t, magic.Seed, body.Marked, "a lower copy is marked on its lower predicate")
+	}
+}
+
+// A stratum's delta copies stand in the pass order: the postorder of a
+// depth-first walk of the stratum's dependency graph, started at each
+// predicate not yet visited in the stratum's order, a predicate's
+// successors visited in the order of its rules and of each body's
+// invocations, so a copy stands after every copy its walk reached from it
+// and a pass carries a derivation along every edge but a back edge
+// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, §1,
+// L6). Over the ring a, b, c, where b reads a, c reads b and a reads c, the
+// copies stand b, c, a; over the ring odd, even, where odd's second rule
+// reads even and even reads odd, even's copy stands before odd's.
+func TestPlanStratum_DeltaCopiesStandInThePassOrder(t *testing.T) {
+	p := NewClauseBasedPlanner(nil, PlannerOptions{})
+	ring, err := parser.ParseRules(`[[(a ?x ?y) [?x :page/next ?y]]
+	                                 [(b ?x ?y) (a ?x ?y)]
+	                                 [(c ?x ?y) (b ?x ?y)]
+	                                 [(a ?x ?z) (c ?x ?y) [?y :page/next ?z]]]`)
+	require.NoError(t, err)
+	strata := ring.Strata()
+	require.Len(t, strata, 1, "a, b and c are one stratum")
+	bodies, err := PlanStratum(p, ring, strata[0], nil)
+	require.NoError(t, err)
+	var order []query.Symbol
+	for _, body := range bodies.Delta {
+		order = append(order, body.Rule.Name)
+	}
+	require.Equal(t, []query.Symbol{sym("b"), sym("c"), sym("a")}, order, "the walk from a reaches c, then b, whose edge back to a closes the ring; b finishes first, then c, then a")
+
+	pair, err := parser.ParseRules(`[[(odd ?a ?b) [?a :page/next ?b]]
+	                                 [(even ?a ?c) (odd ?a ?b) [?b :page/next ?c]]
+	                                 [(odd ?a ?c) (even ?a ?b) [?b :page/next ?c]]]`)
+	require.NoError(t, err)
+	bodies, err = PlanStratum(p, pair, pair.Strata()[0], nil)
+	require.NoError(t, err)
+	order = nil
+	for _, body := range bodies.Delta {
+		order = append(order, body.Rule.Name)
+	}
+	require.Equal(t, []query.Symbol{sym("even"), sym("odd")}, order, "the walk from odd reaches even, whose edge back to odd closes the ring; even finishes first")
 }
 
 // A predicate with required positions is evaluated at its invocation under
@@ -197,9 +287,12 @@ func TestMarkDelta_RenamesOneOccurrenceAndCopiesThePath(t *testing.T) {
 	                                                  [?b :page/next ?c])]]`)
 	require.NoError(t, err)
 	body := rs.Rules(follows)[1].Body
-	first := markDelta(body, inStratum, 0)
+	first, marked := markDelta(body, inStratum, 0)
 	if inv := first[0].(*query.RuleInvocation); inv.Name != delta || inv == body[0] || body[0].(*query.RuleInvocation).Name != follows {
 		t.Errorf("marking occurrence 0 replaces the first invocation by a copy invoking %s, got %s with the body's own %s", delta, inv, body[0])
+	}
+	if marked != follows {
+		t.Errorf("the predicate marked is %s, got %s", follows, marked)
 	}
 	if len(first[0].(*query.RuleInvocation).Args) != 2 {
 		t.Error("the copy keeps the occurrence's arguments")
@@ -207,7 +300,7 @@ func TestMarkDelta_RenamesOneOccurrenceAndCopiesThePath(t *testing.T) {
 	if first[1] != body[1] {
 		t.Error("an or-join holding no marked occurrence is shared, not copied")
 	}
-	second := markDelta(body, inStratum, 1)
+	second, _ := markDelta(body, inStratum, 1)
 	if second[0] != body[0] {
 		t.Error("marking occurrence 1 shares the first invocation")
 	}
@@ -221,7 +314,7 @@ func TestMarkDelta_RenamesOneOccurrenceAndCopiesThePath(t *testing.T) {
 	if orJoin.Branches[1][0] != body[1].(*query.OrJoinClause).Branches[1][0] {
 		t.Error("a branch without the marked occurrence shares its clauses")
 	}
-	if len(markDeltaWalk(body, inStratum, 5, new(int))) != len(body) {
+	if walked, marked := markDelta(body, inStratum, 5); len(walked) != len(body) || marked != nil {
 		t.Error("a target past the last occurrence copies the body with nothing marked")
 	}
 }

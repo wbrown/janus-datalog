@@ -60,7 +60,9 @@ func (s *TupleSet) Contains(tuple Tuple) bool {
 }
 ```
 
-It removes the `mapEntry` wrapper and the `value` field per unique tuple. It changes no behaviour. Its cost is a second keyed type beside `TupleKeyMap`, with the same hashing to keep in step. The sketch above keys a bucket slice per hash. `TupleKeyMap` has since moved to an inline first entry with an overflow map, and a `TupleSet` takes the same layout.
+It removes the `mapEntry` wrapper and the `value` field per unique tuple. It changes no behaviour. Its cost is a second keyed type beside `TupleKeyMap`, with the same hashing to keep in step. The sketch above keys a bucket slice per hash.
+
+The tree carries `TupleSet` (`datalog/executor/tuple_set.go`) in another layout. A member is the tuple the caller added, held as given. A member's key is read at the set's stored positions, and a probing tuple's key at its probing positions, so a set holds one relation's tuples and answers another relation's probes. The table is open-addressed over member indices, a power of two in length and at most half full, probed linearly from the key's hash's slot. The hash is `hashTuplePositions`, the one every tuple key of the package hashes by. The window frame's record of the keys its windows have run (`windowFrame.ran`, `datalog/executor/window_frame.go`) is derived over it in `docs/proposals/FRAME_RUN_RECORD_PROOF.md`. It is the one table under `JoinIndex` and `TupleKeyMap`, and `DedupIterator` keys it by the whole tuple (`docs/proposals/ONE_TUPLE_TABLE_PROOF.md`).
 
 ### An interned-value fast path
 

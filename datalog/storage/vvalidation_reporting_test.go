@@ -133,7 +133,7 @@ func testVValidationReportsWhatItsScansCost(t *testing.T, mode optimizerMode) {
 				t.Fatalf("this arm reported no completion; strategies that did: %v", saw)
 			}
 
-			require.Equal(t, tc.wantScansOpened, complete.Data[annotations.KeyScansOpened],
+			require.Equal(t, tc.wantScansOpened, complete.Data[annotations.KeyRunsAddressed],
 				"the arm owes the count of candidate scans it opened; it addresses "+
 					"no single run, so this stands in a bound's place")
 			require.NotContains(t, complete.Data, annotations.KeyIndex,

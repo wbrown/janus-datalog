@@ -423,6 +423,14 @@ type MaterializedRelation struct {
 	// replayed by Iterator().Error() so a failure isn't laundered by
 	// materialization. nil when the source iterated cleanly.
 	err error
+	// set is the derived set this relation is a view of, nil for every other
+	// relation: the view's tuples are the set's first Size() tuples, so a
+	// join into the view probes the index the set keeps at the join key,
+	// bounded at the view's count, and drains nothing
+	// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2, T3).
+	// A rename carries it, since a rename changes no position; no other
+	// derivation of a relation does.
+	set *derivedSet
 }
 
 func NewMaterializedRelation(symbols []query.Symbol, tuples []Tuple) *MaterializedRelation {
@@ -530,15 +538,20 @@ func deduplicateTuples(tuples []Tuple) []Tuple {
 		return []Tuple{tuples[0]}
 	}
 
-	// Pre-size seen map based on input size
-	seen := NewTupleKeyMapWithCapacity(len(tuples))
+	// Each distinct tuple is held in the set under its whole-tuple key
+	// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T4), the set sized to the
+	// input.
+	positions := allPositions(len(tuples[0]))
+	seen := NewTupleSet(positions, positions, len(tuples))
 	result := make([]Tuple, 0, len(tuples))
 
 	for _, tuple := range tuples {
-		key := NewTupleKeyFull(tuple)
-		if !seen.PutIfAbsent(key, true) {
-			result = append(result, tuple)
+		_, hash, held := seen.Find(tuple)
+		if held {
+			continue
 		}
+		seen.Add(tuple, hash)
+		result = append(result, tuple)
 	}
 
 	return result
@@ -761,7 +774,8 @@ func (r *MaterializedRelation) Sorted() ([]Tuple, error) {
 
 // Rename is the relation under the substitution: the same tuples, shared,
 // under the renamed symbols, since a rename changes no position and a
-// materialized tuple is never written after it is made.
+// materialized tuple is never written after it is made. A view's rename is
+// a view of the same set, for the same reason.
 func (r *MaterializedRelation) Rename(subst query.Substitution) (Relation, error) {
 	symbols, err := subst.Rename(r.symbols)
 	if err != nil {
@@ -769,6 +783,7 @@ func (r *MaterializedRelation) Rename(subst query.Substitution) (Relation, error
 	}
 	renamed := newMaterializedRelationFromSet(symbols, r.tuples, r.options, r.properties.renameSymbols(subst))
 	renamed.err = r.err
+	renamed.set = r.set
 	return renamed, nil
 }
 
@@ -777,6 +792,12 @@ func (r *MaterializedRelation) Project(symbols []query.Symbol) (Relation, error)
 	// Empty projection is invalid in Datalog - must have at least one find element
 	if len(symbols) == 0 {
 		return nil, fmt.Errorf("cannot project empty symbol list - invalid query")
+	}
+
+	// The identity projection, the relation's own symbols in its own order,
+	// is the relation (docs/proposals/BINDING_MATCH_PROOF.md, T1).
+	if symbolsMatch(r.symbols, symbols) {
+		return r, nil
 	}
 
 	indices, err := query.SymbolIndexTable(r.symbols, symbols)
@@ -1545,8 +1566,33 @@ func CommonSymbols(r1, r2 Relation) []query.Symbol {
 	return common
 }
 
-// Select filters a relation based on a predicate
+// Select keeps the tuples of a relation a predicate accepts, in a held
+// relation over the input's symbols, options and properties, carrying the
+// input's deferred error. Over a held relation the survivors are collected
+// only from the first rejection on, and a predicate rejecting nothing answers
+// the relation itself (docs/proposals/BINDING_MATCH_PROOF.md, T2).
 func Select(rel Relation, pred func(Tuple) bool) Relation {
+	if held, ok := rel.(*MaterializedRelation); ok {
+		var selected []Tuple
+		for i, tuple := range held.tuples {
+			if pred(tuple) {
+				if selected != nil {
+					selected = append(selected, tuple)
+				}
+				continue
+			}
+			if selected == nil {
+				selected = make([]Tuple, i, len(held.tuples))
+				copy(selected, held.tuples[:i])
+			}
+		}
+		if selected == nil {
+			return held
+		}
+		result := newMaterializedRelationFromSet(held.symbols, selected, held.options, held.properties)
+		result.err = held.err
+		return result
+	}
 	var selected []Tuple
 	needsCopy := rel.RequiresCopy()
 	it := rel.Iterator()

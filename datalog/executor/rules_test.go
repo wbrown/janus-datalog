@@ -221,6 +221,80 @@ func TestEvaluateRules_TwoRecursiveOccurrences(t *testing.T) {
 	}
 }
 
+// A pass runs each delta copy whose marked predicate gained tuples since the
+// copy last ran, in the pass order, and no other copy
+// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, T5).
+// Over two mutually recursive predicates, each body's one delta copy marked
+// on the other, the pass order is even's copy, marked on odd, then odd's
+// copy, marked on even, so a pass begins even's copy's phases when the pass
+// before added to odd, and odd's copy's phases when the pass itself added to
+// even.
+func TestRunStratum_RunsTheCopiesOfThePredicatesThatGainedTuples(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, `[[(odd ?a ?b) [?a :page/next ?b]]
+	                     [(even ?a ?c) (odd ?a ?b) [?b :page/next ?c]]
+	                     [(odd ?a ?c) (even ?a ?b) [?b :page/next ?c]]]`)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (odd ?x ?y)]`)
+	odd, even := datalog.NewSymbol("odd"), datalog.NewSymbol("even")
+	oddPairs := map[[2]datalog.Identity]bool{}
+	for i := 1; i <= 6; i++ {
+		for j := i + 1; j <= 6; j += 2 {
+			oddPairs[[2]datalog.Identity{page(i), page(j)}] = true
+		}
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var events []annotations.Event
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			require.NoError(t, err)
+			requireSamePairs(t, identityPairs(t, result), oddPairs)
+
+			// The phases of each copy, by the predicate the copy is marked
+			// on: the copy of even's body reads odd's delta, and the delta
+			// copy of odd's second body reads even's.
+			bodies, err := planner.PlanStratum(exec.planner, rs, rs.Strata()[0], nil)
+			require.NoError(t, err)
+			require.Len(t, bodies.Delta, 2, "one delta copy per body with an occurrence")
+			phases := map[query.Symbol]int{}
+			for _, body := range bodies.Delta {
+				marked := odd
+				if body.Rule.Name == odd {
+					marked = even
+				}
+				phases[marked] += len(body.Plan.Phases)
+			}
+
+			var previous map[query.Symbol]int
+			begun, compared := 0, 0
+			for _, e := range events {
+				switch e.Name {
+				case annotations.PhaseBegin:
+					begun++
+				case annotations.RulesIteration:
+					added := e.Data["delta"].(map[query.Symbol]int)
+					if previous != nil {
+						want := 0
+						if previous[odd] > 0 {
+							want += phases[odd]
+						}
+						if added[even] > 0 {
+							want += phases[even]
+						}
+						require.Equal(t, want, begun, "pass %v: the phases begun are even's copy's when the pass before added to odd and odd's copy's when this pass added to even; before %v, added %v", e.Data["iteration"], previous, added)
+						compared++
+					}
+					previous = added
+					begun = 0
+				}
+			}
+			require.GreaterOrEqual(t, compared, 3, "the chain's odd and even paths alternate over several passes")
+		})
+	}
+}
+
 func TestEvaluateRules_StratifiedNegation(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(chainDatoms(4))
 	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
@@ -752,17 +826,20 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 				}
 				for i := 0; i < f.arity; i++ {
 					bound := mustParse(t, fmt.Sprintf(`[:find %s :in $ %% %s :where (%s %s)]`, head, vars[i], f.predicate, head))
-					values := NewTupleKeyMap()
+					values := NewTupleSet([]int{i}, []int{i}, 0)
 					for _, tuple := range all {
-						if values.PutIfAbsent(NewTupleKeyFull(Tuple{tuple[i]}), struct{}{}) {
+						_, hash, held := values.Find(tuple)
+						if held {
 							continue
 						}
+						values.Add(tuple, hash)
 						v := tuple[i]
-						want := NewTupleKeyMap()
+						positions := allPositions(len(tuple))
+						want := NewTupleSet(positions, positions, 0)
 						wantCount := 0
 						for _, w := range all {
 							if datalog.ValuesEqual(w[i], v) {
-								want.PutIfAbsent(NewTupleKeyFull(w), struct{}{})
+								want.Add(w, hashTuplePositions(w, positions))
 								wantCount++
 							}
 						}
@@ -779,7 +856,7 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 							t.Errorf("position %d bound to %v: got %d tuples, want %d", i, v, len(got), wantCount)
 						}
 						for _, g := range got {
-							if !want.Exists(NewTupleKeyFull(g)) {
+							if !want.Probe(g) {
 								t.Errorf("position %d bound to %v: %v is not among the whole invocation's tuples", i, v, g)
 							}
 						}
@@ -832,16 +909,18 @@ func tuplesBoundTo(t *testing.T, exec *Executor, rs *query.RuleSet, q *query.Que
 // pages given.
 func requireSamePages(t *testing.T, label string, got []Tuple, want ...datalog.Identity) {
 	t.Helper()
-	have := NewTupleKeyMap()
+	have := NewTupleSet([]int{0}, []int{0}, len(got))
 	for _, tuple := range got {
-		have.PutIfAbsent(NewTupleKeyFull(tuple), struct{}{})
+		if _, hash, held := have.Find(tuple); !held {
+			have.Add(tuple, hash)
+		}
 	}
 	if len(got) != len(want) {
 		t.Errorf("%s = %v, want %v", label, got, want)
 		return
 	}
 	for _, p := range want {
-		if !have.Exists(NewTupleKeyFull(Tuple{p})) {
+		if !have.Probe(Tuple{p}) {
 			t.Errorf("%s = %v, want %v", label, got, want)
 			return
 		}

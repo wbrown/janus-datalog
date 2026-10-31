@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +38,8 @@ func main() {
 	var compressedExport bool
 	var showStats bool
 	var planOnly bool
+	var cpuProfilePath string
+	var memProfilePath string
 
 	var inputValues ednSliceFlag
 
@@ -53,6 +57,8 @@ func main() {
 	flag.StringVar(&importBinPath, "import-bin", "", "import database from compressed binary JDZL file")
 	flag.BoolVar(&showStats, "stats", false, "print per-attribute cardinality, value size, and duplication statistics")
 	flag.BoolVar(&planOnly, "plan-only", false, "plan the query without executing it: print the compiled algebra, every rewrite decision, the rewritten query, and the physical plan (requires -query)")
+	flag.StringVar(&cpuProfilePath, "cpuprofile", "", "write a CPU profile of the whole run to this file, for go tool pprof")
+	flag.StringVar(&memProfilePath, "memprofile", "", "write an allocation profile of the whole run to this file, for go tool pprof")
 	flag.Var(&inputValues, "in", "input parameter as EDN value (repeatable, one per :in binding)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [database_or_dump_path]\n\n", os.Args[0])
@@ -76,12 +82,46 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -db dump.jdzl -query '...'      # Query a JDZL dump directly (temporary database)\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -optimize=false -query '...'    # Run on the baseline planner (algebra optimizer off)\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -plan-only -query '...'         # Show the algebra, rewrites, and plan without executing\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -cpuprofile cpu.prof -db dump.jdzl -query '...'  # Profile the run; read it with go tool pprof\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -memprofile mem.prof -db dump.jdzl -query '...'  # Profile the run's allocations; read it with go tool pprof\n", os.Args[0])
 	}
 	flag.Parse()
 
 	if help {
 		flag.Usage()
 		os.Exit(0)
+	}
+
+	if cpuProfilePath != "" {
+		profile, err := os.Create(cpuProfilePath)
+		if err != nil {
+			log.Fatalf("-cpuprofile: %v", err)
+		}
+		if err := pprof.StartCPUProfile(profile); err != nil {
+			log.Fatalf("-cpuprofile: %v", err)
+		}
+		defer func() {
+			pprof.StopCPUProfile()
+			if err := profile.Close(); err != nil {
+				log.Fatalf("-cpuprofile: %v", err)
+			}
+		}()
+	}
+	if memProfilePath != "" {
+		profile, err := os.Create(memProfilePath)
+		if err != nil {
+			log.Fatalf("-memprofile: %v", err)
+		}
+		defer func() {
+			// The allocs profile is current as of the last collection.
+			runtime.GC()
+			if err := pprof.Lookup("allocs").WriteTo(profile, 0); err != nil {
+				log.Fatalf("-memprofile: %v", err)
+			}
+			if err := profile.Close(); err != nil {
+				log.Fatalf("-memprofile: %v", err)
+			}
+		}()
 	}
 
 	// Check for positional argument

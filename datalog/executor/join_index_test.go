@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -160,4 +162,79 @@ func TestJoinIndex_ProbeAllocatesNothing(t *testing.T) {
 func TestJoinIndex_MatchesAnIdentityByValue(t *testing.T) {
 	ix := joinIndexOver(Tuple{datalog.NewIdentity("ji:same"), int64(10)})
 	assert.Equal(t, []Tuple{{datalog.NewIdentity("ji:same"), int64(10)}}, ix.Probe(Tuple{datalog.NewIdentity("ji:same")}))
+}
+
+// A key of one tuple allocates no group: adding distinct keys allocates the
+// table's growth and nothing per key, and a probe of such a key answers the
+// member itself as a slice of one, capped at one so an append cannot reach
+// the next member (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T3, L3).
+// AllocsPerRun runs its function once unmeasured before the runs it counts,
+// so the tuples outnumber the runs by one.
+func TestJoinIndex_AKeyOfOneTupleAllocatesNoGroup(t *testing.T) {
+	const runs = 1000
+	tuples := make([]Tuple, runs+1)
+	for i := range tuples {
+		tuples[i] = Tuple{datalog.NewIdentity(fmt.Sprintf("ji:key%d", i)), int64(i)}
+	}
+	ix := NewJoinIndex([]int{0}, []int{0}, 0)
+	next := 0
+	perAdd := testing.AllocsPerRun(runs, func() {
+		ix.Add(tuples[next])
+		next++
+	})
+	assert.Less(t, perAdd, 0.1, "allocations per add of a new key, beyond the table's growth")
+	group := ix.Probe(Tuple{tuples[0][0]})
+	assert.Equal(t, []Tuple{tuples[0]}, group)
+	assert.Equal(t, 1, cap(group), "a key of one tuple is answered as a slice of one, capped at one")
+}
+
+// An index given a capacity hint allocates nothing at construction beyond
+// its own struct: the tags, the table and the members are built at the
+// first add, sized to the hint, so a build that turns out empty costs the
+// struct alone, and adds up to the hint allocate nothing beyond that first
+// build (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T3, L4;
+// docs/proposals/TAGGED_SLOT_PROBE_PROOF.md, T4).
+func TestJoinIndex_ACapacityHintAllocatesNothingBeforeTheFirstAdd(t *testing.T) {
+	const hint = 1000
+	// The positions are the caller's, made once outside the measured calls.
+	positions := []int{0}
+	var ix *JoinIndex
+	atConstruction := testing.AllocsPerRun(100, func() { ix = NewJoinIndex(positions, positions, hint) })
+	assert.Equal(t, 1.0, atConstruction, "the index's struct alone")
+
+	tuples := make([]Tuple, hint)
+	for i := range tuples {
+		tuples[i] = Tuple{datalog.NewIdentity(fmt.Sprintf("ji:hint%d", i))}
+	}
+	filled := testing.AllocsPerRun(1, func() {
+		ix = NewJoinIndex(positions, positions, hint)
+		for _, tuple := range tuples {
+			ix.Add(tuple)
+		}
+	})
+	assert.LessOrEqual(t, filled, 4.0, "the struct, the tags, the table and the members, for adds up to the hint")
+	assert.Equal(t, hint, ix.Len())
+}
+
+// An index hinted for many tuples over few keys allocates its groups for
+// the keys it holds, not for the hint: a key's second tuple, in an index
+// hinted for a thousand tuples, allocates the group of two and the groups'
+// entries for the one key held, under a kilobyte
+// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T3). The bytes are the
+// runtime's allocation total around the one add, read after a collection.
+func TestJoinIndex_GroupsAreSizedToTheKeysHeldNotTheHint(t *testing.T) {
+	const hint = 1000
+	positions := []int{0}
+	e1 := datalog.NewIdentity("ji:grouped")
+	first, second := Tuple{e1, int64(1)}, Tuple{e1, int64(2)}
+	ix := NewJoinIndex(positions, positions, hint)
+	ix.Add(first)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	ix.Add(second)
+	runtime.ReadMemStats(&after)
+	secondBytes := after.TotalAlloc - before.TotalAlloc
+	assert.LessOrEqual(t, secondBytes, uint64(1024), "bytes a key's second tuple allocates in an index hinted for %d tuples", hint)
+	assert.Equal(t, []Tuple{first, second}, ix.Probe(Tuple{e1}))
 }

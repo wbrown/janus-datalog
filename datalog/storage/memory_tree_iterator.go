@@ -14,8 +14,8 @@ import (
 // pointer rather than by a lock or a copy.
 func (v *storeVersion) scan(bound ScanBound) (Iterator, error) {
 	tree := v.tree(bound.Index)
-	probe, err := boundProbeDatom(tree.order, bound)
-	if err != nil {
+	probe := &datalog.Datom{}
+	if err := fillProbeDatom(probe, tree.order, bound); err != nil {
 		return nil, err
 	}
 	return &memoryTreeIterator{
@@ -27,27 +27,30 @@ func (v *storeVersion) scan(bound ScanBound) (Iterator, error) {
 	}, nil
 }
 
-// boundProbeDatom places a bound's values into the datom positions the index's
-// order assigns them. Only those positions are set; a prefix comparison never
-// reads the rest.
+// fillProbeDatom places a bound's values into the datom positions the index's
+// order assigns them, in the probe the caller holds, every position of it: the
+// bound's positions take its values and the rest are zero. A prefix comparison
+// reads the bound's positions alone. The probe is the iterator's own for its
+// life, filled once at the scan and again at each seek, so a seek allocates
+// nothing (docs/proposals/ONE_SCAN_SOUGHT_PER_KEY_PROOF.md, L5).
 //
 // Each position admits exactly one kind of value, so anything else is a caller
 // defect rather than something to coerce — the same rule the encoder's bound
 // path applies, stated once per backend because each reads the values in its
 // own form.
-func boundProbeDatom(order [componentsPerIndex]keyComponent, bound ScanBound) (*datalog.Datom, error) {
+func fillProbeDatom(probe *datalog.Datom, order [componentsPerIndex]keyComponent, bound ScanBound) error {
 	if len(bound.Prefix) > len(order) {
-		return nil, fmt.Errorf("scan bound on %v: binds %d components, index orders %d",
+		return fmt.Errorf("scan bound on %v: binds %d components, index orders %d",
 			bound.Index, len(bound.Prefix), len(order))
 	}
 
-	probe := &datalog.Datom{}
+	*probe = datalog.Datom{}
 	for i, value := range bound.Prefix {
 		switch order[i] {
 		case componentE:
 			id, ok := value.(datalog.Identity)
 			if !ok || id == nil {
-				return nil, fmt.Errorf("scan bound on %v: E must be a non-nil Identity, got %T",
+				return fmt.Errorf("scan bound on %v: E must be a non-nil Identity, got %T",
 					bound.Index, value)
 			}
 			probe.E = id
@@ -55,7 +58,7 @@ func boundProbeDatom(order [componentsPerIndex]keyComponent, bound ScanBound) (*
 		case componentA:
 			kw, ok := value.(datalog.Keyword)
 			if !ok || kw == nil {
-				return nil, fmt.Errorf("scan bound on %v: A must be a non-nil Keyword, got %T",
+				return fmt.Errorf("scan bound on %v: A must be a non-nil Keyword, got %T",
 					bound.Index, value)
 			}
 			probe.A = kw
@@ -66,17 +69,17 @@ func boundProbeDatom(order [componentsPerIndex]keyComponent, bound ScanBound) (*
 		case componentTx:
 			eid, ok := value.(datalog.ElementID)
 			if !ok {
-				return nil, fmt.Errorf("scan bound on %v: Tx must be an ElementID, got %T",
+				return fmt.Errorf("scan bound on %v: Tx must be an ElementID, got %T",
 					bound.Index, value)
 			}
 			probe.Tx = eid
 
 		default:
-			return nil, fmt.Errorf("scan bound on %v: unknown component %v at position %d",
+			return fmt.Errorf("scan bound on %v: unknown component %v at position %d",
 				bound.Index, order[i], i)
 		}
 	}
-	return probe, nil
+	return nil
 }
 
 // memoryTreeIterator walks the run a ScanBound names in one index tree.
@@ -182,13 +185,11 @@ func (it *memoryTreeIterator) Seek(bound ScanBound) {
 		return
 	}
 
-	probe, err := boundProbeDatom(it.tree.order, bound)
-	if err != nil {
+	if err := fillProbeDatom(it.probe, it.tree.order, bound); err != nil {
 		it.err = err
 		return
 	}
 
-	it.probe = probe
 	it.boundN = len(bound.Prefix)
 	it.started = false
 	it.done = false

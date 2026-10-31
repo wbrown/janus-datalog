@@ -42,7 +42,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 				Latency: time.Since(opened),
 				Data: map[string]interface{}{
 					annotations.KeyDatomsScanned:    report.scanned,
-					annotations.KeyScansOpened:      report.peers,
+					annotations.KeyRunsAddressed:    report.peers,
 					annotations.KeyEntriesPopulated: populated,
 				},
 			})
