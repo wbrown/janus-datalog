@@ -80,6 +80,7 @@ func Rewrite(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []bool,
 		seeds = []query.SeedPredicate{{Name: seed, Arity: query.CountBound(bound)}}
 	}
 	excluded := map[nonMonotoneSite]bool{}
+	whole := map[query.Symbol]bool{}
 	for {
 		w := &magicRewriter{
 			rs:       rs,
@@ -88,6 +89,8 @@ func Rewrite(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []bool,
 			adorned:  map[query.Symbol]bool{},
 			original: map[query.Symbol]bool{},
 			excluded: excluded,
+			whole:    whole,
+			enqueued: map[query.Symbol]bool{},
 		}
 		w.enqueue(name, bound)
 		for len(w.worklist) > 0 {
@@ -98,15 +101,36 @@ func Rewrite(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []bool,
 			}
 		}
 		rewritten, err := query.NewSeededRuleSet(w.rules, seeds)
-		if err == nil {
+		if err != nil {
+			refused := w.refusedSites(err)
+			if len(refused) == 0 {
+				return nil, err
+			}
+			for _, site := range refused {
+				excluded[site] = true
+			}
+			continue
+		}
+		// The whole predicates of the accepted set are the original
+		// predicates among the ones the root needs, each derived whole in its
+		// own stratum. A root among them evaluates the set as given, and a
+		// predicate the walk adorned among them is read whole at every site
+		// on the next walk
+		// (A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md, §1, T4, L3).
+		again := false
+		for needed := range neededPredicates(rewritten, predicate) {
+			if _, original := rs.Arity(needed); original && !whole[needed] {
+				whole[needed] = true
+				if w.enqueued[needed] {
+					again = true
+				}
+			}
+		}
+		if whole[name] {
+			return &Magic{Rules: rs, Predicate: name}, nil
+		}
+		if !again {
 			return &Magic{Rules: rewritten, Predicate: predicate, Seed: seed}, nil
-		}
-		refused := w.refusedSites(err)
-		if len(refused) == 0 {
-			return nil, err
-		}
-		for _, site := range refused {
-			excluded[site] = true
 		}
 	}
 }
@@ -149,7 +173,11 @@ type adornedPredicate struct {
 // walks and the handler those plans report to.
 // excluded holds the sites under non-monotone forms a refusal of the set
 // named, left unadorned on the walk after it, and sites the sites the walk
-// adorned under such forms, which a refusal is read against.
+// adorned under such forms, which a refusal is read against. whole holds
+// the predicates the evaluation derives whole, read whole at every site
+// (A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md), and enqueued the
+// original names of the adorned predicates the walk queued, which Rewrite
+// reads against the whole predicates of the set the walk built.
 type magicRewriter struct {
 	rs       *query.RuleSet
 	planner  QueryPlanner
@@ -160,6 +188,8 @@ type magicRewriter struct {
 	worklist []adornedPredicate
 	excluded map[nonMonotoneSite]bool
 	sites    []nonMonotoneSite
+	whole    map[query.Symbol]bool
+	enqueued map[query.Symbol]bool
 }
 
 // nonMonotoneSite is an invocation under a non-monotone form, named by the
@@ -252,6 +282,7 @@ func (w *magicRewriter) enqueue(name query.Symbol, bound []bool) {
 		return
 	}
 	w.adorned[key] = true
+	w.enqueued[name] = true
 	w.worklist = append(w.worklist, adornedPredicate{name: name, bound: bound})
 }
 
@@ -1063,6 +1094,13 @@ func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvoca
 			return inv, nil, nil
 		}
 		return nil, nil, err
+	}
+	// A predicate the evaluation derives whole is read whole at every site,
+	// at a bound position as at a free one
+	// (A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md, T1, L1).
+	if w.whole[inv.Name] {
+		w.includeOriginal(inv.Name)
+		return inv, nil, nil
 	}
 	if query.CountBound(bound) == 0 && !w.rs.ReachesRequired(inv.Name) {
 		w.includeOriginal(inv.Name)

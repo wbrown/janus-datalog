@@ -122,14 +122,49 @@ func NeededStrata(rs *query.RuleSet, invoked query.Symbol) []query.Stratum {
 // same-stratum predicate produces without any delta. Delta holds, per
 // same-stratum occurrence of a body, at the top level, in a branch or in a
 // subquery body, the copy whose occurrence invokes the predicate's delta
-// symbol, run each iteration after the first. Lower holds, per occurrence
-// of a seed-restricted predicate of a lower stratum, the copy whose
-// occurrence invokes that predicate's delta symbol, run at a later window's
-// iteration zero over the tuples the window added to that predicate.
+// symbol, in the pass order (passOrder): a pass visits each copy once in
+// this order and runs it over the tuples its marked predicate gained since
+// the copy last ran
+// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md).
+// Lower holds, per occurrence of a seed-restricted predicate of a lower
+// stratum, the copy whose occurrence invokes that predicate's delta symbol,
+// run at a later window's iteration zero over the tuples the window added
+// to that predicate.
 type Bodies struct {
 	Plain []PlannedBody
 	Delta []PlannedBody
 	Lower []PlannedBody
+}
+
+// passOrder is the stratum's predicates in the pass order: the postorder of
+// a depth-first walk of the stratum's dependency graph, started at each
+// predicate not yet visited in the stratum's order, a predicate's
+// successors the same-stratum predicates its rules invoke, visited in the
+// order of its rules and of each body's invocations. A predicate stands
+// after every predicate its walk reached from it, so a pass carries a
+// derivation along every edge of the graph but a back edge
+// (A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, §1, L6).
+func passOrder(rs *query.RuleSet, predicates []query.Symbol, inStratum map[query.Symbol]bool) []query.Symbol {
+	visited := map[query.Symbol]bool{}
+	order := make([]query.Symbol, 0, len(predicates))
+	var visit func(p query.Symbol)
+	visit = func(p query.Symbol) {
+		visited[p] = true
+		for _, rule := range rs.Rules(p) {
+			for _, inv := range query.Invocations(rule.Body) {
+				if inStratum[inv.Name] && !visited[inv.Name] {
+					visit(inv.Name)
+				}
+			}
+		}
+		order = append(order, p)
+	}
+	for _, p := range predicates {
+		if !visited[p] {
+			visit(p)
+		}
+	}
+	return order
 }
 
 // PlannedBody is one body a stratum runs: its rule, its plan, and the
@@ -152,6 +187,9 @@ func PlanStratum(p QueryPlanner, rs *query.RuleSet, stratum query.Stratum, handl
 		inStratum[predicate] = true
 	}
 	var bodies Bodies
+	// deltas holds each predicate's delta copies, by rule and then by
+	// occurrence, emitted below in the pass order.
+	deltas := map[query.Symbol][]PlannedBody{}
 	for _, predicate := range stratum.Predicates {
 		for _, rule := range rs.Rules(predicate) {
 			occurrences := 0
@@ -182,12 +220,12 @@ func PlanStratum(p QueryPlanner, rs *query.RuleSet, stratum query.Stratum, handl
 				bodies.Plain = append(bodies.Plain, PlannedBody{Rule: rule, Plan: plan})
 			}
 			for j := 0; j < occurrences; j++ {
-				copied, predicate := markDelta(rule.Body, inStratum, j)
+				copied, marked := markDelta(rule.Body, inStratum, j)
 				plan, err := planBody(p, rs, rule, copied, handler)
 				if err != nil {
 					return Bodies{}, err
 				}
-				bodies.Delta = append(bodies.Delta, PlannedBody{Rule: rule, Plan: plan, Marked: predicate})
+				deltas[predicate] = append(deltas[predicate], PlannedBody{Rule: rule, Plan: plan, Marked: marked})
 			}
 			for _, name := range lowerOrder {
 				marked := map[query.Symbol]bool{name: true}
@@ -201,6 +239,9 @@ func PlanStratum(p QueryPlanner, rs *query.RuleSet, stratum query.Stratum, handl
 				}
 			}
 		}
+	}
+	for _, predicate := range passOrder(rs, stratum.Predicates, inStratum) {
+		bodies.Delta = append(bodies.Delta, deltas[predicate]...)
 	}
 	return bodies, nil
 }

@@ -374,6 +374,7 @@ func TestJoinStrategyAnnotationDoesNotConsumeStreamingRelation(t *testing.T) {
 		"streaming",
 		"right",
 		false,
+		false,
 	)
 
 	require.False(t, stream.iteratorCalled,

@@ -423,6 +423,14 @@ type MaterializedRelation struct {
 	// replayed by Iterator().Error() so a failure isn't laundered by
 	// materialization. nil when the source iterated cleanly.
 	err error
+	// set is the derived set this relation is a view of, nil for every other
+	// relation: the view's tuples are the set's first Size() tuples, so a
+	// join into the view probes the index the set keeps at the join key,
+	// bounded at the view's count, and drains nothing
+	// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2, T3).
+	// A rename carries it, since a rename changes no position; no other
+	// derivation of a relation does.
+	set *derivedSet
 }
 
 func NewMaterializedRelation(symbols []query.Symbol, tuples []Tuple) *MaterializedRelation {
@@ -766,7 +774,8 @@ func (r *MaterializedRelation) Sorted() ([]Tuple, error) {
 
 // Rename is the relation under the substitution: the same tuples, shared,
 // under the renamed symbols, since a rename changes no position and a
-// materialized tuple is never written after it is made.
+// materialized tuple is never written after it is made. A view's rename is
+// a view of the same set, for the same reason.
 func (r *MaterializedRelation) Rename(subst query.Substitution) (Relation, error) {
 	symbols, err := subst.Rename(r.symbols)
 	if err != nil {
@@ -774,6 +783,7 @@ func (r *MaterializedRelation) Rename(subst query.Substitution) (Relation, error
 	}
 	renamed := newMaterializedRelationFromSet(symbols, r.tuples, r.options, r.properties.renameSymbols(subst))
 	renamed.err = r.err
+	renamed.set = r.set
 	return renamed, nil
 }
 

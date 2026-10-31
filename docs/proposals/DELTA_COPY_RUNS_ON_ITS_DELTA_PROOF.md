@@ -4,7 +4,7 @@
 
 - The code: `datalog/planner/rule_bodies.go` (`Bodies`, `PlannedBody`, `PlanStratum`, `markDelta`, `markDeltaWalk`), `datalog/executor/rules.go` (`ruleEvaluation.extend`, `ruleEvaluation.runStratum`, `stratumEvaluation.run`, `derivedSet.absorb`).
 - The design: `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2, which states that each derivation fires in exactly one window when the semi-naive delta copies cover every occurrence of a predicate that changed, and `docs/reference/RULES.md`, "Evaluation", which states that each later iteration executes each rule once per recursive invocation in its body.
-- The failure: `docs/bugs/BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`, item 3.
+- The failure: `BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`, item 3.
 - The tests that pin the step: `TestEvaluateRules_SemiNaiveStopsWhenDeltaEmpty` and `TestEvaluateRules_TwoRecursiveOccurrences` (`datalog/executor/rules_test.go`), `TestRuleEvaluation_ALaterWindowReadsALowerStratumsNewTuplesAlone` and `TestRuleEvaluation_RunStratumReturnsWhatTheWindowAdded` (`datalog/executor/rule_evaluation_test.go`), and `TestPlanStratum_PlansEachBodyAsTheQueryFindingTheRulesHead` and `TestPlanStratum_AnOccurrenceInsideASubqueryBodyIsADeltaCopy` (`datalog/planner/rule_bodies_test.go`).
 - The decision: an iteration runs a delta copy only when the predicate the copy is marked on gained tuples in the iteration before, as a window's iteration zero runs a lower copy only when its lower predicate gained tuples in the window, and the predicate a copy is marked on is carried by the planned body in the one field that carries a lower copy's.
 
@@ -24,9 +24,9 @@ Every name below is the code's, given a symbol for the proof.
 
 ## 2. Preconditions
 
-- **P1 (the semi-naive step).** A derivation through a body with an occurrence fires in the iteration after the one that added its last-added premise, through the copy marked on that premise's predicate, whose delta holds the premise then, and in no other iteration (SCOPE §4.2). A derivation whose premises are all in the sets at the seeding run fires at iteration zero, through the plain body.
+- **P1 (the semi-naive step).** A derivation through a body with an occurrence fires in the iteration after the one that added its last-added premise, through the copy marked on that premise's predicate, whose delta holds the premise then, and in no other iteration (SCOPE §4.2). A derivation whose premises are all in the sets at the seeding run fires at iteration zero, through the plain body. Withdrawn: the step is replaced by `A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md`, under which a derivation fires at the first run, after its last premise is admitted, of the copy marked on that premise's predicate (its T3).
 - **P2 (the copies).** `PlanStratum` plans one delta copy per occurrence, in the order `markDeltaWalk` counts them, and one lower copy per occurrence of each seed-restricted lower predicate. `markDelta` replaces the counted occurrence and shares every other clause.
-- **P3 (the stratum loop as it stands).** At every iteration after the first, `runStratum` holds every predicate's delta under its delta symbol, an empty one as an empty relation, and runs every delta copy of the stratum. At a later window's iteration zero it runs the lower copies whose lower predicate gained tuples in the window, and no other.
+- **P3 (the stratum loop as it stands).** At every iteration after the first, `runStratum` holds every predicate's delta under its delta symbol, an empty one as an empty relation, and runs every delta copy of the stratum. At a later window's iteration zero it runs the lower copies whose lower predicate gained tuples in the window, and no other. Withdrawn: the loop is replaced by the passes of `A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md` (its §1), and the later window's first run stands.
 - **P4 (the set).** `absorb` adds the tuples of a relation the set does not hold and answers them; a tuple the set holds is answered by nothing.
 - **P5 (the field).** `PlannedBody.Lower` names a lower copy's marked predicate. A delta copy's planned body names no predicate.
 - **P6 (the events).** `rules/iteration` reports, per predicate, the tuples the iteration added. `phase/begin` fires once per phase of every plan run.
@@ -35,7 +35,7 @@ Every name below is the code's, given a symbol for the proof.
 
 **T1 (answers unchanged).** After every iteration, every set holds what it held under P3.
 
-**T2 (iterations unchanged).** Every iteration's delta is what it was under P3, so a stratum runs the iterations it ran and reports the `rules/iteration` events it reported.
+**T2 (iterations unchanged).** Every iteration's delta is what it was under P3, so a stratum runs the iterations it ran and reports the `rules/iteration` events it reported. Withdrawn with P3: under `A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md` an iteration is a pass, and the events report what each pass added (its T5).
 
 **T3 (the work).** An iteration after the first runs the delta copies marked on the predicates whose delta holds a tuple, and no other copy.
 
@@ -84,7 +84,7 @@ The change carries these tests, each pinning the theorem named, written and run 
   - `runStratum` runs, at each iteration after the first, the delta copies whose marked predicate's delta holds a tuple, filtered as the lower copies are at a window's iteration zero.
   - `extend` and `runStratum` read `Marked` where they read `Lower`.
 - `docs/reference/RULES.md`, "Evaluation": each later iteration executes each rule once per recursive invocation of a predicate that gained tuples in the iteration before.
-- `docs/bugs/BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`: item 3's status.
+- `BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`: item 3's status.
 - The tests of §5.
 
 ## 7. What the proof does not cover

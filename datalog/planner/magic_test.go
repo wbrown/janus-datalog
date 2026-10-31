@@ -1227,11 +1227,14 @@ func TestMagic_NegationAfterARecursiveInvocationRewrites(t *testing.T) {
 // A site under a non-monotone form is left unadorned where adorning it would
 // place its adorned predicate in the rule's own stratum: q's second rule
 // invokes s after the recursive invocation of q, so the magic rule of
-// adorned.b/s reads the adorned q and adorned.b/s joins q's stratum, and q's
-// third rule negates s under the same adornment, an edge through the
-// negation within that stratum. The negated site keeps s's name, s's
-// original rules join the set, the positive site stays adorned, and the set
-// is accepted (NON_MONOTONE_FORMS_PROOF.md T6, L4).
+// adorned.b/s would read the adorned q and adorned.b/s would join q's
+// stratum, and q's third rule negates s under the same adornment, an edge
+// through the negation within that stratum. The negated site keeps s's name
+// and s's original rules join the set, so s is derived whole, and the
+// positive site reads it whole too, with no adorned copy and no magic
+// predicate of s (NON_MONOTONE_FORMS_PROOF.md T6, L4;
+// A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md T1, T5). The set is
+// accepted.
 func TestMagic_ANegatedSiteWhoseAdornmentWouldNotStratifyIsLeftUnadorned(t *testing.T) {
 	s := defineRule("s", []string{"?w"}, scopePattern("?w", "page/c", "_"))
 	rs := mustRuleSet(t, []*query.Rule{
@@ -1257,7 +1260,7 @@ func TestMagic_ANegatedSiteWhoseAdornmentWouldNotStratifyIsLeftUnadorned(t *test
 			scopePattern("?x", "page/a", "?y"),
 			invoke("adorned.bf/q", "?y", "?w"),
 			scopePattern("?w", "page/b", "?z"),
-			invoke("adorned.b/s", "?w")),
+			invoke("s", "?w")),
 		defineRule("adorned.bf/q", []string{"?x", "?z"},
 			invoke("magic.bf/q", "?x"),
 			scopePattern("?x", "page/a", "?w"),
@@ -1267,10 +1270,71 @@ func TestMagic_ANegatedSiteWhoseAdornmentWouldNotStratifyIsLeftUnadorned(t *test
 	if original := magic.Rules.Rules(sym("s")); len(original) != 1 || original[0] != s {
 		t.Errorf("the negated site keeps s's original rules, got %v", original)
 	}
-	if adorned := magic.Rules.Rules(sym("adorned.b/s")); len(adorned) != 1 {
-		t.Errorf("the positive site adorns s, got %v", adorned)
+	if adorned := magic.Rules.Rules(sym("adorned.b/s")); len(adorned) != 0 {
+		t.Errorf("the positive site reads s whole, got %v", adorned)
 	}
-	assertSymbols(t, "Predicates", magic.Rules.Predicates(), "magic.bf/q", "adorned.bf/q", "magic.b/s", "adorned.b/s", "s")
+	assertSymbols(t, "Predicates", magic.Rules.Predicates(), "magic.bf/q", "adorned.bf/q", "s")
+}
+
+// A predicate the evaluation derives whole is read whole at every
+// invocation of it, and the rewrite emits no adorned copy and no magic
+// predicate for it (docs/proposals/A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md,
+// T1, T2, T5, L1): p's body invokes s at a bound position and r free, r's
+// body reads s whole, so s is derived whole for r's sake, and the bound
+// site of s in p's adorned rule reads s by name.
+func TestMagic_AnInvocationOfAPredicateDerivedWholeReadsItWhole(t *testing.T) {
+	r := defineRule("r", []string{"?k"}, scopePattern("?k", "page/kind", "hub"), invoke("s", "?k", "_"))
+	s := defineRule("s", []string{"?a", "?b"}, scopePattern("?a", "page/next", "?b"))
+	rs := mustRuleSet(t, []*query.Rule{
+		defineRule("p", []string{"?x", "?z"}, scopePattern("?x", "page/next", "?y"), invoke("s", "?y", "?z"), invoke("r", "?k")),
+		r,
+		s,
+	})
+	magic := mustMagic(t, rs, "p", true, false)
+	assertRules(t, "adorned.bf/p", magic.Rules.Rules(sym("adorned.bf/p")), []*query.Rule{
+		defineRule("adorned.bf/p", []string{"?x", "?z"},
+			invoke("magic.bf/p", "?x"),
+			scopePattern("?x", "page/next", "?y"),
+			invoke("s", "?y", "?z"),
+			invoke("r", "?k")),
+	})
+	if original := magic.Rules.Rules(sym("r")); len(original) != 1 || original[0] != r {
+		t.Errorf("r keeps its original rules, got %v", original)
+	}
+	if original := magic.Rules.Rules(sym("s")); len(original) != 1 || original[0] != s {
+		t.Errorf("s keeps its original rules, got %v", original)
+	}
+	assertSymbols(t, "Predicates", magic.Rules.Predicates(), "magic.bf/p", "adorned.bf/p", "s", "r")
+}
+
+// When the invoked predicate is itself derived whole, since a predicate its
+// adorned rule reads whole reads it back, the rewrite answers the set as
+// given, with the predicate under its own name and no seed, and the
+// evaluation reports no rewrite
+// (docs/proposals/A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md, T4, L5).
+func TestMagic_ARootDerivedWholeEvaluatesTheSetAsGiven(t *testing.T) {
+	rs := mustRuleSet(t, []*query.Rule{
+		defineRule("p", []string{"?x", "?y"}, scopePattern("?x", "page/next", "?y"), invoke("q", "?a", "?b")),
+		defineRule("q", []string{"?a", "?b"}, invoke("p", "?a", "?b")),
+	})
+	p := NewClauseBasedPlanner(nil, PlannerOptions{})
+	magic, err := Rewrite(p, rs, sym("p"), []bool{true, false}, nil)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if magic.Rules != rs {
+		t.Errorf("the set as given, got another set:\n%s", magic.Rules)
+	}
+	if magic.Predicate != sym("p") || magic.Seed != nil {
+		t.Errorf("p under its own name and no seed, got %s seeded by %v", magic.Predicate, magic.Seed)
+	}
+	planned, err := PlanEvaluation(p, rs, sym("p"), []bool{true, false}, nil)
+	if err != nil {
+		t.Fatalf("PlanEvaluation: %v", err)
+	}
+	if planned.Rewritten {
+		t.Errorf("the evaluation reports a rewrite of the set as given")
+	}
 }
 
 // The rewrite walks every scope in the planner's order: a body under its
@@ -1395,12 +1459,15 @@ func TestPlannedBranchesPlanEachBranchUnderTheFormsHeader(t *testing.T) {
 
 // A fallback site is left unadorned the same way: walk's second rule invokes
 // marked positively after the recursion, so adorned.b/marked's magic rule
-// reads the adorned recursion and adorned.b/marked joins walk's stratum, and
-// walk's third rule invokes marked under an or-default-join requiring ?b,
-// which gives the branch ?b, where the sealed passing would adorn it the
-// same way, a non-monotone edge within that stratum. The fallback's site
-// keeps marked's name, marked's original rules join the set, the positive
-// site stays adorned, and the set is accepted.
+// would read the adorned recursion and adorned.b/marked would join walk's
+// stratum, and walk's third rule invokes marked under an or-default-join
+// requiring ?b, which gives the branch ?b, where the sealed passing would
+// adorn it the same way, a non-monotone edge within that stratum. The
+// fallback's site keeps marked's name and marked's original rules join the
+// set, so marked is derived whole, and the positive site reads it whole too,
+// with no adorned copy of marked
+// (A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md T1, T5). The set is
+// accepted.
 func TestMagic_AFallbackSiteWhoseAdornmentWouldNotStratifyIsLeftUnadorned(t *testing.T) {
 	marked := defineRule("marked", []string{"?b"}, scopePattern("?b", "page/marked", "_"))
 	rs := mustRuleSet(t, []*query.Rule{
@@ -1438,8 +1505,8 @@ func TestMagic_AFallbackSiteWhoseAdornmentWouldNotStratifyIsLeftUnadorned(t *tes
 	if original := magic.Rules.Rules(sym("marked")); len(original) != 1 || original[0] != marked {
 		t.Errorf("marked keeps its original rules, got %v", original)
 	}
-	if adorned := magic.Rules.Rules(sym("adorned.b/marked")); len(adorned) != 1 {
-		t.Errorf("the positive site adorns marked, got %v", adorned)
+	if adorned := magic.Rules.Rules(sym("adorned.b/marked")); len(adorned) != 0 {
+		t.Errorf("the positive site reads marked whole, got %v", adorned)
 	}
 }
 

@@ -4,7 +4,7 @@
 
 - The code: `datalog/planner/clause_phasing.go` (`selectPhaseClauses`), `datalog/planner/clause_utils.go` (`scansAWholeExtent`, `selection.invocationDependsOnPendingProvider`, `scoreClause`), `datalog/planner/rule_bodies.go` (`PlanStratum`, `markDelta`, `planBody`), `datalog/query/minted.go` (`DeltaSymbol`, `SeedRestricted`), `datalog/executor/rules.go` (`runStratum`).
 - The design: `REWRITE_ORDER_PROOF.md` §1 and §6, the rank and the gate; `DELTA_COPY_RUNS_ON_ITS_DELTA_PROOF.md`, the copies an iteration runs; `SCOPE_EXECUTION_AND_CONTRACTS.md` §4.1, the one orderer, §4.5, an invocation of a held predicate, and §4.6, the binding-driven strategies; `docs/reference/RULES.md`, "Evaluation", the paragraph on what a body's invocations read.
-- The failure: `docs/bugs/BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`, item 2.
+- The failure: `BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`, item 2.
 - The tests that pin the order: `TestPlanStratum_UnguardedBodyKeepsThePatternFirst` and `TestPlanStratum_BodyInvocationLeadsItsPatterns` (`datalog/planner/rule_bodies_test.go`), `TestCreatePhasesGreedy_AScanOfAWholeExtentIsSelectedLast` and `TestCreatePhasesGreedy_AnInvocationWaitsOnAProviderByItsSelectivity` (`datalog/planner/invocation_scheduling_test.go`), `TestPlannedClausesPlaceABodysInvocationAgainstItsPatterns` (`datalog/planner/scope_test.go`).
 - The decision: in every delta copy and every lower copy, the invocation of the delta symbol is the first clause selected, whatever its predicate, and the clauses after it are ordered as the rank and the score order them.
 
@@ -70,7 +70,7 @@ The change carries these tests, each pinning the theorem named, written and run 
 - `datalog/planner/rule_bodies.go`, `planBody`'s doc: the delta invocation leads its copy, a magic or adorned predicate leads the patterns, and any other invocation joins them at collapse.
 - `REWRITE_ORDER_PROOF.md` §1, the definition of a clause that scans a whole extent, and §6, the rank: a delta invocation scans no whole extent and ranks above every clause, edited before the code the rank governs.
 - `docs/reference/RULES.md`, "Evaluation": the paragraph on what a body's invocations read states that the delta leads its copy.
-- `docs/bugs/BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`: item 2's status.
+- `BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`: item 2's status.
 - The tests of §5.
 
 ## 7. What the proof does not cover

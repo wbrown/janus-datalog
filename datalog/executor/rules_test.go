@@ -221,13 +221,14 @@ func TestEvaluateRules_TwoRecursiveOccurrences(t *testing.T) {
 	}
 }
 
-// An iteration after the first runs the delta copies marked on the
-// predicates the iteration before added tuples to, and no other copy
-// (docs/proposals/DELTA_COPY_RUNS_ON_ITS_DELTA_PROOF.md, T3). Over two
-// mutually recursive predicates, each body's one delta copy marked on the
-// other, every iteration adds tuples to one predicate alone, so each
-// iteration runs one copy, and the phases begun between consecutive
-// iteration events are that copy's.
+// A pass runs each delta copy whose marked predicate gained tuples since the
+// copy last ran, in the pass order, and no other copy
+// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, T5).
+// Over two mutually recursive predicates, each body's one delta copy marked
+// on the other, the pass order is even's copy, marked on odd, then odd's
+// copy, marked on even, so a pass begins even's copy's phases when the pass
+// before added to odd, and odd's copy's phases when the pass itself added to
+// even.
 func TestRunStratum_RunsTheCopiesOfThePredicatesThatGainedTuples(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(chainDatoms(6))
 	rs := mustRules(t, `[[(odd ?a ?b) [?a :page/next ?b]]
@@ -273,21 +274,23 @@ func TestRunStratum_RunsTheCopiesOfThePredicatesThatGainedTuples(t *testing.T) {
 				case annotations.PhaseBegin:
 					begun++
 				case annotations.RulesIteration:
+					added := e.Data["delta"].(map[query.Symbol]int)
 					if previous != nil {
 						want := 0
-						for p, added := range previous {
-							if added > 0 {
-								want += phases[p]
-							}
+						if previous[odd] > 0 {
+							want += phases[odd]
 						}
-						require.Equal(t, want, begun, "iteration %v: the phases begun are the copies' marked on the predicates the iteration before added to, %v", e.Data["iteration"], previous)
+						if added[even] > 0 {
+							want += phases[even]
+						}
+						require.Equal(t, want, begun, "pass %v: the phases begun are even's copy's when the pass before added to odd and odd's copy's when this pass added to even; before %v, added %v", e.Data["iteration"], previous, added)
 						compared++
 					}
-					previous = e.Data["delta"].(map[query.Symbol]int)
+					previous = added
 					begun = 0
 				}
 			}
-			require.GreaterOrEqual(t, compared, 4, "the chain's odd and even paths alternate over several iterations")
+			require.GreaterOrEqual(t, compared, 3, "the chain's odd and even paths alternate over several passes")
 		})
 	}
 }

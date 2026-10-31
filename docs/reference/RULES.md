@@ -163,7 +163,9 @@ decide what is derived.
 An invocation with no bound argument derives its predicate whole. The strata
 it needs are those holding the predicate or a predicate a needed body
 invokes. They evaluate in order, each to a fixpoint. The invocation reads the
-predicate's materialized relation. One such invocation is rewritten first: a
+predicate's materialized relation, which keeps an index per key its joins
+read, so a join into it probes the index with the other side's tuples and
+drains nothing of it. One such invocation is rewritten first: a
 free invocation of a predicate one of whose needed bodies invokes a predicate
 with required positions is rewritten with its head all free, so each required
 predicate is adorned from the clauses before its invocation and derived in
@@ -176,6 +178,11 @@ This is the magic-set rewrite:
 
 - Each predicate the bindings reach gets a copy named for the pattern.
   `adorned.bf/reach` is `reach` with its first position bound.
+- A predicate the evaluation derives whole, an original predicate among
+  those the invoked one needs, gets no copy, and every invocation of it
+  reads it whole.
+- When the invoked predicate itself is derived whole, the evaluation runs
+  the set as given.
 - The copy's rules are guarded by a magic predicate, `magic.bf/reach`. It
   holds the bindings the predicate is asked with.
 - The bindings pass through each body in the order the planner gives it
@@ -225,13 +232,18 @@ in its own stratum, or, for a predicate with required positions, derived at
 the clause under the bindings the branch holds there.
 
 A recursive stratum iterates semi-naively. The seeding run executes the rules
-with no recursive invocation. Each later iteration executes each rule once
-per recursive invocation in its body whose predicate gained tuples in the
-iteration before. In that execution the chosen invocation invokes the
-predicate's delta symbol, `delta/reach`, under which the scope holds the
-tuples the previous iteration added. Every other invocation reads the whole
-relation. The tuples not yet derived become the next iteration's delta. The
-stratum ends when an iteration adds nothing.
+with no recursive invocation. Each rule has one copy per recursive invocation
+in its body, in which that invocation invokes the predicate's delta symbol,
+`delta/reach`. A copy's delta is the tuples its predicate gained since the
+copy last ran, and every other invocation reads the relation as it stands.
+Each later iteration is a pass: it visits the copies in the pass order, the
+postorder of a depth-first walk of the stratum's dependency graph, so a copy
+stands after the copies of the predicates its rules read, runs each copy
+whose delta is not empty over that delta, and absorbs the copy's result
+before the next copy is visited. So a pass carries a new tuple along every
+edge of the graph but a back edge, and a chain of derivations through the
+stratum's predicates takes one pass per back edge it crosses, plus one. The
+stratum ends at a pass that runs no copy.
 
 Every iteration reads the one snapshot the query reads. A write committed
 while a closure is under evaluation is invisible to it.
@@ -272,10 +284,10 @@ pattern evaluates over the store.
 Two planner options bound an evaluation. Both are opt-in. Both are zero by
 default, and zero is unbounded:
 
-- `MaxRuleIterations`: the iterations one stratum may run, counted per window
-  for an invocation continued across windows. Exceeded, the query returns
-  `*query.RuleIterationLimitError` naming the stratum's predicates, the limit
-  and the iteration reached.
+- `MaxRuleIterations`: the iterations one stratum may run, each a pass over
+  its copies, counted per window for an invocation continued across windows.
+  Exceeded, the query returns `*query.RuleIterationLimitError` naming the
+  stratum's predicates, the limit and the iteration reached.
 - `MaxDerivedTuples`: the tuples one invocation's evaluation may derive,
   carried across the windows for an invocation continued across them. A
   rewritten set's magic predicates count too. Exceeded, the query returns

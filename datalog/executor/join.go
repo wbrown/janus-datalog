@@ -8,21 +8,32 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// hashJoinIterator is the join's iterator: the build index, the probe
-// iterator, the deferred build error, the projection plan, the current probe
-// tuple, the current match group and its position, and one workspace of the
-// result's width that every pull fills and Tuple hands back
-// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, L1).
+// hashJoinIterator is the join's iterator: the build index, drained or
+// kept, the probe iterator, the deferred build error, the projection plan,
+// the current probe tuple, the current match group and its position, and
+// one workspace of the result's width that every pull fills and Tuple hands
+// back (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, L1).
 //
 // CONCURRENCY: This iterator is NOT thread-safe. It maintains mutable state
 // (currentProbeTuple, workspace, matches, matchIdx) that would be corrupted
 // by concurrent access. Each goroutine must create its own iterator by calling
 // Relation.Iterator(), which returns independent iterator instances.
 type hashJoinIterator struct {
-	buildIndex  *JoinIndex
-	probeIt     Iterator
-	buildErr    error // deferred error captured from the (eagerly consumed) build relation
-	buildIsLeft bool
+	buildIndex *JoinIndex
+	// kept is the index the build side's set keeps at the join key, when the
+	// build side is a view of a derived set
+	// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2, T3).
+	// It is probed at probeIndices, the probe side's positions of the key,
+	// and bounded at bound, the view's count. A match is an ordinal naming a
+	// tuple of keptTuples, the view's tuples. Exactly one of buildIndex and
+	// kept is nil: a build side that is no view is drained into buildIndex.
+	kept         *ordinalIndex
+	keptTuples   []Tuple
+	probeIndices []int
+	bound        int
+	probeIt      Iterator
+	buildErr     error // deferred error captured from the (eagerly consumed) build relation
+	buildIsLeft  bool
 	// rightNonJoinIndices identifies positions in the right-side tuple
 	// (per buildIsLeft, the probe side when buildIsLeft is true, otherwise
 	// the build side) whose values are written after the left tuple in the
@@ -35,9 +46,13 @@ type hashJoinIterator struct {
 	// true and a consumer keeping a tuple copies it.
 	workspace Tuple
 
-	// Current state - NOT safe for concurrent access
+	// Current state - NOT safe for concurrent access: the current probe
+	// tuple's matches, held tuples from a drained index or ordinals from a
+	// kept one, their count, and the next to fill.
 	currentProbeTuple Tuple
 	matches           []Tuple
+	ordinals          []int32
+	matchCount        int
 	matchIdx          int
 	closed            bool
 
@@ -60,8 +75,13 @@ func (it *hashJoinIterator) Next() bool {
 
 	for {
 		// If we have matches for current probe tuple, iterate through them
-		if it.matchIdx < len(it.matches) {
-			buildTuple := it.matches[it.matchIdx]
+		if it.matchIdx < it.matchCount {
+			var buildTuple Tuple
+			if it.kept != nil {
+				buildTuple = it.keptTuples[it.ordinals[it.matchIdx]]
+			} else {
+				buildTuple = it.matches[it.matchIdx]
+			}
 			it.matchIdx++
 
 			// Fill the workspace through the precomputed projection plan: the
@@ -103,10 +123,18 @@ func (it *hashJoinIterator) Next() bool {
 		it.currentProbeTuple = it.probeIt.Tuple()
 
 		// Look up matches in the build index — a positional probe, so no key
-		// materializes, and a hit is the key's group of held tuples.
-		if matches := it.buildIndex.Probe(it.currentProbeTuple); len(matches) > 0 {
-			it.matches = matches
-			it.matchIdx = 0
+		// materializes, and a hit is the key's group of held tuples, or of
+		// the view's ordinals under a kept index.
+		if it.kept != nil {
+			if ordinals := it.kept.probe(it.currentProbeTuple, it.probeIndices, it.bound); len(ordinals) > 0 {
+				it.ordinals, it.matchIdx, it.matchCount = ordinals, 0, len(ordinals)
+				if it.metrics != nil {
+					it.metrics.matchCount++
+				}
+				continue
+			}
+		} else if matches := it.buildIndex.Probe(it.currentProbeTuple); len(matches) > 0 {
+			it.matches, it.matchIdx, it.matchCount = matches, 0, len(matches)
 			if it.metrics != nil {
 				it.metrics.matchCount++
 			}
@@ -170,7 +198,9 @@ func (it *hashJoinIterator) emitProbeAnnotation() {
 }
 
 // emitJoinStrategyAnnotation reports which join shape was chosen and what it
-// was chosen over. Callers guard on the handler being non-nil.
+// was chosen over, and whether the build side is a view probed through the
+// index its set keeps, under build_kept. Callers guard on the handler being
+// non-nil.
 //
 // left and right are rendered by type, not by value: the datum is which
 // Relation implementation each side is, and a Relation is a live stream that
@@ -180,7 +210,7 @@ func emitJoinStrategyAnnotation(
 	left, right Relation,
 	joinSymbols []query.Symbol,
 	mode, buildSide string,
-	buildKeyUnique bool,
+	buildKeyUnique, buildKept bool,
 ) {
 	handler(annotations.Event{
 		Name: annotations.JoinStrategy,
@@ -188,6 +218,7 @@ func emitJoinStrategyAnnotation(
 			"mode":             mode,
 			"build_side":       buildSide,
 			"build_key_unique": buildKeyUnique,
+			"build_kept":       buildKept,
 			"left_type":        fmt.Sprintf("%T", left),
 			"right_type":       fmt.Sprintf("%T", right),
 			"left_size":        materializedSize(left),
@@ -265,16 +296,29 @@ func HashJoinWithOptions(
 	resultWidth := len(leftSyms) + len(rightNonJoinIndices)
 	resultProperties := joinProperties(left.Properties(), right.Properties(), joinSyms)
 
-	// Choose smaller relation to build hash table
+	// Choose the build side. A side that is a view of a derived set is the
+	// build side, probed through the index its set keeps at the join key
+	// with nothing drained, and of two views the one with more tuples
+	// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T3).
+	// Otherwise the materialized side beside a stream is the build side, and
+	// of two materialized sides the smaller, the right on a tie.
 	var buildRel, probeRel Relation
 	var buildIndices, probeIndices []int
 	var buildIsLeft bool
 
+	leftView, rightView := viewOf(left), viewOf(right)
 	leftStreaming := isStreaming(left)
 	rightStreaming := isStreaming(right)
 
-	// Handle streaming relations appropriately
-	if leftStreaming && !rightStreaming {
+	if leftView != nil && (rightView == nil || leftView.Size() > rightView.Size()) {
+		buildRel, probeRel = left, right
+		buildIndices, probeIndices = leftIndices, rightIndices
+		buildIsLeft = true
+	} else if rightView != nil {
+		buildRel, probeRel = right, left
+		buildIndices, probeIndices = rightIndices, leftIndices
+		buildIsLeft = false
+	} else if leftStreaming && !rightStreaming {
 		// Left is streaming, right is materialized - use right as build
 		buildRel, probeRel = right, left
 		buildIndices, probeIndices = rightIndices, leftIndices
@@ -305,137 +349,178 @@ func HashJoinWithOptions(
 		}
 	}
 	buildKeysUnique := hasKeyWithin(buildRel.Properties().Keys, joinSymSet)
+	// kept is the index the build side's set keeps at the join key when the
+	// build side is a view, asked for through the view so it holds every
+	// tuple of the view, bounded at the view's count over the view's tuples.
+	var kept *ordinalIndex
+	var keptTuples []Tuple
+	bound := 0
+	if view := viewOf(buildRel); view != nil {
+		bound = view.Size()
+		kept = view.set.index(buildIndices, bound)
+		keptTuples = view.tuples
+	}
 	buildSide := "right"
 	if buildIsLeft {
 		buildSide = "left"
 	}
 	if opts.Handler != nil {
-		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, "streaming", buildSide, buildKeysUnique)
+		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, "streaming", buildSide, buildKeysUnique, kept != nil)
 	}
 
-	// Build phase - hold each build tuple in the index under its join key.
-	// This is a pure relational join: every build tuple is preserved. CRDT/temporal
-	// resolution is the storage layer's responsibility (EATV ordering), never
-	// inferred here from a symbol's name.
-	// Pre-size based on build relation size to avoid growth
-	collectCap := buildRel.Size()
-	if collectCap < 0 {
-		// Unknown size (streaming), use configurable default
-		// 256 is a good balance: small enough for common cases (50-500 tuples),
-		// large enough to avoid excessive rehashing for medium cases (500-2000 tuples)
-		collectCap = opts.DefaultHashTableSize
-		if collectCap == 0 {
-			collectCap = 256 // Default if not configured
+	var buildIndex *JoinIndex
+	var buildErr error
+	var buildCount int
+	if kept != nil {
+		// The build side is a view: the kept index is the build, and the
+		// build event reports the tuples it holds, which are at least the
+		// view's, with nothing copied
+		// (A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, L4).
+		buildCount = bound
+		if buildKeysUnique && kept.fanout {
+			panic("hash join build relation violated its candidate-key guarantee")
 		}
-	}
-	buildIndex := NewJoinIndex(probeIndices, buildIndices, collectCap)
-
-	// CRITICAL: Check if build relation was already consumed
-	// This should never happen - it indicates a bug in the executor
-	if sr, ok := buildRel.(*StreamingRelation); ok {
-		sr.mu.Lock()
-		alreadyConsumed := sr.iteratorCalled && !sr.cacheReady
-		sr.mu.Unlock()
-
-		if alreadyConsumed {
-			panic("BUG: HashJoin received a StreamingRelation that was already consumed. " +
-				"Relations passed to Join must either be materialized or not yet iterated. " +
-				"This indicates the executor is reusing relations incorrectly.")
+		if opts.Handler != nil {
+			opts.Handler(annotations.Event{
+				Name: annotations.JoinBuild,
+				Data: map[string]interface{}{
+					"tuple_count":     kept.held,
+					"join_key_unique": buildKeysUnique,
+					"build_side":      buildSide,
+					"build_kept":      true,
+					"copied":          0,
+					"passthru":        0,
+					"requires_copy":   false,
+				},
+			})
 		}
-	}
-
-	// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
-	// track them when a handler will read them. Inlined into the build loop
-	// to avoid a per-join heap allocation.
-	trackCopy := opts.Handler != nil
-	var copyCount, passthruCount int
-	// The interval the copies were made in: draining the build relation. It ends
-	// at the loop rather than at the emit, which happens after grouping — a cost
-	// the copy statistics do not describe.
-	var buildStart, buildEnd time.Time
-	if trackCopy {
-		buildStart = time.Now()
-	}
-
-	// Create build iterator - single iteration only
-	// Close explicitly after build loop, not deferred. The build relation may share
-	// underlying iterators with the probe relation (e.g., OrFallbackRelation wraps the
-	// same StreamingRelation that is the probe side). Deferring Close() causes deadlock.
-	buildIt := buildRel.Iterator()
-
-	// Check if we need to copy tuples from the build relation
-	// This avoids unnecessary copies when the source guarantees stable tuples
-	needsCopy := buildRel.RequiresCopy()
-
-	for buildIt.Next() {
-		tuple := buildIt.Tuple()
-		// Copy only when the build relation reuses its tuple workspace; the
-		// grouped index retains these tuples for the join's lifetime.
-		if needsCopy {
-			tuple = copyTuple(tuple)
-			if trackCopy {
-				copyCount++
+	} else {
+		// Build phase - hold each build tuple in the index under its join key.
+		// This is a pure relational join: every build tuple is preserved. CRDT/temporal
+		// resolution is the storage layer's responsibility (EATV ordering), never
+		// inferred here from a symbol's name.
+		// Pre-size based on build relation size to avoid growth
+		collectCap := buildRel.Size()
+		if collectCap < 0 {
+			// Unknown size (streaming), use configurable default
+			// 256 is a good balance: small enough for common cases (50-500 tuples),
+			// large enough to avoid excessive rehashing for medium cases (500-2000 tuples)
+			collectCap = opts.DefaultHashTableSize
+			if collectCap == 0 {
+				collectCap = 256 // Default if not configured
 			}
-		} else if trackCopy {
-			passthruCount++
 		}
-		buildIndex.Add(tuple)
-	}
-	buildCount := buildIndex.Len()
+		buildIndex = NewJoinIndex(probeIndices, buildIndices, collectCap)
 
-	// Capture any deferred error from the build scan before closing it, so a
-	// build-side failure isn't lost (it propagates onto the join result).
-	buildErr := buildIt.Error()
+		// CRITICAL: Check if build relation was already consumed
+		// This should never happen - it indicates a bug in the executor
+		if sr, ok := buildRel.(*StreamingRelation); ok {
+			sr.mu.Lock()
+			alreadyConsumed := sr.iteratorCalled && !sr.cacheReady
+			sr.mu.Unlock()
 
-	// Close build iterator BEFORE probe phase begins.
-	// The build relation may share underlying iterators with the probe relation
-	// (e.g., OrFallbackRelation wraps a StreamingRelation that is also the probe).
-	// Close() signals the CachingIterator, unblocking probe's Size()/Iterator().
-	if closeErr := buildIt.Close(); buildErr == nil {
-		buildErr = closeErr
-	}
-	if trackCopy {
-		buildEnd = time.Now()
-	}
+			if alreadyConsumed {
+				panic("BUG: HashJoin received a StreamingRelation that was already consumed. " +
+					"Relations passed to Join must either be materialized or not yet iterated. " +
+					"This indicates the executor is reusing relations incorrectly.")
+			}
+		}
 
-	if buildKeysUnique && !buildIndex.KeysUnique() {
-		panic("hash join build relation violated its candidate-key guarantee")
-	}
+		// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
+		// track them when a handler will read them. Inlined into the build loop
+		// to avoid a per-join heap allocation.
+		trackCopy := opts.Handler != nil
+		var copyCount, passthruCount int
+		// The interval the copies were made in: draining the build relation. It ends
+		// at the loop rather than at the emit, which happens after grouping — a cost
+		// the copy statistics do not describe.
+		var buildStart, buildEnd time.Time
+		if trackCopy {
+			buildStart = time.Now()
+		}
 
-	// Emit annotation for copy statistics if a handler is available
-	if opts.Handler != nil && (copyCount > 0 || passthruCount > 0) {
-		opts.Handler(annotations.Event{
-			Name:    annotations.JoinBuildCopy,
-			Start:   buildStart,
-			End:     buildEnd,
-			Latency: buildEnd.Sub(buildStart),
-			Data: map[string]interface{}{
-				"copied":        copyCount,
-				"passthru":      passthruCount,
-				"requires_copy": needsCopy,
-			},
-		})
-	}
-	if opts.Handler != nil {
-		opts.Handler(annotations.Event{
-			Name: annotations.JoinBuild,
-			Data: map[string]interface{}{
-				"tuple_count":     buildCount,
-				"join_key_unique": buildKeysUnique,
-				"build_side":      buildSide,
-				"copied":          copyCount,
-				"passthru":        passthruCount,
-				"requires_copy":   needsCopy,
-			},
-		})
+		// Create build iterator - single iteration only
+		// Close explicitly after build loop, not deferred. The build relation may share
+		// underlying iterators with the probe relation (e.g., OrFallbackRelation wraps the
+		// same StreamingRelation that is the probe side). Deferring Close() causes deadlock.
+		buildIt := buildRel.Iterator()
+
+		// Check if we need to copy tuples from the build relation
+		// This avoids unnecessary copies when the source guarantees stable tuples
+		needsCopy := buildRel.RequiresCopy()
+
+		for buildIt.Next() {
+			tuple := buildIt.Tuple()
+			// Copy only when the build relation reuses its tuple workspace; the
+			// grouped index retains these tuples for the join's lifetime.
+			if needsCopy {
+				tuple = copyTuple(tuple)
+				if trackCopy {
+					copyCount++
+				}
+			} else if trackCopy {
+				passthruCount++
+			}
+			buildIndex.Add(tuple)
+		}
+		buildCount = buildIndex.Len()
+
+		// Capture any deferred error from the build scan before closing it, so a
+		// build-side failure isn't lost (it propagates onto the join result).
+		buildErr = buildIt.Error()
+
+		// Close build iterator BEFORE probe phase begins.
+		// The build relation may share underlying iterators with the probe relation
+		// (e.g., OrFallbackRelation wraps a StreamingRelation that is also the probe).
+		// Close() signals the CachingIterator, unblocking probe's Size()/Iterator().
+		if closeErr := buildIt.Close(); buildErr == nil {
+			buildErr = closeErr
+		}
+		if trackCopy {
+			buildEnd = time.Now()
+		}
+
+		if buildKeysUnique && !buildIndex.KeysUnique() {
+			panic("hash join build relation violated its candidate-key guarantee")
+		}
+
+		// Emit annotation for copy statistics if a handler is available
+		if opts.Handler != nil && (copyCount > 0 || passthruCount > 0) {
+			opts.Handler(annotations.Event{
+				Name:    annotations.JoinBuildCopy,
+				Start:   buildStart,
+				End:     buildEnd,
+				Latency: buildEnd.Sub(buildStart),
+				Data: map[string]interface{}{
+					"copied":        copyCount,
+					"passthru":      passthruCount,
+					"requires_copy": needsCopy,
+				},
+			})
+		}
+		if opts.Handler != nil {
+			opts.Handler(annotations.Event{
+				Name: annotations.JoinBuild,
+				Data: map[string]interface{}{
+					"tuple_count":     buildCount,
+					"join_key_unique": buildKeysUnique,
+					"build_side":      buildSide,
+					"build_kept":      false,
+					"copied":          copyCount,
+					"passthru":        passthruCount,
+					"requires_copy":   needsCopy,
+				},
+			})
+		}
 	}
 
 	// Probe phase. An index holding no tuple matches no probe tuple
-	// (JoinIndex.Probe answers nil for every key), so the join is empty
-	// whatever the probe side holds and the probe side is never opened: a
-	// stream among the probe sides keeps its one use
-	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). The build side was
-	// drained, so its deferred error is in hand and the result carries it.
+	// (JoinIndex.Probe answers nil for every key, and a view of no tuples
+	// bounds every probe at zero), so the join is empty whatever the probe
+	// side holds and the probe side is never opened: a stream among the
+	// probe sides keeps its one use
+	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). A drained build
+	// side's deferred error is in hand and the result carries it.
 	if buildCount == 0 {
 		if opts.Handler != nil {
 			opts.Handler(annotations.Event{
@@ -460,6 +545,10 @@ func HashJoinWithOptions(
 	// is called twice; a caller reading the result twice materializes it.
 	iter := &hashJoinIterator{
 		buildIndex:          buildIndex,
+		kept:                kept,
+		keptTuples:          keptTuples,
+		probeIndices:        probeIndices,
+		bound:               bound,
 		probeIt:             probeRel.Iterator(),
 		buildErr:            buildErr,
 		buildIsLeft:         buildIsLeft,
@@ -653,6 +742,15 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 func isStreaming(rel Relation) bool {
 	_, ok := rel.(*StreamingRelation)
 	return ok
+}
+
+// viewOf is rel as a view of a derived set, a materialized relation carrying
+// the set it views, and nil when rel is no view.
+func viewOf(rel Relation) *MaterializedRelation {
+	if mat, ok := rel.(*MaterializedRelation); ok && mat.set != nil {
+		return mat
+	}
+	return nil
 }
 
 func crossProduct(left, right Relation) Relation {

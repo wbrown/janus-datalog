@@ -35,8 +35,8 @@ type ExecutorOptions struct {
 	EnableAttributeFetchFusion bool
 
 	// Rule evaluation bounds. MaxRuleIterations caps the fixpoint iterations
-	// of one stratum, MaxDerivedTuples the tuples one rule set derives; zero
-	// is unbounded.
+	// of one stratum, each a pass over its delta copies, MaxDerivedTuples
+	// the tuples one rule set derives; zero is unbounded.
 	MaxRuleIterations int
 	MaxDerivedTuples  int
 

@@ -13,7 +13,7 @@
 - `SCOPE_EXECUTION_AND_CONTRACTS.md` §4.1: the one orderer.
 - `SCOPE_EXECUTION_AND_CONTRACTS.md` §4.3: what a form gives its branches.
 - `SCOPE_EXECUTION_AND_CONTRACTS.md` §4.6: the engine sees no extent.
-- The failure: `docs/bugs/BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`, item 1.
+- The failure: `BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`, item 1.
 - The decision: a position of an invocation is bound from a clause outside the seed component only when the clause is a data pattern with an entity constant, or the predicate requires the position. The planner's order does not change. A top-level invocation binds from every group in hand, as it does.
 
 ## 1. Definitions
@@ -101,7 +101,7 @@ The change carries these tests, each pinning the theorem named. Each is written 
 - `REWRITE_ORDER_PROOF.md` T5, what is bound at the top level and in the rewrite: edited before the code.
 - `NESTED_SCOPES_AS_QUERIES.md` §5.5, the clauses that adorn an invocation inside a scope: edited after the code.
 - `docs/reference/RULES.md`, where it states what a bound invocation derives: edited after the code.
-- `docs/bugs/BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`: item 1's status.
+- `BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`: item 1's status.
 - The tests of §5.
 
 ## 7. What the proof does not cover

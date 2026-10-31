@@ -217,6 +217,46 @@ func TestPlanStratum_ACopyIsMarkedOnThePredicateOfItsOccurrence(t *testing.T) {
 	}
 }
 
+// A stratum's delta copies stand in the pass order: the postorder of a
+// depth-first walk of the stratum's dependency graph, started at each
+// predicate not yet visited in the stratum's order, a predicate's
+// successors visited in the order of its rules and of each body's
+// invocations, so a copy stands after every copy its walk reached from it
+// and a pass carries a derivation along every edge but a back edge
+// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, §1,
+// L6). Over the ring a, b, c, where b reads a, c reads b and a reads c, the
+// copies stand b, c, a; over the ring odd, even, where odd's second rule
+// reads even and even reads odd, even's copy stands before odd's.
+func TestPlanStratum_DeltaCopiesStandInThePassOrder(t *testing.T) {
+	p := NewClauseBasedPlanner(nil, PlannerOptions{})
+	ring, err := parser.ParseRules(`[[(a ?x ?y) [?x :page/next ?y]]
+	                                 [(b ?x ?y) (a ?x ?y)]
+	                                 [(c ?x ?y) (b ?x ?y)]
+	                                 [(a ?x ?z) (c ?x ?y) [?y :page/next ?z]]]`)
+	require.NoError(t, err)
+	strata := ring.Strata()
+	require.Len(t, strata, 1, "a, b and c are one stratum")
+	bodies, err := PlanStratum(p, ring, strata[0], nil)
+	require.NoError(t, err)
+	var order []query.Symbol
+	for _, body := range bodies.Delta {
+		order = append(order, body.Rule.Name)
+	}
+	require.Equal(t, []query.Symbol{sym("b"), sym("c"), sym("a")}, order, "the walk from a reaches c, then b, whose edge back to a closes the ring; b finishes first, then c, then a")
+
+	pair, err := parser.ParseRules(`[[(odd ?a ?b) [?a :page/next ?b]]
+	                                 [(even ?a ?c) (odd ?a ?b) [?b :page/next ?c]]
+	                                 [(odd ?a ?c) (even ?a ?b) [?b :page/next ?c]]]`)
+	require.NoError(t, err)
+	bodies, err = PlanStratum(p, pair, pair.Strata()[0], nil)
+	require.NoError(t, err)
+	order = nil
+	for _, body := range bodies.Delta {
+		order = append(order, body.Rule.Name)
+	}
+	require.Equal(t, []query.Symbol{sym("even"), sym("odd")}, order, "the walk from odd reaches even, whose edge back to odd closes the ring; even finishes first")
+}
+
 // A predicate with required positions is evaluated at its invocation under
 // the invoking body's bindings, never whole, so the walk of an invoked
 // predicate's dependencies leaves it out; every other dependency stays in.

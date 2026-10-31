@@ -68,7 +68,7 @@ func SymmetricHashJoinWithOptions(
 	}
 	resultProperties := joinProperties(left.Properties(), right.Properties(), joinSyms)
 	if opts.Handler != nil {
-		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, "symmetric", "both", false)
+		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, "symmetric", "both", false, false)
 	}
 
 	// Determine initial hash table size
