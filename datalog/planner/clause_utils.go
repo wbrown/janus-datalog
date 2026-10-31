@@ -233,7 +233,7 @@ func scansAWholeExtent(clause query.Clause, available map[query.Symbol]bool, rul
 // it reads a relation holding only what the seed reaches, and scoreClause
 // gives it the lead over every pattern, so it waits on no provider. An
 // invocation of a delta reads the tuples the iteration before added and
-// leads its copy, so it waits on no provider either
+// leads the scope it stands in, so it waits on no provider either
 // (DELTA_LEADS_ITS_COPY_PROOF.md).
 //
 // The provider scan carries subqueryDependsOnPendingProvider's restrictions,

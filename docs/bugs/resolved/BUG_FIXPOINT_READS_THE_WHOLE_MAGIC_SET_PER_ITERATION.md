@@ -178,8 +178,10 @@ schema's uniqueness of an attribute, under which a constant at the value
 position names at most one entity. The rule and its proof are the user's
 decision.
 
-Item 2 is an order within a delta copy: the delta before every other clause,
-and after it the clauses by what the available symbols let them seek, under
+Item 2 is an order within a delta copy: the delta before every other clause
+of the scope its occurrence stands in, the body for an occurrence at the top
+level and a branch or an inner query for one inside a form, and after it the
+clauses by what the available symbols let them seek, under
 `REWRITE_ORDER_PROOF.md`'s rank and score.
 
 Item 3 is the field a delta copy lacks: `PlannedBody` naming the predicate

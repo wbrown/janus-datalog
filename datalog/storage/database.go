@@ -2047,14 +2047,16 @@ func validateAttributeStorable(t *Transaction, a datalog.Keyword) error {
 	return nil
 }
 
-// memberKey derives a hashable map key for a cardinality-many set member:
-// a type tag plus the value's encoded bytes. []byte (and other non-comparable
-// values) cannot be used as Go map keys directly, so membership maps key by
-// this string and carry the original value separately. It is byte-for-byte the
-// same key resolveAddWinsSet uses internally, so the Set diff lines up with
-// stored membership. The encoding agrees with datalog.ValuesEqual on every
-// value the domain admits: NormalizeValue takes a signed zero as zero, and NaN
-// is excluded at the boundary.
+// memberKey is the key a value is held under in a cardinality-many set: a
+// type tag plus the value's encoded bytes, one key per value under
+// datalog.ValuesEqual, so a lookup by any representation of a member finds
+// it, an instant in any location or carrying a clock reading among them. The
+// encoding agrees with ValuesEqual on every value the domain admits:
+// NormalizeValue takes a signed zero as zero, and NaN is excluded at the
+// boundary. Every set keys through it: the cache entry's set and the
+// resolution result's members hold each member's original value under it,
+// the add-wins accumulator's states are keyed by it, as is the key-encoded
+// value span of an index entry, and the Set diff reads membership by it.
 func memberKey(v interface{}) string {
 	return string(append([]byte{byte(datalog.Type(v))}, datalog.ValueBytes(v)...))
 }

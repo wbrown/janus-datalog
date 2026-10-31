@@ -547,10 +547,11 @@ func entityConstant(clause query.Clause) bool {
 // order, and the extent roots the read passes. The clauses are the seed
 // component's and, for the symbols needed, their extent chains: the
 // connected components, among the other clauses, that a needed symbol
-// touches. The roots passed are the extent roots a clause read mentions and
-// the needed symbols that are extent roots themselves; a read correlated on
-// an extent root nothing it carries mentions would run once per value of
-// it, the product inside the magic rule.
+// touches. The roots passed are the extent roots a clause read mentions, and
+// no other: a read correlated on an extent root nothing it carries mentions
+// would run over every value of it for a result that does not depend on it.
+// A needed root no clause here provides is passed by nothing, and the
+// enclosing scope reads its chain (adornInvocation).
 func (w *magicRewriter) levelReads(roots, extentRoots map[query.Symbol]bool, clauses []query.Clause, needed map[query.Symbol]bool) ([]query.Clause, map[query.Symbol]bool) {
 	seed := w.seedOf(roots, clauses)
 	reached := make(map[query.Symbol]bool, len(needed))
@@ -583,11 +584,6 @@ func (w *magicRewriter) levelReads(roots, extentRoots map[query.Symbol]bool, cla
 		}
 	}
 	passed := map[query.Symbol]bool{}
-	for sym := range needed {
-		if extentRoots[sym] {
-			passed[sym] = true
-		}
-	}
 	var read []query.Clause
 	for i, clause := range clauses {
 		if !chained[i] && !w.seedConnected(clause, seed) {
@@ -1044,8 +1040,8 @@ func (w *magicRewriter) excludedSite(in passing, inv *query.RuleInvocation, boun
 // arguments from the body's clauses and the scopes on the path, each read
 // through levelReads: the scope's seed-connected clauses and the extent
 // chains of the symbols the read needs, a variable bound from the extent
-// set at the innermost scope and the extent roots a read inside passes up
-// under their names outside. A constant is derived through a fresh variable
+// set at the innermost scope and the extent roots a read inside passes or
+// needs, under their names outside. A constant is derived through a fresh variable
 // a ground expression binds, named for the magic predicate and the
 // position; a variable bound in the body under its own name; and a variable
 // bound inside a scope through that scope's read, a subquery over the
@@ -1133,12 +1129,16 @@ func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvoca
 			passed[sym] = true
 		}
 		levelIn, inputs := level.passes(passed)
-		needed = map[query.Symbol]bool{}
+		// The enclosing scope reads the chain of every extent root this
+		// level's read passes or the invocation needs here, under the name
+		// standing for it outside.
+		enclosing := map[query.Symbol]bool{}
 		for sym := range level.extentRoots {
-			if passed[sym] {
-				needed[level.outside(sym)] = true
+			if passed[sym] || needed[sym] {
+				enclosing[level.outside(sym)] = true
 			}
 		}
+		needed = enclosing
 		var find []query.FindElement
 		var binding []query.Symbol
 		for i, arg := range args {

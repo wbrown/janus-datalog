@@ -1420,13 +1420,9 @@ func (m *PatternMatcher) matchFromCache(
 			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 		}
 		if v != nil {
-			// V is bound - membership check
-			// []byte keys are stored as string(bytes) for hashability
-			lookupKey := v
-			if b, ok := lookupKey.([]byte); ok {
-				lookupKey = string(b)
-			}
-			if _, exists := set[lookupKey]; exists {
+			// V is bound: the set holds each member under its memberKey, so
+			// any representation of the bound value finds its member.
+			if _, exists := set[memberKey(v)]; exists {
 				tuple := buildTuple(v, entry.Version())
 				matched = 1
 				return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true, nil
@@ -1714,12 +1710,9 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 				continue
 			}
 			if boundV != nil {
-				// Membership check
-				lookupKey := boundV
-				if b, ok := lookupKey.([]byte); ok {
-					lookupKey = string(b)
-				}
-				if _, exists := set[lookupKey]; exists {
+				// The set holds each member under its memberKey, so any
+				// representation of the bound value finds its member.
+				if _, exists := set[memberKey(boundV)]; exists {
 					resultTuples = append(resultTuples, buildTuple(eIdent, boundV, entry.Version()))
 				}
 			} else {
@@ -2266,7 +2259,7 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			// A hit reads no index; a build and a storage resolution accrue
 			// their intake into the report at scan time, so it survives the
 			// error return below.
-			var members map[any]any
+			var members map[string]any
 			var version datalog.ElementID
 			key, cached := it.matcher.cacheKey(Entity(eBytes), Attribute(it.aBytes))
 			if cached && it.matcher.cache != nil {

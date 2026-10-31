@@ -2,27 +2,23 @@
 
 ## The problem
 
-A `Relation` is a set, so `StreamingRelation.Project()` deduplicates its output through `DedupIterator`. `DedupIterator` keys a `TupleKeyMap` by the whole tuple. The map stores a value beside every key. Deduplication asks one question, whether the tuple was seen, and reads no value. The value and the entry that carries it are the cost this proposal removes.
+A `Relation` is a set, so `StreamingRelation.Project()` deduplicates its output through `DedupIterator`. Deduplication asks one question, whether the tuple was seen, and reads no value. A table that stores a value beside every key, as `TupleKeyMap` does, carries that value and the entry holding it for every distinct tuple; that cost is what this proposal removes.
 
-`PERFORMANCE_STATUS.md` carries the measurements. The set-semantics fix's cost is under "Known Performance Regressions (Correctness Fixes)". The single-walk insertion is entry 19, "Single-Lookup Dedup Insertion", with the gain it measured.
+`PERFORMANCE_STATUS.md` carries the measurements. The set-semantics fix's cost is under "Known Performance Regressions (Correctness Fixes)". The single-walk insertion is entry 19, "Single-Lookup Dedup Insertion", with the gain it measured, and the one table is its "One table under the set, the index and the map" entry.
 
 ## What exists
 
-`DedupIterator` (`datalog/executor/iterator_composition.go`) deduplicates in one walk per tuple:
+`DedupIterator` (`datalog/executor/iterator_composition.go`) keys a `TupleSet` by the whole tuple, in one probe and one add per admitted tuple:
 
 ```go
-key := NewTupleKeyFull(tuple)
-if !it.seen.PutIfAbsent(key, true) {
-    it.current = tuple
-    return true
+_, hash, held := it.seen.Find(tuple)
+if held {
+    continue
 }
+it.seen.Add(tuple, hash)
 ```
 
-`TupleKeyMap` (`datalog/executor/tuple_key.go`) holds each hash's first entry inline in `entries map[uint64]mapEntry`. Second and later entries sharing a hash spill into `overflow map[uint64][]mapEntry`, which stays nil until the first collision. Every lookup compares full values, so a collision costs time and never correctness.
-
-`mapEntry` carries two fields. `values []interface{}` holds the tuple's values for the collision comparison. `value interface{}` holds the stored value. For deduplication the stored value is `true`, and nothing reads it.
-
-For every unique tuple the map computes the FNV-1a hash over the values, looks the hash up, compares values on a collision, and stores a `mapEntry` holding the values and the `true`.
+`TupleSet` (`datalog/executor/tuple_set.go`) holds each admitted tuple as the caller gave it and nothing beside it, under an open-addressed table of member indices built at the first tuple and sized by the iterator's hint. `TupleKeyMap` (`datalog/executor/tuple_key.go`) is the same set with a value beside each member, for the readers that store one.
 
 ## Its tests
 
@@ -107,4 +103,4 @@ A Bloom filter answers membership approximately. A false positive drops a valid 
 ## What decides it
 
 - Each alternative is measured against the deduplicating implementation, never against the pre-fix one that returned duplicates. The gain is a smaller correctness tax, not its removal.
-- The `TupleSet` changes no behaviour and needs no new information, so its measurement comes first. The fast path pays off only where the single-symbol projection is the shape that remains slow after it. The adaptive strategy pays off only where a profile shows the cardinality split it keys on.
+- The `TupleSet` is the table the tree carries, measured under `PERFORMANCE_STATUS.md`'s "One table under the set, the index and the map". The fast path pays off only where the single-symbol projection is the shape that remains slow under it. The adaptive strategy pays off only where a profile shows the cardinality split it keys on.

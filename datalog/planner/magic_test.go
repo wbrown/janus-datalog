@@ -707,27 +707,78 @@ func TestMagic_ABranchsClausesPassIntoAnInvocationUnderANonMonotoneForm(t *testi
 // clause of the read provides is found there and bound to the name standing
 // for it outside, and one the scope's inputs alone bind has no attribute in
 // the read's result, so it passes through under the name standing for it
-// outside, a header symbol under its own name and a constant the call passes
-// grounded under the fresh name. A scope whose clauses provide none of the
-// invocation's bound variables contributes no read: the clauses left out
-// widen the magic set and lose no tuple (NESTED_SCOPES_AS_QUERIES.md §5.5).
+// outside, a header symbol under its own name, a bound :in symbol under its
+// argument's variable, and a constant the call passes grounded under the
+// fresh name. A scope whose clauses provide none of the invocation's bound
+// variables contributes no read: the clauses left out widen the magic set
+// and lose no tuple (NESTED_SCOPES_AS_QUERIES.md §5.5).
 func TestMagic_ABranchReadFindsWhatTheBranchProvides(t *testing.T) {
 	t.Run("a header symbol the body binds passes through the read", func(t *testing.T) {
 		form := func(recursion string) *query.OrJoinClause {
 			return &query.OrJoinClause{OutputVars: []query.Symbol{sym("?a"), sym("?c")}, Branches: [][]query.Clause{
 				{scopePattern("?a", "edge", "?c")},
-				{scopePattern("?b", "edge", "?c"), invoke(recursion, "?a", "?b")},
+				{scopePattern("?a", "edge", "?b"), invoke(recursion, "?b", "?c")},
 			}}
 		}
 		r := defineRule("r", []string{"?a", "?c"}, form("r"))
-		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{r}), "r", false, true)
-		assertRules(t, "adorned.fb/r", magic.Rules.Rules(sym("adorned.fb/r")), []*query.Rule{
-			defineRule("adorned.fb/r", []string{"?a", "?c"}, invoke("magic.fb/r", "?c"), form("adorned.fb/r")),
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{r}), "r", true, true)
+		assertRules(t, "adorned.bb/r", magic.Rules.Rules(sym("adorned.bb/r")), []*query.Rule{
+			defineRule("adorned.bb/r", []string{"?a", "?c"}, invoke("magic.bb/r", "?a", "?c"), form("adorned.bb/r")),
 		})
-		assertRules(t, "magic.fb/r", magic.Rules.Rules(sym("magic.fb/r")), []*query.Rule{
-			defineRule("magic.fb/r", []string{"?magic.fb/r.1"},
-				invoke("magic.fb/r", "?c"),
-				branchRead("?c", []query.Clause{scopePattern("?b", "edge", "?c")}, "?b", "?magic.fb/r.1")),
+		assertRules(t, "magic.bb/r", magic.Rules.Rules(sym("magic.bb/r")), []*query.Rule{
+			defineRule("magic.bb/r", []string{"?magic.bb/r.0", "?c"},
+				invoke("magic.bb/r", "?a", "?c"),
+				&query.SubqueryPattern{
+					Query: &query.Query{
+						Find:  []query.FindElement{query.FindVariable{Symbol: sym("?b")}},
+						In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?a")}, query.ScalarInput{Symbol: sym("?c")}},
+						Where: []query.Clause{scopePattern("?a", "edge", "?b")},
+					},
+					Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Constant{Value: datalog.NewSymbol("%")}, query.Variable{Name: sym("?a")}, query.Variable{Name: sym("?c")}},
+					Binding: query.RelationBinding{Variables: []query.Symbol{sym("?magic.bb/r.0")}},
+				}),
+		})
+	})
+
+	t.Run("a bound :in symbol passes through the read under its argument's variable", func(t *testing.T) {
+		in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?p")}, query.ScalarInput{Symbol: sym("?q")}}
+		inputs := []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Constant{Value: datalog.NewSymbol("%")}, query.Variable{Name: sym("?y")}, query.Variable{Name: sym("?x")}}
+		kind := scopePattern("?q", "kind", "?k")
+		call := func(recursion string) *query.SubqueryPattern {
+			return &query.SubqueryPattern{
+				Query:   &query.Query{Find: []query.FindElement{query.FindVariable{Symbol: sym("?k")}}, In: in, Where: []query.Clause{kind, invoke(recursion, "?k", "?p")}},
+				Inputs:  inputs,
+				Binding: query.RelationBinding{Variables: []query.Symbol{sym("?z")}},
+			}
+		}
+		reach := defineRule("reach", []string{"?x", "?z"}, scopePattern("?x", "edge", "?y"), call("reach"))
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{reach}), "reach", true, false)
+		assertRules(t, "adorned.bf/reach", magic.Rules.Rules(sym("adorned.bf/reach")), []*query.Rule{
+			defineRule("adorned.bf/reach", []string{"?x", "?z"},
+				invoke("magic.bf/reach", "?x"),
+				scopePattern("?x", "edge", "?y"),
+				call("adorned.bb/reach")),
+		})
+		assertRules(t, "adorned.bb/reach", magic.Rules.Rules(sym("adorned.bb/reach")), []*query.Rule{
+			defineRule("adorned.bb/reach", []string{"?x", "?z"},
+				invoke("magic.bb/reach", "?x", "?z"),
+				scopePattern("?x", "edge", "?y"),
+				call("adorned.bb/reach")),
+		})
+		read := &query.SubqueryPattern{
+			Query:   &query.Query{Find: []query.FindElement{query.FindVariable{Symbol: sym("?k")}}, In: in, Where: []query.Clause{kind}},
+			Inputs:  inputs,
+			Binding: query.RelationBinding{Variables: []query.Symbol{sym("?magic.bb/reach.0")}},
+		}
+		assertRules(t, "magic.bb/reach", magic.Rules.Rules(sym("magic.bb/reach")), []*query.Rule{
+			defineRule("magic.bb/reach", []string{"?magic.bb/reach.0", "?y"},
+				invoke("magic.bf/reach", "?x"),
+				scopePattern("?x", "edge", "?y"),
+				read),
+			defineRule("magic.bb/reach", []string{"?magic.bb/reach.0", "?y"},
+				invoke("magic.bb/reach", "?x", "?z"),
+				scopePattern("?x", "edge", "?y"),
+				read),
 		})
 	})
 

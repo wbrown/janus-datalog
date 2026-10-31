@@ -52,14 +52,14 @@ func ResolveLWWFromDatoms(datoms []datalog.Datom) (any, datalog.ElementID) {
 // - If add has higher Lamport: in set
 // - If remove has higher Lamport: not in set
 // - Same Lamport (concurrent): add wins
-func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[any]any, datalog.ElementID) {
+func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[string]any, datalog.ElementID) {
 	if len(datoms) == 0 {
-		return make(map[any]any), datalog.ElementID{}
+		return make(map[string]any), datalog.ElementID{}
 	}
 
 	var maxID datalog.ElementID
 
-	// Track state per value
+	// Track state per value, under the value's memberKey
 	type valueState struct {
 		highestAddTx    datalog.ElementID
 		highestRemoveTx datalog.ElementID
@@ -75,10 +75,7 @@ func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[any]any, datalog.Elem
 			maxID = d.Tx
 		}
 
-		// Build key for this value (type + bytes)
-		vType := byte(datalog.Type(d.V))
-		vBytes := datalog.ValueBytes(d.V)
-		valueKey := string(append([]byte{vType}, vBytes...))
+		valueKey := memberKey(d.V)
 
 		state, exists := valueStates[valueKey]
 		if !exists {
@@ -100,9 +97,9 @@ func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[any]any, datalog.Elem
 		}
 	}
 
-	// Resolve membership
-	result := make(map[any]any)
-	for _, state := range valueStates {
+	// Resolve membership, each member held under its memberKey
+	result := make(map[string]any)
+	for valueKey, state := range valueStates {
 		inSet := false
 		if state.hasAdd && !state.hasRemove {
 			inSet = true
@@ -115,11 +112,7 @@ func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[any]any, datalog.Elem
 			}
 		}
 		if inSet {
-			key := state.value
-			if b, ok := key.([]byte); ok {
-				key = string(b)
-			}
-			result[key] = state.value
+			result[valueKey] = state.value
 		}
 	}
 

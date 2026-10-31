@@ -226,9 +226,9 @@ func TestCacheEntryValueCountsWhatResolutionProduced(t *testing.T) {
 		{"one", &CacheEntry{cardinality: schema.CardinalityOne, oneValue: "Alice"}, 1},
 		{"one absent", &CacheEntry{cardinality: schema.CardinalityOne}, 0},
 		{"many", &CacheEntry{cardinality: schema.CardinalityMany,
-			manySet: map[any]any{"dev": "dev", "ops": "ops"}}, 2},
+			manySet: map[string]any{memberKey("dev"): "dev", memberKey("ops"): "ops"}}, 2},
 		{"many empty", &CacheEntry{cardinality: schema.CardinalityMany,
-			manySet: map[any]any{}}, 0},
+			manySet: map[string]any{}}, 0},
 		{"vector serves one value, not its element count",
 			&CacheEntry{cardinality: schema.CardinalityVector,
 				vectorList: []any{"x", "y", "z"}}, 1},
@@ -404,8 +404,8 @@ func TestCacheRebuildCardinalityMany(t *testing.T) {
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
 			assert.Nil(t, entry.OneValue())
-			_, hasWarrior := entry.ManySet()["warrior"]
-			_, hasVeteran := entry.ManySet()["veteran"]
+			_, hasWarrior := entry.ManySet()[memberKey("warrior")]
+			_, hasVeteran := entry.ManySet()[memberKey("veteran")]
 			assert.True(t, hasWarrior)
 			assert.True(t, hasVeteran)
 			assert.Nil(t, entry.VectorList())
@@ -443,12 +443,12 @@ func TestCacheManySetMembership(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 
-			// O(1) membership check via map
+			// O(1) membership check via map, keyed through memberKey
 			set := entry.ManySet()
-			_, hasA := set["a"]
-			_, hasB := set["b"]
-			_, hasC := set["c"]
-			_, hasD := set["d"]
+			_, hasA := set[memberKey("a")]
+			_, hasB := set[memberKey("b")]
+			_, hasC := set[memberKey("c")]
+			_, hasD := set[memberKey("d")]
 			assert.True(t, hasA)
 			assert.True(t, hasB)
 			assert.True(t, hasC)

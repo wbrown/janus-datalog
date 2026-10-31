@@ -127,9 +127,11 @@ func NeededStrata(rs *query.RuleSet, invoked query.Symbol) []query.Stratum {
 // the copy last ran
 // (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md).
 // Lower holds, per occurrence of a seed-restricted predicate of a lower
-// stratum, the copy whose occurrence invokes that predicate's delta symbol,
-// run at a later window's iteration zero over the tuples the window added
-// to that predicate.
+// stratum the delta walk reaches (markDelta), at the top level, in a union's
+// branch or in a subquery body, the copy whose occurrence invokes that
+// predicate's delta symbol, run at a later window's iteration zero over the
+// tuples the window added to that predicate. An occurrence under a negation
+// or a fallback form has no copy.
 type Bodies struct {
 	Plain []PlannedBody
 	Delta []PlannedBody
@@ -186,57 +188,55 @@ func PlanStratum(p QueryPlanner, rs *query.RuleSet, stratum query.Stratum, handl
 	for _, predicate := range stratum.Predicates {
 		inStratum[predicate] = true
 	}
+	// lowerSeeded holds the seed-restricted predicates of the other strata;
+	// a body invokes those of the lower strata alone, and the walk marks
+	// their occurrences for the lower copies.
+	lowerSeeded := map[query.Symbol]bool{}
+	for _, predicate := range rs.Predicates() {
+		if !inStratum[predicate] && query.SeedRestricted(predicate) {
+			lowerSeeded[predicate] = true
+		}
+	}
 	var bodies Bodies
 	// deltas holds each predicate's delta copies, by rule and then by
 	// occurrence, emitted below in the pass order.
 	deltas := map[query.Symbol][]PlannedBody{}
 	for _, predicate := range stratum.Predicates {
 		for _, rule := range rs.Rules(predicate) {
-			occurrences := 0
-			var lowerOrder []query.Symbol
-			lowerCount := map[query.Symbol]int{}
-			for _, inv := range query.Invocations(rule.Body) {
-				switch {
-				case inStratum[inv.Name]:
-					occurrences++
-				case query.SeedRestricted(inv.Name):
-					if lowerCount[inv.Name] == 0 {
-						lowerOrder = append(lowerOrder, inv.Name)
-					}
-					lowerCount[inv.Name]++
-				}
-			}
 			topLevel := 0
 			for _, clause := range rule.Body {
 				if inv, ok := clause.(*query.RuleInvocation); ok && inStratum[inv.Name] {
 					topLevel++
 				}
 			}
-			if occurrences == 0 || topLevel == 0 {
+			if _, first := markDelta(rule.Body, inStratum, 0); first == nil || topLevel == 0 {
 				plan, err := planBody(p, rs, rule, rule.Body, handler)
 				if err != nil {
 					return Bodies{}, err
 				}
 				bodies.Plain = append(bodies.Plain, PlannedBody{Rule: rule, Plan: plan})
 			}
-			for j := 0; j < occurrences; j++ {
+			for j := 0; ; j++ {
 				copied, marked := markDelta(rule.Body, inStratum, j)
+				if marked == nil {
+					break
+				}
 				plan, err := planBody(p, rs, rule, copied, handler)
 				if err != nil {
 					return Bodies{}, err
 				}
 				deltas[predicate] = append(deltas[predicate], PlannedBody{Rule: rule, Plan: plan, Marked: marked})
 			}
-			for _, name := range lowerOrder {
-				marked := map[query.Symbol]bool{name: true}
-				for j := 0; j < lowerCount[name]; j++ {
-					copied, predicate := markDelta(rule.Body, marked, j)
-					plan, err := planBody(p, rs, rule, copied, handler)
-					if err != nil {
-						return Bodies{}, err
-					}
-					bodies.Lower = append(bodies.Lower, PlannedBody{Rule: rule, Plan: plan, Marked: predicate})
+			for j := 0; ; j++ {
+				copied, marked := markDelta(rule.Body, lowerSeeded, j)
+				if marked == nil {
+					break
 				}
+				plan, err := planBody(p, rs, rule, copied, handler)
+				if err != nil {
+					return Bodies{}, err
+				}
+				bodies.Lower = append(bodies.Lower, PlannedBody{Rule: rule, Plan: plan, Marked: marked})
 			}
 		}
 	}
@@ -249,9 +249,10 @@ func PlanStratum(p QueryPlanner, rs *query.RuleSet, stratum query.Stratum, handl
 // planBody plans a rule body as a query finding the rule's head, under the
 // rule set the body's invocations resolve against, with the fixpoint's
 // predicates held (query.HeldByFixpoint). The planner reads from each
-// invoked predicate's name what its relation holds: a delta leads its copy
-// (DELTA_LEADS_ITS_COPY_PROOF.md), a magic or adorned predicate leads the
-// body's patterns, and any other invocation joins them at collapse.
+// invoked predicate's name what its relation holds: a delta leads the scope
+// its occurrence stands in (DELTA_LEADS_ITS_COPY_PROOF.md), a magic or
+// adorned predicate leads the body's patterns, and any other invocation
+// joins them at collapse.
 func planBody(p QueryPlanner, rs *query.RuleSet, rule *query.Rule, body []query.Clause, handler annotations.Handler) (*RealizedPlan, error) {
 	find := make([]query.FindElement, len(rule.Head))
 	for i, head := range rule.Head {

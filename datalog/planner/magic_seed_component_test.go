@@ -71,7 +71,8 @@ func TestSplit_PartitionsTheInnermostScopesSymbols(t *testing.T) {
 
 // A level's reads are its seed-connected clauses and the extent chains the
 // needed symbols touch, in the walk's order, and the read passes the extent
-// roots those mention and a needed symbol that is an extent root itself.
+// roots those mention alone: a needed extent root nothing here provides is
+// not passed, and the enclosing scope reads its chain.
 func TestLevelReads_CarriesTheSeedComponentAndTheNeededChains(t *testing.T) {
 	loose := defineRule("loose", []string{"?n"}, scopePattern("?n", "page/n", "_"))
 	w := &magicRewriter{rs: mustRuleSet(t, []*query.Rule{loose})}
@@ -96,7 +97,7 @@ func TestLevelReads_CarriesTheSeedComponentAndTheNeededChains(t *testing.T) {
 
 	read, passed = w.levelReads(roots, extentRoots, []query.Clause{edge}, symbolSet("?k"))
 	require.Equal(t, []query.Clause{edge}, read, "a needed extent root nothing here provides adds no clause")
-	require.Equal(t, symbolSet("?k"), passed, "and is passed for the enclosing scope to read")
+	require.Empty(t, passed, "and is not passed, since no clause read mentions it")
 }
 
 // A branch's read passes the sources, the rule set and the given symbols

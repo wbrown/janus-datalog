@@ -6,7 +6,7 @@
 - The design: `REWRITE_ORDER_PROOF.md` §1 and §6, the rank and the gate; `DELTA_COPY_RUNS_ON_ITS_DELTA_PROOF.md`, the copies an iteration runs; `SCOPE_EXECUTION_AND_CONTRACTS.md` §4.1, the one orderer, §4.5, an invocation of a held predicate, and §4.6, the binding-driven strategies; `docs/reference/RULES.md`, "Evaluation", the paragraph on what a body's invocations read.
 - The failure: `BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`, item 2.
 - The tests that pin the order: `TestPlanStratum_UnguardedBodyKeepsThePatternFirst` and `TestPlanStratum_BodyInvocationLeadsItsPatterns` (`datalog/planner/rule_bodies_test.go`), `TestCreatePhasesGreedy_AScanOfAWholeExtentIsSelectedLast` and `TestCreatePhasesGreedy_AnInvocationWaitsOnAProviderByItsSelectivity` (`datalog/planner/invocation_scheduling_test.go`), `TestPlannedClausesPlaceABodysInvocationAgainstItsPatterns` (`datalog/planner/scope_test.go`).
-- The decision: in every delta copy and every lower copy, the invocation of the delta symbol is the first clause selected, whatever its predicate, and the clauses after it are ordered as the rank and the score order them.
+- The decision: in every delta copy and every lower copy, the invocation of the delta symbol is the first clause selected in the plan of the scope its occurrence stands in, the body for an occurrence at the top level and a branch or an inner query for one inside a form, whatever its predicate, and the clauses after it in that scope are ordered as the rank and the score order them; at the body, a form or a call holding the occurrence is placed as the rank and the score place any form or call.
 
 ## 1. Definitions
 
@@ -32,9 +32,9 @@ Every name below is the code's, given a symbol for the proof.
 
 **T1 (answers unchanged).** Every copy answers the tuples it answered, every adorned predicate is adorned as it was, and every stratum derives the sets it derived.
 
-**T2 (the delta leads).** In every copy the delta invocation is the first clause of the first phase, on both planner paths.
+**T2 (the delta leads).** In every copy the delta invocation is the first clause of the first phase of the plan of the scope its occurrence stands in, the body for an occurrence at the top level and the branch or the inner query for one inside a form, on both planner paths.
 
-**T3 (the work is the delta's).** In a copy, a pattern sharing a variable with the delta invocation seeks on the delta's tuples, and the copy's joins read the delta's tuples and what they reach.
+**T3 (the work is the delta's).** In the scope the delta invocation stands in, a pattern sharing a variable with it seeks on the delta's tuples, and that scope's joins read the delta's tuples and what they reach; at the body, the clauses before a form or a call holding the occurrence are read as the rank and the score place them.
 
 ## 4. Lemmas
 
@@ -44,11 +44,11 @@ A copy's clauses denote relations the plan joins, and the join's result is the s
 
 ### L2. The rank places the delta first (T2)
 
-A delta invocation takes a rank above 1, and the gate holds it behind nothing. A copy holds one delta invocation. So at the copy's first selection the delta invocation is the one clause of the highest rank, and the selection takes it. On the algebra path the decompiled clauses enter the same selection (`REWRITE_ORDER_PROOF.md` L7). ∎
+A delta invocation takes a rank above 1, and the gate holds it behind nothing. A copy holds one delta invocation, a clause of the list of the scope its occurrence stands in, which the planner phases as it phases the body's: the body's list through `planBody`, and a branch's or an inner query's through `PlanScope`. So at that scope's first selection the delta invocation is the one clause of the highest rank, and the selection takes it; at the body, a form or a call holding the occurrence is one clause among the body's, ranked and scored as any form or call. On the algebra path the decompiled clauses enter the same selection (`REWRITE_ORDER_PROOF.md` L7). ∎
 
 ### L3. The clauses after the delta seek on it (T3)
 
-After the delta invocation is selected, its arguments are available. A pattern sharing a variable with it has an available variable, so it scans no whole extent, ranks 1, and is selected before any clause that scans a whole extent. Selected after the delta, it is matched under the bindings in hand, and the matcher seeks per key at or below the boundary and scans the extent once above it (SCOPE §4.6). A seed-restricted invocation sharing a variable with the delta ranks 1 and joins the delta's tuples on the shared symbols. So every join of the copy reads the delta's tuples or what the clauses before it reached from them. Under P2 a copy of an unadorned predicate scanned its pattern's whole extent before the delta joined it, and a copy of an adorned predicate joined its whole seed-restricted relations before a delta of fewer positions. ∎
+Within the scope the delta invocation stands in, after it is selected its arguments are available. A pattern sharing a variable with it has an available variable, so it scans no whole extent, ranks 1, and is selected before any clause that scans a whole extent. Selected after the delta, it is matched under the bindings in hand, and the matcher seeks per key at or below the boundary and scans the extent once above it (SCOPE §4.6). A seed-restricted invocation sharing a variable with the delta ranks 1 and joins the delta's tuples on the shared symbols. So every join of that scope reads the delta's tuples or what the clauses before it reached from them; a clause of the body before a form or a call holding the occurrence is read as the rank and the score place it. Under P2 a copy of an unadorned predicate scanned its pattern's whole extent before the delta joined it, and a copy of an adorned predicate joined its whole seed-restricted relations before a delta of fewer positions. ∎
 
 ## 5. Tests
 

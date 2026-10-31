@@ -23,7 +23,19 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
+// main exits once, after run returns, so every deferred write of run's, the
+// profiles it started among them, runs on every end.
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// run is the whole run under the flags: it parses them, starts the profiles
+// asked for, and dispatches to the command the flags name, answering that
+// command's failure as its error.
+func run() error {
 	var dbPath string
 	var interactive bool
 	var help bool
@@ -89,7 +101,7 @@ func main() {
 
 	if help {
 		flag.Usage()
-		os.Exit(0)
+		return nil
 	}
 
 	if cpuProfilePath != "" {
@@ -143,10 +155,10 @@ func main() {
 		transferModes++
 	}
 	if transferModes > 1 {
-		log.Fatalf("Specify only one of -export, -import, -export-bin, -import-bin")
+		return fmt.Errorf("Specify only one of -export, -import, -export-bin, -import-bin")
 	}
 	if showStats && transferModes > 0 {
-		log.Fatalf("Cannot combine -stats with export/import flags")
+		return fmt.Errorf("Cannot combine -stats with export/import flags")
 	}
 
 	// Default to datalog.db if no path specified
@@ -156,30 +168,25 @@ func main() {
 
 	// Handle stats mode
 	if showStats {
-		runStats(dbPath)
-		return
+		return runStats(dbPath)
 	}
 
 	// Handle export mode
 	if exportPath != "" {
-		runExport(dbPath, exportPath, compressedExport)
-		return
+		return runExport(dbPath, exportPath, compressedExport)
 	}
 
 	// Handle import mode
 	if importPath != "" {
-		runImport(dbPath, importPath)
-		return
+		return runImport(dbPath, importPath)
 	}
 
 	if exportBinPath != "" {
-		runExportBin(dbPath, exportBinPath)
-		return
+		return runExportBin(dbPath, exportBinPath)
 	}
 
 	if importBinPath != "" {
-		runImportBin(dbPath, importBinPath)
-		return
+		return runImportBin(dbPath, importBinPath)
 	}
 
 	// Open database (BadgerDB directory, or .edn/.jdzl dump). The optimizer mode
@@ -197,26 +204,27 @@ func main() {
 	}
 	db, cleanup, err := openDatabaseOrEDN(dbPath, &plannerOpts)
 	if err != nil {
-		log.Fatalf("%v", err)
+		return err
 	}
 	defer cleanup()
 
 	if planOnly && queryStr == "" {
-		log.Fatalf("-plan-only requires -query")
+		return fmt.Errorf("-plan-only requires -query")
 	}
 
 	if queryStr != "" {
 		if planOnly {
-			runPlanOnly(db, queryStr, inputValues)
-		} else {
-			// Run single query mode
-			runSingleQuery(db, queryStr, enableDecorrelation, inputValues)
+			return runPlanOnly(db, queryStr, inputValues)
 		}
-	} else if interactive {
-		runInteractive(db, enableDecorrelation)
-	} else {
-		fmt.Println("Use -i for interactive mode or -query to run a query.")
+		// Run single query mode
+		return runSingleQuery(db, queryStr, enableDecorrelation, inputValues)
 	}
+	if interactive {
+		runInteractive(db, enableDecorrelation)
+		return nil
+	}
+	fmt.Println("Use -i for interactive mode or -query to run a query.")
+	return nil
 }
 
 func runInteractive(db *storage.Database, enableDecorrelation bool) {
@@ -403,70 +411,71 @@ func openDatabaseOrEDN(dbPath string, plannerOpts *planner.PlannerOptions) (*sto
 
 // runExport exports the database to an EDN file. The source may itself be an
 // .edn or .jdzl dump (re-encode / convert via a temporary database).
-func runExport(dbPath, exportPath string, compressed bool) {
+func runExport(dbPath, exportPath string, compressed bool) error {
 	db, cleanup, err := openDatabaseOrEDN(dbPath, nil)
 	if err != nil {
-		log.Fatalf("%v", err)
+		return err
 	}
 	defer cleanup()
 
 	// Create export file
 	f, err := os.Create(exportPath)
 	if err != nil {
-		log.Fatalf("Failed to create export file: %v", err)
+		return fmt.Errorf("Failed to create export file: %v", err)
 	}
 	defer f.Close()
 
 	// Export database
 	if err := db.Export(f, storage.ExportOptions{Compressed: compressed}); err != nil {
-		log.Fatalf("Failed to export database: %v", err)
+		return fmt.Errorf("Failed to export database: %v", err)
 	}
 
 	fmt.Printf("Exported database to %s\n", exportPath)
+	return nil
 }
 
 // runImport imports an EDN file into the database
-func runImport(dbPath, importPath string) {
+func runImport(dbPath, importPath string) error {
 	// Importing into a dump path would open/create a Badger directory named
 	// after the dump file; the target must be a real database directory.
 	if storage.IsDumpPath(dbPath) {
-		log.Fatalf("Cannot import into %s: -db must be a database directory", dbPath)
+		return fmt.Errorf("Cannot import into %s: -db must be a database directory", dbPath)
 	}
 
 	// Check if import file exists
 	if _, err := os.Stat(importPath); os.IsNotExist(err) {
-		log.Fatalf("Import file does not exist: %s", importPath)
+		return fmt.Errorf("Import file does not exist: %s", importPath)
 	}
 
 	// Open/create database
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
-		log.Fatalf("Failed to open/create database: %v", err)
+		return fmt.Errorf("Failed to open/create database: %v", err)
 	}
 	defer db.Close()
 
 	// Open import file
 	f, err := os.Open(importPath)
 	if err != nil {
-		log.Fatalf("Failed to open import file: %v", err)
+		return fmt.Errorf("Failed to open import file: %v", err)
 	}
 	defer f.Close()
 
 	// Import into database
 	if err := db.Import(f); err != nil {
-		log.Fatalf("Failed to import: %v", err)
+		return fmt.Errorf("Failed to import: %v", err)
 	}
 
 	fmt.Printf("Imported %s into database %s\n", importPath, dbPath)
+	return nil
 }
 
-func runExportBin(dbPath, exportPath string) {
-	// Keep Fatalf outside the cleanup scope so deferred temp-dir removal runs
-	// on export failure (os.Exit from log.Fatalf skips defers).
+func runExportBin(dbPath, exportPath string) error {
 	if err := exportBinaryDatabase(dbPath, exportPath); err != nil {
-		log.Fatalf("%v", err)
+		return err
 	}
 	fmt.Printf("Exported database to %s\n", exportPath)
+	return nil
 }
 
 func exportBinaryDatabase(dbPath, exportPath string) error {
@@ -488,30 +497,31 @@ func exportBinaryDatabase(dbPath, exportPath string) error {
 	return nil
 }
 
-func runImportBin(dbPath, importPath string) {
+func runImportBin(dbPath, importPath string) error {
 	if storage.IsDumpPath(dbPath) {
-		log.Fatalf("Cannot import into %s: -db must be a database directory", dbPath)
+		return fmt.Errorf("Cannot import into %s: -db must be a database directory", dbPath)
 	}
 	if _, err := os.Stat(importPath); os.IsNotExist(err) {
-		log.Fatalf("Import file does not exist: %s", importPath)
+		return fmt.Errorf("Import file does not exist: %s", importPath)
 	}
 
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
-		log.Fatalf("Failed to open/create database: %v", err)
+		return fmt.Errorf("Failed to open/create database: %v", err)
 	}
 	defer db.Close()
 
 	f, err := os.Open(importPath)
 	if err != nil {
-		log.Fatalf("Failed to open binary import file: %v", err)
+		return fmt.Errorf("Failed to open binary import file: %v", err)
 	}
 	defer f.Close()
 
 	if err := db.ImportBinary(f); err != nil {
-		log.Fatalf("Failed to import binary dump: %v", err)
+		return fmt.Errorf("Failed to import binary dump: %v", err)
 	}
 	fmt.Printf("Imported %s into database %s\n", importPath, dbPath)
+	return nil
 }
 
 // runPlanOnly plans the query without executing it and prints the full
@@ -519,33 +529,30 @@ func runImportBin(dbPath, importPath string) {
 // made, the optimized tree, the rewritten Datalog, and the physical plan.
 // The database's planner options carry the -optimize mode, so the
 // explanation reflects exactly what this invocation would run.
-func runPlanOnly(db *storage.Database, queryStr string, inputs []string) {
+func runPlanOnly(db *storage.Database, queryStr string, inputs []string) error {
 	q, err := parser.ParseQuery(queryStr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("Parse error: %v", err)
 	}
 
 	goInputs, err := parseEDNInputs(q.In, inputs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Input error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("Input error: %v", err)
 	}
 
 	expl, err := db.ExplainAlgebra(q, goInputs...)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Plan error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("Plan error: %v", err)
 	}
 	fmt.Print(expl.String())
+	return nil
 }
 
-func runSingleQuery(db *storage.Database, queryStr string, enableDecorrelation bool, inputs []string) {
+func runSingleQuery(db *storage.Database, queryStr string, enableDecorrelation bool, inputs []string) error {
 	// Parse query
 	q, err := parser.ParseQuery(queryStr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("Parse error: %v", err)
 	}
 
 	// Print the formatted query
@@ -554,8 +561,7 @@ func runSingleQuery(db *storage.Database, queryStr string, enableDecorrelation b
 	// Parse input values from EDN strings
 	goInputs, err := parseEDNInputs(q.In, inputs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Input error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("Input error: %v", err)
 	}
 
 	// Execute query with timing
@@ -572,8 +578,7 @@ func runSingleQuery(db *storage.Database, queryStr string, enableDecorrelation b
 	elapsed := time.Since(start)
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Execution error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("Execution error: %v", err)
 	}
 
 	// Display results as markdown table with timing
@@ -590,6 +595,7 @@ func runSingleQuery(db *storage.Database, queryStr string, enableDecorrelation b
 		}
 	}
 	fmt.Print(strings.Join(lines, "\n"))
+	return nil
 }
 
 // ednSliceFlag implements flag.Value for a repeatable -in flag.

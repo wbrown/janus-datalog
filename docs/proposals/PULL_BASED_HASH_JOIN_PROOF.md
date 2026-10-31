@@ -105,7 +105,7 @@ Every name below is the code's, given a symbol for the proof.
 
 **T5 (the empty build).** When the build side is empty the join answers the empty relation over the result's symbols and properties, carrying the build side's deferred error, without opening the probe side. The probe side is left as its next reader finds it.
 
-**T6 (the route).** A join result answers -1 for its size. A later pattern or invocation sharing its symbols takes the windowed route, which reads the join result once and answers the tuples the matcher's route answers. A scan failure on that route surfaces when the result is driven, where the matcher's route surfaced it from the call. At the public boundary a query whose final relation is a join result, or a projection of one, answers -1 for its size, as a query ending in a scan does (P8), and a caller that counts iterates.
+**T6 (the route).** A join result whose build holds a tuple answers -1 for its size, and an empty build's result, the empty relation held (T5), answers 0. A later pattern or invocation sharing the first's symbols takes the windowed route, which reads the join result once and answers the tuples the matcher's route answers, and one sharing the second's takes the held route over the empty relation. A scan failure on the windowed route surfaces when the result is driven, where the matcher's route surfaced it from the call. At the public boundary a query whose final relation is a join result with a build, or a projection of one, answers -1 for its size, as a query ending in a scan does (P8), and a caller that counts iterates; a query whose final relation is an empty build's answers 0.
 
 **T7 (cost).** The per-pair path loses the call to `combineTuplesIndexed` and the allocation it made, and gains no call: the fill is written in `hashJoinIterator.Next`.
 
@@ -137,11 +137,11 @@ By P6 the join is empty when the index holds no tuple, whatever the probe holds.
 
 ### L7. The route (T6)
 
-By P4 `streamsThrough` reads the size of every group sharing the clause's symbols. By the definition of the size answer a join result answers -1. So a pattern or invocation sharing a join result's symbols is routed through `executeBoundPattern` or `executeBoundInvocation`. By P5 that route reads its subject once, copying under the copy answer. `SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2 states that the window answers the tuples the subject's join with the clause answers. Today the same clause over a materialized join result is routed through `executePattern`, which materializes the group for the matcher's bindings and joins the matches at the collapse. Both routes answer the join of the group with the clause's relation. ∎
+By P4 `streamsThrough` reads the size of every group sharing the clause's symbols. By the definition of the size answer a stream answers -1 and a held relation its count, so a join result with a build answers -1 and an empty build's result answers 0 (L6). So a pattern or invocation sharing a join result's symbols is routed through `executeBoundPattern` or `executeBoundInvocation` when the build holds a tuple, and through the held route over the empty relation when it does not. By P5 the windowed route reads its subject once, copying under the copy answer. `SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2 states that the window answers the tuples the subject's join with the clause answers. Today the same clause over a materialized join result is routed through `executePattern`, which materializes the group for the matcher's bindings and joins the matches at the collapse. Both routes answer the join of the group with the clause's relation. ∎
 
 ### L8. The key map (T2)
 
-`SemiJoin` and `AntiJoin` size their key map from the right side's size answer, and a join result answers -1 (P7). `NewTupleKeyMapWithCapacity` hands that answer to `make` as the map's hint, and a negative hint starts the map empty, as `TestTupleKeyMapWithAnUnknownCapacityStartsEmpty` pins. So the map is the map a right side of unknown size gets today. The semi-join and anti-join read their right side once and their left once as before. ∎
+`SemiJoin` and `AntiJoin` size their key map from the right side's size answer, and a join result with a build answers -1 (P7), an empty build's result 0. `NewTupleKeyMapWithCapacity` hands that answer to `make` as the map's hint, and a negative hint starts the map empty, as `TestTupleKeyMapWithAnUnknownCapacityStartsEmpty` pins, as a hint of 0 does. So the map is the map a right side of unknown size, or of no tuple, gets today. The semi-join and anti-join read their right side once and their left once as before. ∎
 
 ## 5. Tests
 
@@ -179,7 +179,7 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 ## 6. The change the proof licenses
 
 - `join.go`, `HashJoinWithOptions`:
-  - answers the streaming relation over the join's iterator in every setting of `EnableStreamingJoins`
+  - answers the streaming relation over the join's iterator in every setting of `EnableStreamingJoins` when the build holds a tuple
   - loses the materialized arm, its results slice, its probe-consumed check and its probe event
   - reports the streaming mode in the `JoinStrategy` event
   - when the index is empty after the build, answers the empty relation over the result's symbols and properties through `newMaterializedRelationFromSet`, carrying the build error, emits the `JoinProbe` event with no probe tuple, and does not call the probe side's `Iterator`

@@ -73,8 +73,8 @@ func DeltaSymbol(name Symbol) Symbol {
 
 // IsDeltaSymbol reports whether a predicate is one DeltaSymbol minted: the
 // delta of a predicate, whose relation is the tuples the iteration before
-// added. A copy's invocation of one leads the copy, since every other clause
-// of the copy reads what those tuples reach
+// added. A copy's invocation of one leads the plan of the scope it stands
+// in, since every other clause of that scope reads what those tuples reach
 // (docs/proposals/DELTA_LEADS_ITS_COPY_PROOF.md).
 func IsDeltaSymbol(name Symbol) bool {
 	kind, _, _ := strings.Cut(name.Namespace(), ".")

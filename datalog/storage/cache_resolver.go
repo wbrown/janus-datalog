@@ -112,9 +112,9 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (
 	return nil, datalog.ElementID{}, false, nil
 }
 
-// ResolveAddWins returns the current set members for cardinality-many
-// Uses the existing resolveAddWinsSet method and converts to map
-func (m *PatternMatcher) ResolveAddWins(e Entity, a Attribute, report *scanReport) (map[any]any, datalog.ElementID, bool, error) {
+// ResolveAddWins returns the current set members for cardinality-many, each
+// under its memberKey, through resolveAddWinsSet.
+func (m *PatternMatcher) ResolveAddWins(e Entity, a Attribute, report *scanReport) (map[string]any, datalog.ElementID, bool, error) {
 	result, err := m.resolveAddWinsSet(e[:], a[:], report)
 	if err != nil {
 		// The scan read the index before it failed, and the report kept that

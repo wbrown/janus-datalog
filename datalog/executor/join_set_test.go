@@ -152,6 +152,18 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 						"%s read a probe tuple under an empty build", arm)
 				}
 			}
+			// reportsSize asserts the size answer of the result before it is
+			// drained: an empty build answers the empty relation held, so its
+			// size is 0, and a build holding a tuple answers a stream, which
+			// answers no size (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md,
+			// T5 and T6).
+			reportsSize := func(t *testing.T, arm string, result Relation) {
+				if emptyBuild {
+					require.Equal(t, 0, result.Size(), "%s answers the empty relation held under an empty build", arm)
+				} else {
+					require.Equal(t, -1, result.Size(), "%s answers a stream, which reports no size", arm)
+				}
+			}
 
 			t.Run("with streaming joins off", func(t *testing.T) {
 				arm := "the hash join with streaming joins off"
@@ -161,6 +173,7 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 					NewMaterializedRelation(leftSymbols, c.left),
 					NewMaterializedRelation(rightSymbols, c.right),
 					join, opts)
+				reportsSize(t, arm, result)
 				count := answers(t, arm, result, expected, true)
 				hashArm(t, arm, events, count)
 			})
@@ -174,6 +187,7 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 				}
 				right := NewStreamingRelationWithOptions(rightSymbols, &sliceIterator{tuples: c.right, pos: -1}, opts)
 				result := HashJoinWithOptions(NewMaterializedRelation(leftSymbols, c.left), right, join, opts)
+				reportsSize(t, arm, result)
 				count := answers(t, arm, result, expected, true)
 				hashArm(t, arm, events, count)
 				if emptyBuild {
@@ -190,6 +204,7 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 				}
 				right := newReusingWorkspaceStream(rightSymbols, c.right)
 				result := HashJoinWithOptions(NewMaterializedRelation(leftSymbols, c.left), right, join, opts)
+				reportsSize(t, arm, result)
 				count := answers(t, arm, result, expected, true)
 				hashArm(t, arm, events, count)
 				if emptyBuild {

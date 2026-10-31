@@ -266,8 +266,10 @@ A rule body is planned by the query planner as a query of its own, under the
 database's planner options. Its plan enters the plan cache under its own
 text, which carries `%` and the delta symbol. An invocation of a delta,
 `delta/reach` or `delta.adorned.bf/reach`, reads the tuples the iteration
-before added, so the planner schedules it first in its copy, and the clauses
-after it seek on the bindings it provides. An invocation of a predicate the
+before added, so the planner schedules it first in the scope its occurrence
+stands in, the body for an occurrence at the top level and the branch or the
+inner query for one inside a form, and the clauses after it in that scope
+seek on the bindings it provides. An invocation of a predicate the
 seed restricts, `magic.bf/reach` or `adorned.bf/reach`, reads a relation
 holding only what the seed reaches, so the planner schedules it before the
 body's patterns, which then seek on the bindings it provides. An invocation

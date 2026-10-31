@@ -92,8 +92,8 @@ func TestResolveAddWinsFromDatoms_OnlyAdds(t *testing.T) {
 	}
 
 	members, maxID := ResolveAddWinsFromDatoms(datoms)
-	_, hasTag1 := members["tag1"]
-	_, hasTag2 := members["tag2"]
+	_, hasTag1 := members[memberKey("tag1")]
+	_, hasTag2 := members[memberKey("tag2")]
 	assert.True(t, hasTag1)
 	assert.True(t, hasTag2)
 	assert.Equal(t, 2, len(members))
@@ -108,7 +108,7 @@ func TestResolveAddWinsFromDatoms_AddThenRemove_RemoveWins(t *testing.T) {
 	}
 
 	members, _ := ResolveAddWinsFromDatoms(datoms)
-	_, hasTag1 := members["tag1"]
+	_, hasTag1 := members[memberKey("tag1")]
 	assert.False(t, hasTag1)
 	assert.Equal(t, 0, len(members))
 }
@@ -121,7 +121,7 @@ func TestResolveAddWinsFromDatoms_RemoveThenAdd_AddWins(t *testing.T) {
 	}
 
 	members, _ := ResolveAddWinsFromDatoms(datoms)
-	_, hasTag1 := members["tag1"]
+	_, hasTag1 := members[memberKey("tag1")]
 	assert.True(t, hasTag1)
 }
 
@@ -133,7 +133,7 @@ func TestResolveAddWinsFromDatoms_Concurrent_AddWins(t *testing.T) {
 	}
 
 	members, _ := ResolveAddWinsFromDatoms(datoms)
-	_, hasTag1 := members["tag1"]
+	_, hasTag1 := members[memberKey("tag1")]
 	assert.True(t, hasTag1) // Add wins at same Lamport
 }
 
@@ -151,9 +151,9 @@ func TestResolveAddWinsFromDatoms_MultipleValues(t *testing.T) {
 	}
 
 	members, maxID := ResolveAddWinsFromDatoms(datoms)
-	_, hasTag1 := members["tag1"]
-	_, hasTag2 := members["tag2"]
-	_, hasTag3 := members["tag3"]
+	_, hasTag1 := members[memberKey("tag1")]
+	_, hasTag2 := members[memberKey("tag2")]
+	_, hasTag3 := members[memberKey("tag3")]
 	assert.False(t, hasTag1) // Removed
 	assert.True(t, hasTag2)  // Only added
 	assert.True(t, hasTag3)  // Re-added

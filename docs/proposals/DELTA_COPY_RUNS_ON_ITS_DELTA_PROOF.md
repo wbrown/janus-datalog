@@ -25,7 +25,7 @@ Every name below is the code's, given a symbol for the proof.
 ## 2. Preconditions
 
 - **P1 (the semi-naive step).** A derivation through a body with an occurrence fires in the iteration after the one that added its last-added premise, through the copy marked on that premise's predicate, whose delta holds the premise then, and in no other iteration (SCOPE §4.2). A derivation whose premises are all in the sets at the seeding run fires at iteration zero, through the plain body. Withdrawn: the step is replaced by `A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md`, under which a derivation fires at the first run, after its last premise is admitted, of the copy marked on that premise's predicate (its T3).
-- **P2 (the copies).** `PlanStratum` plans one delta copy per occurrence, in the order `markDeltaWalk` counts them, and one lower copy per occurrence of each seed-restricted lower predicate. `markDelta` replaces the counted occurrence and shares every other clause.
+- **P2 (the copies).** `PlanStratum` plans one delta copy per occurrence `markDeltaWalk` reaches, in the walk's order, and one lower copy per occurrence of a seed-restricted lower predicate the walk reaches, at the top level, inside a union's branch and inside a subquery's inner query; an occurrence under a negation or a fallback form has no copy. `markDelta` replaces the occurrence the walk reaches and shares every other clause.
 - **P3 (the stratum loop as it stands).** At every iteration after the first, `runStratum` holds every predicate's delta under its delta symbol, an empty one as an empty relation, and runs every delta copy of the stratum. At a later window's iteration zero it runs the lower copies whose lower predicate gained tuples in the window, and no other. Withdrawn: the loop is replaced by the passes of `A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md` (its §1), and the later window's first run stands.
 - **P4 (the set).** `absorb` adds the tuples of a relation the set does not hold and answers them; a tuple the set holds is answered by nothing.
 - **P5 (the field).** `PlannedBody.Lower` names a lower copy's marked predicate. A delta copy's planned body names no predicate.
@@ -61,7 +61,7 @@ The loop filters the delta copies by their marked predicate's delta, as the lowe
 
 ### L5. The marked predicate (T4)
 
-`markDeltaWalk` replaces the counted occurrence and knows its predicate at the replacement. Answering that predicate beside the clauses lets `PlanStratum` carry it on the planned body, in the field a lower copy carries its lower predicate in, since the fact is the same for both: the predicate whose delta symbol the copy invokes. A plain body replaces no occurrence and carries none. ∎
+`markDeltaWalk` replaces the occurrence it reaches and knows its predicate at the replacement, and answers nil past the last occurrence it reaches, which is how `PlanStratum` knows a body's copies are exhausted. Answering that predicate beside the clauses lets `PlanStratum` carry it on the planned body, in the field a lower copy carries its lower predicate in, since the fact is the same for both: the predicate whose delta symbol the copy invokes. A plain body replaces no occurrence and carries none. ∎
 
 ## 5. Tests
 
