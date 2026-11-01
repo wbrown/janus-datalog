@@ -63,10 +63,11 @@ func MagicSymbol(name Symbol, bound []bool) Symbol {
 	return mint(magicNamespace+"."+adornment(bound), name)
 }
 
-// DeltaSymbol names the delta of a predicate: the tuples the last iteration
-// of its stratum added, which a body's occurrence of the predicate reads
-// under semi-naive evaluation. The delta of reach is delta/reach, and the
-// delta of the adorned predicate adorned.bf/reach is delta.adorned.bf/reach.
+// DeltaSymbol names the delta of a predicate: in a copy, the tuples the
+// predicate gained since the copy last ran, which the copy's occurrence of
+// the predicate reads under semi-naive evaluation. The delta of reach is
+// delta/reach, and the delta of the adorned predicate adorned.bf/reach is
+// delta.adorned.bf/reach.
 func DeltaSymbol(name Symbol) Symbol {
 	return mint(deltaNamespace, name)
 }

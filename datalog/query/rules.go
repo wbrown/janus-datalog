@@ -21,8 +21,9 @@ func (RulesInput) String() string { return "%" }
 // derived relation, projected onto the arguments, joins the enclosing clause
 // scope as a subquery's relation binding does. Its scope, the positions the
 // predicate requires bound among them, is read from the rule set the query
-// runs with (ScopeOf). An occurrence that reads a stratum's last delta
-// invokes the predicate's delta symbol (DeltaSymbol).
+// runs with (ScopeOf). An occurrence that reads its predicate's delta, the
+// tuples the predicate gained since the copy last ran, invokes the
+// predicate's delta symbol (DeltaSymbol).
 type RuleInvocation struct {
 	Name Symbol
 	Args []PatternElement

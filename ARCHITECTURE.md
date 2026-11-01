@@ -684,9 +684,11 @@ Multi-phase: T(query) = Σ T(phase_i), executed sequentially.
 ### Rule Evaluation
 
 A recursive stratum with k recursive invocations across its rules runs k body
-queries per iteration, each against the previous delta:
+queries per iteration, each against its delta, the tuples its predicate gained
+since the copy last ran; an iteration is a pass (`docs/reference/RULES.md`,
+"Evaluation"):
 ```
-T(stratum) = T(seed) + Σ_iterations Σ_bodies T(body on delta_{i-1})
+T(stratum) = T(seed) + Σ_iterations Σ_bodies T(body on its delta)
 ```
 - The iteration count is the longest derivation plus one (the empty delta)
 - Space is O(\|derived\|): every predicate's relation is materialized, with a

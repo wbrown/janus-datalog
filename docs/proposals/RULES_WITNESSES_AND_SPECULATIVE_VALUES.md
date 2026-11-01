@@ -85,7 +85,20 @@ Types in `datalog/query`:
 - `RuleSet`: the rules grouped by name, each predicate's arity and required positions, the strata, and the attribute roster the bodies name, collected once. `Required` reports a predicate's required positions. `planner.Rewrite` (`datalog/planner/magic.go`) rewrites the set for a binding pattern, in the planner's order (§1.3).
 - `RuleInvocation`: a clause holding the name and the arguments. Its scope comes from the rule set the query runs with. `ScopeOf(clause, rules)` makes the variables at the predicate's required positions mandatory correlates and provides the rest.
 - `RulesInput`: the `%` input spec.
-- The engine mints predicates in namespaces of its own. `adorned.bf/reach` is `reach` adorned with a binding pattern. `magic.bf/reach` is its magic predicate. `delta/reach` holds the tuples the last iteration of its stratum added (`DeltaSymbol`). `scope/required` is the required run a nested scope runs over (`ScopeRequired`). The kind leads the namespace, and the predicate's own namespace follows it. It mints variables the same way: `?unify/x.2` is a pattern's later occurrence of `?x` (`UnifiedVariable`), `?scope/input.2` the holder of a collection input's whole value (`ScopeInput`), and `?magic.bf/reach.0` a seed predicate's head position. The namespaces are the engine's for predicates and variables alike: `NewRuleSet` refuses a rule set that declares a predicate in one of them or names a variable in one, and `Prepare` refuses a query naming a variable in one, each before the inference writes the engine's own, naming the variable, the namespace and the repair (`engineNamespace`, `EngineNamespaceError`). `ParseQuery` and `qb.Build` accept the spelling, since the prepared text carries the engine's variables and every phase the planner emits parses back through `ParseQuery` (`NESTED_SCOPES_AS_QUERIES.md` §5.5). The alternative, minting names no user text can spell, is excluded by that parse-back.
+- The engine mints predicates in namespaces of its own. The kind leads the namespace, and the predicate's own namespace follows it.
+  - `adorned.bf/reach` is `reach` adorned with a binding pattern.
+  - `magic.bf/reach` is its magic predicate.
+  - `delta/reach` holds, in a copy, the tuples `reach` gained since the copy last ran (`DeltaSymbol`).
+  - `scope/required` is the required run a nested scope runs over (`ScopeRequired`).
+- The engine mints variables the same way.
+  - `?unify/x.2` is a pattern's later occurrence of `?x` (`UnifiedVariable`).
+  - `?scope/input.2` is the holder of a collection input's whole value (`ScopeInput`).
+  - `?magic.bf/reach.0` is a seed predicate's head position.
+- The namespaces are the engine's for predicates and variables alike.
+  - `NewRuleSet` refuses a rule set that declares a predicate in one of them or names a variable in one.
+  - `Prepare` refuses a query naming a variable in one.
+  - Each refuses before the inference writes the engine's own, naming the variable, the namespace and the repair (`engineNamespace`, `EngineNamespaceError`).
+- `ParseQuery` and `qb.Build` accept the spelling, since the prepared text carries the engine's variables and every phase the planner emits parses back through `ParseQuery` (`NESTED_SCOPES_AS_QUERIES.md` §5.5). The alternative, minting names no user text can spell, is excluded by that parse-back.
 
 `parser.ParseRules` parses a rule set. `parseInputSpec` accepts `%`. A list clause whose head names no reserved form is an invocation. An invocation requires `%` in its query's own `:in`, and so does a subquery call that passes `%`. The query builder has `qb.Rules`, `qb.Rule`, `qb.DefineRule`, `qb.RuleSet`, `qb.MustRuleSet` and `RuleBuilder.Require`. The CLI reads the `-in` value at the `%` position as rule text.
 

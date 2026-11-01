@@ -184,10 +184,10 @@ func (it *invocationIterator) Error() error { return it.inner.Error() }
 // in a body the fixpoint is running, or one a form hoisted, reads the
 // relation the scope holds under the symbol it invokes: the required run
 // under scope/required, held over the required symbols by name, so its head
-// is the invocation's own arguments; or a predicate's relation, or the
-// stratum's last delta under the predicate's delta symbol, whose head is the
-// rule set's. Any other invocation, the query's own or one in a subquery, is
-// derived here. The set is the one the running evaluation keeps for a
+// is the invocation's own arguments; or a predicate's relation, or under the
+// predicate's delta symbol the tuples the predicate gained since the copy
+// last ran, whose head is the rule set's. Any other invocation, the query's
+// own or one in a subquery, is derived here. The set is the one the running evaluation keeps for a
 // predicate's relation the fixpoint holds (Context.sets), whose tuples up to
 // its count the relation is; it is nil for the required run, a delta, and a
 // derived invocation, whose relation leaves the evaluation.
