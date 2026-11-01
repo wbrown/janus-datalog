@@ -241,6 +241,12 @@ func expansionProperties(
 	)
 }
 
+// joinProperties is a join result's keys, derived from its sides'. The left
+// keys stand when a right key lies within the join symbols, since each left
+// tuple then meets at most one right tuple, and the right keys stand when a
+// left key does. Each left key with each right key composes a key, since
+// result tuples that agree on both are one left tuple and one right tuple
+// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T3).
 func joinProperties(
 	left RelationProperties,
 	right RelationProperties,
@@ -257,6 +263,17 @@ func joinProperties(
 	}
 	if hasKeyWithin(left.Keys, joinSet) {
 		result.Keys = appendDistinctKeys(result.Keys, right.Keys)
+	}
+	for _, leftKey := range left.Keys {
+		for _, rightKey := range right.Keys {
+			composite := append([]query.Symbol(nil), leftKey...)
+			for _, symbol := range rightKey {
+				if !query.ContainsSymbol(composite, symbol) {
+					composite = append(composite, symbol)
+				}
+			}
+			result.Keys = appendDistinctKeys(result.Keys, [][]query.Symbol{composite})
+		}
 	}
 	return result
 }

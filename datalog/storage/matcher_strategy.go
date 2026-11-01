@@ -137,7 +137,10 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 			// V-bound queries use the candidate + validate pattern for an
 			// attribute resolving as cardinality one: the V-primary index
 			// finds the candidates and an EATV point lookup validates each
-			// (docs/reference/INDEX_SELECTION_PROOF.md Theorem 5). Under
+			// (docs/reference/INDEX_SELECTION_PROOF.md Theorem 5), for a
+			// binding at or below the matcher's boundary; above it, on a
+			// constant attribute, MatchWithConstraints probes the binding
+			// against one resolved scan of the attribute instead. Under
 			// History every datom is read as written, so there is no winner
 			// to validate against and the candidates are the answer.
 			if aConst, ok := pattern.GetA().(query.Constant); ok {

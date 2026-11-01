@@ -32,31 +32,35 @@ func TestHashValue_TimeIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestTupleKeyMap_TimeValuedTuplesRoundTrip ensures a TupleKeyMap keyed on a
-// tuple containing a time.Time can find that tuple again when the lookup key is
-// built from a separately-constructed equal time at a different stack depth —
-// the pattern a hash join exercises (build vs probe). With the bug the lookup
-// misses and the tuple is silently dropped from the join.
+// TestTupleKeyMap_TimeValuedTuplesRoundTrip ensures a TupleKeyMap holding a
+// tuple containing a time.Time can find that tuple again when the probe holds
+// a separately-constructed time of the same instant in another location,
+// hashed from a different stack depth — the pattern a hash join exercises
+// (build vs probe). With the bug the lookup misses and the tuple is silently
+// dropped from the join.
 func TestTupleKeyMap_TimeValuedTuplesRoundTrip(t *testing.T) {
 	id := datalog.NewIdentity("e1")
 	tm := time.Date(2026, 5, 24, 9, 30, 0, 0, time.UTC)
+	positions := allPositions(2)
 
-	m := NewTupleKeyMap()
-	m.Put(NewTupleKeyFull(Tuple{id, tm}), "v")
+	m := NewTupleKeyMap(positions, positions, 0)
+	m.Put(Tuple{id, tm}, "v")
 
-	// Build the lookup key from an equal but separately-constructed time, hashed
-	// from a different stack depth (mirroring build-side vs probe-side hashing).
-	lookupTime := time.Date(2026, 5, 24, 9, 30, 0, 0, time.UTC)
-	key := tupleKeyAtDepth(Tuple{id, lookupTime}, 32)
-	if _, ok := m.Get(key); !ok {
+	// Probe with an equal but separately-constructed time in another
+	// location, hashed from a different stack depth (mirroring build-side vs
+	// probe-side hashing).
+	lookupTime := time.Date(2026, 5, 24, 9, 30, 0, 0, time.UTC).In(time.FixedZone("elsewhere", 3600))
+	if _, ok := getAtDepth(m, Tuple{id, lookupTime}, 32); !ok {
 		t.Fatalf("TupleKeyMap lost a time-valued tuple: Get missed an equal key " +
 			"(time.Time hashed nondeterministically)")
 	}
 }
 
-func tupleKeyAtDepth(tuple Tuple, depth int) TupleKey {
+// getAtDepth probes m from depth extra stack frames down, so the probe's hash
+// is computed at another stack address than the put's.
+func getAtDepth(m *TupleKeyMap, tuple Tuple, depth int) (any, bool) {
 	if depth <= 0 {
-		return NewTupleKeyFull(tuple)
+		return m.Get(tuple)
 	}
-	return tupleKeyAtDepth(tuple, depth-1)
+	return getAtDepth(m, tuple, depth-1)
 }

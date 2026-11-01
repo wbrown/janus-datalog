@@ -289,7 +289,10 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, r
 		return nil, fmt.Errorf("unique combinations: %w", err)
 	}
 
-	seen := NewTupleKeyMap()
+	// Each combination is held in the set under its whole-tuple key, probed
+	// by the source tuple at the symbols' positions, so a combination held is
+	// rejected before it is built (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T4).
+	seen := NewTupleSet(symIndices, allPositions(len(symIndices)), 0)
 	iter := rel.Iterator()
 	defer func() {
 		if closeErr := iter.Close(); resultErr == nil {
@@ -298,14 +301,16 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, r
 	}()
 	for iter.Next() {
 		tuple := iter.Tuple()
+		_, hash, held := seen.Find(tuple)
+		if held {
+			continue
+		}
 		combo := make(Tuple, len(symIndices))
 		for i, idx := range symIndices {
 			combo[i] = tuple[idx]
 		}
-		key := NewTupleKeyFull(combo)
-		if !seen.PutIfAbsent(key, struct{}{}) {
-			combos = append(combos, combo)
-		}
+		seen.Add(combo, hash)
+		combos = append(combos, combo)
 	}
 	if e := iter.Error(); resultErr == nil {
 		resultErr = e
@@ -334,7 +339,12 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 		return NewMaterializedRelationWithOptions(syms, nil, opts)
 	}
 
-	seen := NewTupleKeyMap()
+	// Each projected tuple is held in the set under its whole-tuple key,
+	// probed by each relation's tuple at that relation's positions of the
+	// symbols, so a tuple held is rejected before it is projected
+	// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T4).
+	positions := allPositions(len(syms))
+	seen := NewTupleSet(positions, positions, 0)
 	var allTuples []Tuple
 	var firstErr error
 
@@ -350,14 +360,16 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 		iter := rel.Iterator()
 		for iter.Next() {
 			tuple := iter.Tuple()
+			_, hash, held := seen.FindAt(tuple, symIndices)
+			if held {
+				continue
+			}
 			projected := make(Tuple, len(syms))
 			for i, idx := range symIndices {
 				projected[i] = tuple[idx]
 			}
-			key := NewTupleKeyFull(projected)
-			if !seen.PutIfAbsent(key, struct{}{}) {
-				allTuples = append(allTuples, projected)
-			}
+			seen.Add(projected, hash)
+			allTuples = append(allTuples, projected)
 		}
 		// Capture a branch's deferred scan error so the union doesn't drop it.
 		branchErr := iter.Error()

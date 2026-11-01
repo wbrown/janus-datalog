@@ -48,19 +48,21 @@ func BenchmarkHashJoinPreSizing(b *testing.B) {
 	}
 }
 
-// BenchmarkTupleKeyMapPreSizing specifically benchmarks TupleKeyMap operations
+// BenchmarkTupleKeyMapPreSizing measures what a capacity hint buys a map of
+// whole-tuple keys: the table built at the first put sized to the hint,
+// against one grown by doubling.
 func BenchmarkTupleKeyMapPreSizing(b *testing.B) {
 	sizes := []int{100, 1000, 10000}
+	positions := allPositions(2)
 
 	for _, size := range sizes {
 		// Test without pre-sizing
 		b.Run(fmt.Sprintf("NoPresize_%d", size), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				m := NewTupleKeyMap()
+				m := NewTupleKeyMap(positions, positions, 0)
 				for j := 0; j < size; j++ {
-					key := NewTupleKeyFull(Tuple{j, j * 2})
-					m.Put(key, j)
+					m.Put(Tuple{j, j * 2}, j)
 				}
 			}
 		})
@@ -69,10 +71,9 @@ func BenchmarkTupleKeyMapPreSizing(b *testing.B) {
 		b.Run(fmt.Sprintf("WithPresize_%d", size), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				m := NewTupleKeyMapWithCapacity(size)
+				m := NewTupleKeyMap(positions, positions, size)
 				for j := 0; j < size; j++ {
-					key := NewTupleKeyFull(Tuple{j, j * 2})
-					m.Put(key, j)
+					m.Put(Tuple{j, j * 2}, j)
 				}
 			}
 		})

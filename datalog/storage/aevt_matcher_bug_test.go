@@ -130,7 +130,7 @@ func TestAEVTMatcherBug(t *testing.T) {
 					if scanned, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 						datomsScanned = scanned
 					}
-					if opened, ok := event.Data[annotations.KeyScansOpened].(int); ok {
+					if opened, ok := event.Data[annotations.KeyRunsAddressed].(int); ok {
 						scansOpened = opened
 					}
 				}

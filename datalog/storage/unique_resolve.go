@@ -35,17 +35,25 @@ type uniqueWalkState struct {
 	// cancels stays in the store and in History, and physical deletion is
 	// Store.Retract.
 	//
-	// It is keyed by the value itself. Values are not all usable as Go map
-	// keys — []byte and vectors are not comparable — so this uses the engine's
-	// value-keyed map, which hashes content and settles collisions with
-	// datalog.ValuesEqual. Rendering the value to bytes for a key would mean
-	// reaching for a storage encoding to answer a value-domain question.
+	// It is keyed by the value itself, held as a one-tuple member. Values
+	// are not all usable as Go map keys — []byte and vectors are not
+	// comparable — so this uses the engine's tuple-keyed map, which hashes
+	// content and settles collisions with datalog.ValuesEqual
+	// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, L2). Rendering the value to
+	// bytes for a key would mean reaching for a storage encoding to answer a
+	// value-domain question.
 	removedAt *executor.TupleKeyMap
+	// probe is the one-tuple a read fills with the datom's value, so that
+	// a read allocates nothing.
+	probe executor.Tuple
 }
 
 // newUniqueWalkState constructs an empty walk state.
 func newUniqueWalkState() *uniqueWalkState {
-	return &uniqueWalkState{removedAt: executor.NewTupleKeyMap()}
+	return &uniqueWalkState{
+		removedAt: executor.NewTupleKeyMap([]int{0}, []int{0}, 0),
+		probe:     make(executor.Tuple, 1),
+	}
 }
 
 // walkApplyEntry applies the CRDT-unique walk rule to one entry. The
@@ -67,17 +75,18 @@ func newUniqueWalkState() *uniqueWalkState {
 // The supersession scan accrues into report; the decisions that short-circuit
 // before it read no index.
 func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute, report *scanReport) (walkEntryDecision, error) {
+	state.probe[0] = datom.V
 	if datom.Op == datalog.OpCRDTRemove {
-		existing, ok := state.removedAt.GetValue(datom.V)
+		existing, ok := state.removedAt.Get(state.probe)
 		if !ok || existing.(datalog.ElementID).Less(datom.Tx) {
-			state.removedAt.PutValue(datom.V, datom.Tx)
+			state.removedAt.Put(executor.Tuple{datom.V}, datom.Tx)
 		}
 		return walkEntryRemoved, nil
 	}
 
 	// Set (or default OpNone). Check if this V has been removed at a
 	// higher Tx by a later entry in this entity's own history.
-	if rTx, ok := state.removedAt.GetValue(datom.V); ok && datom.Tx.Less(rTx.(datalog.ElementID)) {
+	if rTx, ok := state.removedAt.Get(state.probe); ok && datom.Tx.Less(rTx.(datalog.ElementID)) {
 		return walkEntrySkip, nil
 	}
 

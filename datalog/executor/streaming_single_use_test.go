@@ -73,7 +73,7 @@ func TestStreamingRelationSingleUseInJoin(t *testing.T) {
 	result := HashJoin(rel1, rel2, joinSymbols)
 
 	// Verify result
-	if result.Size() != 2 {
-		t.Fatalf("Expected 2 joined tuples, got %d", result.Size())
+	if tuples := collectTuples(result); len(tuples) != 2 {
+		t.Fatalf("Expected 2 joined tuples, got %d", len(tuples))
 	}
 }

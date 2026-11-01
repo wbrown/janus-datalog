@@ -205,7 +205,7 @@ func testBindingDrivenStrategiesReportTheirFunnel(t *testing.T, mode optimizerMo
 			// index without its bound leaves that unanswerable.
 			if !tc.namesRun {
 				require.NotContains(t, complete.Data, annotations.KeyIndex,
-					"%s opens a scan per key or per binding; one index here would name one of many",
+					"%s addresses a run per key or per binding; one index here would name one of many",
 					tc.strategy)
 				require.NotContains(t, complete.Data, annotations.KeyBound)
 				return
@@ -376,7 +376,7 @@ func testPerBindingScanReportsOneCountedEvent(t *testing.T, mode optimizerMode) 
 	require.Len(t, complete, 1,
 		"the path reports once for the whole run; %d events means it reports per binding", len(complete))
 
-	require.Equal(t, bindingDrivenEntities, complete[0].Data[annotations.KeyScansOpened],
+	require.Equal(t, bindingDrivenEntities, complete[0].Data[annotations.KeyRunsAddressed],
 		"the count is the datum a per-binding path owes its reader")
 }
 

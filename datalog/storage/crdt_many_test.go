@@ -200,7 +200,7 @@ func TestResolveAddWinsSetDirect(t *testing.T) {
 
 			if len(result.Members) != 1 {
 				t.Errorf("Expected 1 member (add is newer), got %d: %v", len(result.Members), result.Members)
-			} else if _, ok := result.Members["warrior"]; !ok {
+			} else if _, ok := result.Members[memberKey("warrior")]; !ok {
 				t.Errorf("Expected 'warrior' to be in set, got %v", result.Members)
 			}
 		})
@@ -256,7 +256,7 @@ func TestResolveAddWinsSameLamport(t *testing.T) {
 			// At same Lamport, add should win
 			if len(result.Members) != 1 {
 				t.Errorf("Expected 1 member (add-wins at same Lamport), got %d: %v", len(result.Members), result.Members)
-			} else if _, ok := result.Members["warrior"]; !ok {
+			} else if _, ok := result.Members[memberKey("warrior")]; !ok {
 				t.Errorf("Expected 'warrior' to be in set, got %v", result.Members)
 			}
 		})
@@ -1130,9 +1130,9 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 			if len(result1.Members) != 3 {
 				t.Errorf("Expected 3 initial members, got %d", len(result1.Members))
 			}
-			_, hasW := result1.Members["warrior"]
-			_, hasV := result1.Members["veteran"]
-			_, hasL := result1.Members["leader"]
+			_, hasW := result1.Members[memberKey("warrior")]
+			_, hasV := result1.Members[memberKey("veteran")]
+			_, hasL := result1.Members[memberKey("leader")]
 			if !hasW || !hasV || !hasL {
 				t.Errorf("Initial members incorrect: %v", result1.Members)
 			}
@@ -1155,10 +1155,10 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 			if len(result2.Members) != 2 {
 				t.Errorf("Expected 2 members after Set, got %d: %v", len(result2.Members), result2.Members)
 			}
-			_, hasMage := result2.Members["mage"]
-			_, hasWarrior := result2.Members["warrior"]
-			_, hasVeteran := result2.Members["veteran"]
-			_, hasLeader := result2.Members["leader"]
+			_, hasMage := result2.Members[memberKey("mage")]
+			_, hasWarrior := result2.Members[memberKey("warrior")]
+			_, hasVeteran := result2.Members[memberKey("veteran")]
+			_, hasLeader := result2.Members[memberKey("leader")]
 			if !hasMage {
 				t.Error("Expected 'mage' to be in set")
 			}

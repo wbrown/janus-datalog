@@ -49,9 +49,11 @@ func TestDatabasePlanCache(t *testing.T) {
 			// Clear cache to start fresh
 			db.ClearPlanCache()
 
-			// First execution should miss the cache: the query's plan and the
-			// plan of the scope its second pattern runs over the first's
-			// streaming group, each planned under its own text.
+			// First execution should miss the cache: the query's plan and,
+			// planned inside it by the planner's walk, the window scope its
+			// second pattern runs over the first's streaming group, each
+			// under its own text. The run reads the window scope from the
+			// cache, a hit.
 			tuples1, err := executor.CollectTuples(exec1.Execute(q))
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
@@ -78,10 +80,11 @@ func TestDatabasePlanCache(t *testing.T) {
 				t.Errorf("Expected 2 results, got %d", len(tuples2))
 			}
 
-			// Check cache stats - should now have 2 hits
+			// Check cache stats - should now have 3 hits: the first run's read
+			// of the window scope, and the second execution's query and scope
 			hits, misses, size = db.PlanCache().Stats()
-			if hits != 2 {
-				t.Errorf("Expected 2 hits, got %d", hits)
+			if hits != 3 {
+				t.Errorf("Expected 3 hits, got %d", hits)
 			}
 			if misses != 2 {
 				t.Errorf("Expected 2 misses (unchanged), got %d", misses)

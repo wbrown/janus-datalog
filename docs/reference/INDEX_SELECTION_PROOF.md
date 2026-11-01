@@ -207,9 +207,12 @@ resolution determines.
 removes all carry its own value, so the V-filtered run contains the whole
 resolution decision. Theorems 2 and 3 at selection time. The binding-driven
 match applies the same rule: a single bound V is post-validated when the
-attribute resolves as cardinality one, and V is the seek dimension among
-several bound positions only for a declared many
-(`docs/proposals/BOUND_VALUE_SEEK_PROOF.md`, T6).
+attribute resolves as cardinality one, for a binding at or below the
+matcher's boundary, and a binding above it on a constant attribute is probed
+against one resolved scan of the attribute under AETV
+(`docs/proposals/A_VALUE_BINDING_ABOVE_THE_BOUNDARY_SCANS_ONCE_PROOF.md`);
+V is the seek dimension among several bound positions only for a declared
+many (`docs/proposals/BOUND_VALUE_SEEK_PROOF.md`, T6).
 
 **Resolution behavior by cardinality**:
 - **CardinalityOne**: Post-validate with an EATV `(E,A)` run (LWW winner may have a different V)

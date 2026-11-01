@@ -7,31 +7,16 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-func TestTupleKeyMapPutIfAbsent(t *testing.T) {
-	m := NewTupleKeyMap()
-	key := NewTupleKeyFull(Tuple{datalog.NewIdentity("entity:1"), "value"})
-
-	if existed := m.PutIfAbsent(key, "first"); existed {
-		t.Fatal("first insertion reported an existing key")
+// An integer, a string of its digits and a byte slice are three keys of a
+// map over one value, each probed by a one-tuple holding an equal value.
+func TestTupleKeyMap_KeysOfOneValueAreToldApartByType(t *testing.T) {
+	m := NewTupleKeyMap([]int{0}, []int{0}, 0)
+	m.Put(Tuple{int64(5)}, "integer")
+	m.Put(Tuple{"5"}, "string")
+	m.Put(Tuple{[]byte{1, 2, 3}}, "bytes")
+	if m.Len() != 3 {
+		t.Fatalf("three keys of three types hold %d keys", m.Len())
 	}
-	if existed := m.PutIfAbsent(key, "second"); !existed {
-		t.Fatal("repeated insertion reported a new key")
-	}
-
-	got, ok := m.Get(key)
-	if !ok {
-		t.Fatal("inserted key was not found")
-	}
-	if got != "first" {
-		t.Fatalf("PutIfAbsent replaced the original value: got %v", got)
-	}
-}
-
-func TestTupleKeyMapSingleValueOperations(t *testing.T) {
-	m := NewTupleKeyMap()
-	m.PutValue(int64(5), "integer")
-	m.PutValue("5", "string")
-	m.PutValue([]byte{1, 2, 3}, "bytes")
 
 	for _, test := range []struct {
 		key  interface{}
@@ -41,7 +26,7 @@ func TestTupleKeyMapSingleValueOperations(t *testing.T) {
 		{key: "5", want: "string"},
 		{key: []byte{1, 2, 3}, want: "bytes"},
 	} {
-		got, ok := m.GetValue(test.key)
+		got, ok := m.Get(Tuple{test.key})
 		if !ok {
 			t.Fatalf("single-value key %v was not found", test.key)
 		}

@@ -6,11 +6,11 @@ import (
 
 // SetResolutionResult contains the resolved set membership and metadata
 type SetResolutionResult struct {
-	// Members maps hashable keys to original Go values in the set.
-	// For most types the key equals the value.
-	// For []byte, the key is string(bytes) but the value is the original []byte.
+	// Members holds each member's original Go value under its memberKey, the
+	// one key per value under datalog.ValuesEqual, so a lookup keyed through
+	// memberKey finds a member by any representation of its value.
 	// Iteration: for _, v := range Members
-	Members map[interface{}]interface{}
+	Members map[string]interface{}
 
 	// Present reports whether the (E, A) carries any datom at all within this
 	// matcher's temporal bound, and it is the resolved answer to whether the
@@ -173,14 +173,18 @@ type addWinsAccumulator struct {
 func newAddWinsAccumulator(m *PatternMatcher) *addWinsAccumulator {
 	return &addWinsAccumulator{
 		matcher: m,
-		result:  &SetResolutionResult{Members: make(map[interface{}]interface{})},
+		result:  &SetResolutionResult{Members: make(map[string]interface{})},
 		states:  make(map[string]*addWinsState),
 	}
 }
 
-// observeSpan records one entry from its key-encoded value span. The span
-// may alias iterator memory: the lookup does not allocate, and the span is
-// copied once on first sight of a distinct value.
+// observeSpan records one entry from its key-encoded value span, the type
+// tag and the value's encoding as the key holds it: the value's memberKey
+// for a value the encoder stores raw, and the compressed bytes or the blob
+// hash under their own tags past the compression threshold. The span keys
+// the state and nothing else; finish holds the member under its memberKey.
+// The span may alias iterator memory: the lookup does not allocate, and the
+// span is copied once on first sight of a distinct value.
 func (a *addWinsAccumulator) observeSpan(vSpan []byte, tx datalog.ElementID, op datalog.CRDTOp) {
 	if a.matcher.shouldFilterTx(tx) {
 		return
@@ -206,9 +210,7 @@ func (a *addWinsAccumulator) observeDatom(datom *datalog.Datom) {
 	if datom.Tx.Compare(a.result.MaxElementID) > 0 {
 		a.result.MaxElementID = datom.Tx
 	}
-	vType := byte(datalog.Type(datom.V))
-	vBytes := datalog.ValueBytes(datom.V)
-	valueKey := string(append([]byte{vType}, vBytes...))
+	valueKey := memberKey(datom.V)
 	state, exists := a.states[valueKey]
 	if !exists {
 		state = &addWinsState{value: datom.V}
@@ -219,7 +221,8 @@ func (a *addWinsAccumulator) observeDatom(datom *datalog.Datom) {
 
 // finish resolves each value's membership using add-wins semantics.
 // Members observed as spans decode here, through blobs — only survivors
-// pay for a value decode.
+// pay for a value decode. A member is held under the memberKey of its
+// decoded value, whatever span its state was keyed by.
 func (a *addWinsAccumulator) finish(blobs BlobReader) (*SetResolutionResult, error) {
 	// states holds one entry per distinct value observed within the temporal
 	// bound, from an add or a remove alike, so a non-empty map is exactly "this
@@ -255,11 +258,7 @@ func (a *addWinsAccumulator) finish(blobs BlobReader) (*SetResolutionResult, err
 			}
 			value = decoded
 		}
-		key := value
-		if b, ok := key.([]byte); ok {
-			key = string(b) // []byte is not hashable as a Go map key
-		}
-		a.result.Members[key] = value
+		a.result.Members[memberKey(value)] = value
 	}
 
 	return a.result, nil

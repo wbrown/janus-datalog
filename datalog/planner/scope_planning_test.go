@@ -217,9 +217,19 @@ func TestPlanInvocation_PlansTheBodiesAnInvocationRuns(t *testing.T) {
 		require.NoError(t, err)
 		base, recursive := rs.Rules(follows)[0], rs.Rules(follows)[1]
 		require.True(t, heldBody(p, rs, base, base.Body), "the base rule's plain body")
-		require.True(t, heldBody(p, rs, recursive, markDelta(recursive.Body, map[query.Symbol]bool{follows: true}, 0)), "the recursive rule's delta copy")
+		copied, _ := markDelta(recursive.Body, map[query.Symbol]bool{follows: true}, 0)
+		require.True(t, heldBody(p, rs, recursive, copied), "the recursive rule's delta copy")
+		// The delta leads the copy, so its pattern stands after it and
+		// windows over the delta's symbols (DELTA_LEADS_ITS_COPY_PROOF.md).
+		pattern, delta := copied[0], copied[1]
+		framing := WindowFraming(query.ScopeOf(pattern, rs).Provides, query.ScopeOf(delta, rs).Provides)
+		framing.Carried = framing.CarriedBy(query.ScopeOf(delta, rs).Provides)
+		for _, frame := range framing.Branches([][]query.Clause{{pattern}}, rs) {
+			_, held := p.cache.GetWithOptions(frame.Scope.Query(), query.Bindings{Rules: rs, Held: query.HeldByFixpoint}, p.options)
+			require.True(t, held, "the window scope of the recursive copy's pattern over the delta, under the body's bindings")
+		}
 		_, _, size := p.cache.Stats()
-		require.Equal(t, 2, size, "the two bodies and nothing else")
+		require.Equal(t, 3, size, "the two bodies, the window scope of the recursive copy's pattern, and nothing else")
 	})
 	t.Run("a held predicate under a body a fixpoint runs", func(t *testing.T) {
 		p := planner()
@@ -247,5 +257,84 @@ func TestPlanInvocation_PlansTheBodiesAnInvocationRuns(t *testing.T) {
 		require.Nil(t, planned, "the rewrite decides each site itself")
 		_, _, size := p.cache.Stats()
 		require.Equal(t, 0, size, "the rewrite decides each site itself")
+	})
+}
+
+// planFormScopes plans the window scope of every windowable clause, the
+// frame a run reads when the clause's group streams
+// (docs/proposals/EXECUTION_PLANS_NOTHING_PROOF.md T1, T5): a pattern after a
+// pattern binding one of its symbols is planned over that symbol with its
+// other symbol as the find, an invocation after such a pattern likewise, and
+// a window scope's own clause, standing after scope/required alone, is
+// planned no window scope of its own.
+func TestPlanFormScopes_PlansTheWindowScopeOfAWindowableClause(t *testing.T) {
+	e := datalog.NewSymbol("?e")
+	planner := func() *ClauseBasedPlanner {
+		return NewClauseBasedPlanner(nil, PlannerOptions{Cache: NewPlanCache(10, 0)})
+	}
+	phasesOf := func(t *testing.T, text string, rs *query.RuleSet) []RealizedPhase {
+		q, err := parser.ParseQuery(text)
+		require.NoError(t, err)
+		prepared, err := query.Prepare(q, rs)
+		require.NoError(t, err)
+		phased, err := NewClauseBasedPlanner(nil, PlannerOptions{}).Plan(prepared, query.Bindings{Rules: rs}, nil)
+		require.NoError(t, err)
+		return phased.Phases
+	}
+	t.Run("a pattern after a pattern binding one of its symbols", func(t *testing.T) {
+		phases := phasesOf(t, `[:find ?e ?b :where [?e :t/k ?a] [?e :t/q ?b]]`, nil)
+		require.Len(t, phases, 1)
+		second := phases[0].Query.Where[1].(*query.DataPattern)
+		var other query.Symbol
+		for _, sym := range second.Symbols() {
+			if sym != e {
+				other = sym
+			}
+		}
+		p := planner()
+		_, err := p.planFormScopes(phases, query.Bindings{}, nil)
+		require.NoError(t, err)
+		window := Scope{Required: []query.Symbol{e}, Find: []query.FindElement{query.FindVariable{Symbol: other}}, Clauses: []query.Clause{second}}
+		require.True(t, heldPlan(p, window), "the second pattern's window scope over ?e")
+		_, _, size := p.cache.Stats()
+		require.Equal(t, 1, size, "the second pattern's window scope and nothing else")
+	})
+	t.Run("an invocation after a pattern binding its argument", func(t *testing.T) {
+		rs, err := parser.ParseRules(`[[(r ?a ?b) [?a :t/p ?b]]]`)
+		require.NoError(t, err)
+		y := datalog.NewSymbol("?y")
+		phases := phasesOf(t, `[:find ?e ?y :in $ % :where [?e :t/k ?a] (r ?e ?y)]`, rs)
+		require.Len(t, phases, 1)
+		inv := phases[0].Query.Where[1].(*query.RuleInvocation)
+		p := planner()
+		_, err = p.planFormScopes(phases, query.Bindings{Rules: rs}, nil)
+		require.NoError(t, err)
+		window := Scope{Required: []query.Symbol{e}, Find: []query.FindElement{query.FindVariable{Symbol: y}}, Clauses: []query.Clause{inv}}
+		_, held := p.cache.GetWithOptions(window.Query(), query.Bindings{Rules: rs}, p.options)
+		require.True(t, held, "the invocation's window scope over ?e")
+	})
+	t.Run("a clause sharing no bound symbol", func(t *testing.T) {
+		phases := phasesOf(t, `[:find ?e ?b :where [?e :t/k ?a] [?x :t/q ?b]]`, nil)
+		p := planner()
+		_, err := p.planFormScopes(phases, query.Bindings{}, nil)
+		require.NoError(t, err)
+		_, _, size := p.cache.Stats()
+		require.Equal(t, 0, size, "a clause sharing no bound symbol never windows and is planned no window scope")
+	})
+	t.Run("a window scope's own clause", func(t *testing.T) {
+		phases := phasesOf(t, `[:find ?e ?b :where [?e :t/k ?a] [?e :t/q ?b]]`, nil)
+		second := phases[0].Query.Where[1].(*query.DataPattern)
+		var other query.Symbol
+		for _, sym := range second.Symbols() {
+			if sym != e {
+				other = sym
+			}
+		}
+		window := Scope{Required: []query.Symbol{e}, Find: []query.FindElement{query.FindVariable{Symbol: other}}, Clauses: []query.Clause{second}}
+		p := planner()
+		_, err := p.PlanScope(window, query.Bindings{}, nil)
+		require.NoError(t, err)
+		_, _, size := p.cache.Stats()
+		require.Equal(t, 1, size, "the window scope itself and no window scope of its clause")
 	})
 }

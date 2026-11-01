@@ -221,6 +221,80 @@ func TestEvaluateRules_TwoRecursiveOccurrences(t *testing.T) {
 	}
 }
 
+// A pass runs each delta copy whose marked predicate gained tuples since the
+// copy last ran, in the pass order, and no other copy
+// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, T5).
+// Over two mutually recursive predicates, each body's one delta copy marked
+// on the other, the pass order is even's copy, marked on odd, then odd's
+// copy, marked on even, so a pass begins even's copy's phases when the pass
+// before added to odd, and odd's copy's phases when the pass itself added to
+// even.
+func TestRunStratum_RunsTheCopiesOfThePredicatesThatGainedTuples(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, `[[(odd ?a ?b) [?a :page/next ?b]]
+	                     [(even ?a ?c) (odd ?a ?b) [?b :page/next ?c]]
+	                     [(odd ?a ?c) (even ?a ?b) [?b :page/next ?c]]]`)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (odd ?x ?y)]`)
+	odd, even := datalog.NewSymbol("odd"), datalog.NewSymbol("even")
+	oddPairs := map[[2]datalog.Identity]bool{}
+	for i := 1; i <= 6; i++ {
+		for j := i + 1; j <= 6; j += 2 {
+			oddPairs[[2]datalog.Identity{page(i), page(j)}] = true
+		}
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var events []annotations.Event
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			require.NoError(t, err)
+			requireSamePairs(t, identityPairs(t, result), oddPairs)
+
+			// The phases of each copy, by the predicate the copy is marked
+			// on: the copy of even's body reads odd's delta, and the delta
+			// copy of odd's second body reads even's.
+			bodies, err := planner.PlanStratum(exec.planner, rs, rs.Strata()[0], nil)
+			require.NoError(t, err)
+			require.Len(t, bodies.Delta, 2, "one delta copy per body with an occurrence")
+			phases := map[query.Symbol]int{}
+			for _, body := range bodies.Delta {
+				marked := odd
+				if body.Rule.Name == odd {
+					marked = even
+				}
+				phases[marked] += len(body.Plan.Phases)
+			}
+
+			var previous map[query.Symbol]int
+			begun, compared := 0, 0
+			for _, e := range events {
+				switch e.Name {
+				case annotations.PhaseBegin:
+					begun++
+				case annotations.RulesIteration:
+					added := e.Data["delta"].(map[query.Symbol]int)
+					if previous != nil {
+						want := 0
+						if previous[odd] > 0 {
+							want += phases[odd]
+						}
+						if added[even] > 0 {
+							want += phases[even]
+						}
+						require.Equal(t, want, begun, "pass %v: the phases begun are even's copy's when the pass before added to odd and odd's copy's when this pass added to even; before %v, added %v", e.Data["iteration"], previous, added)
+						compared++
+					}
+					previous = added
+					begun = 0
+				}
+			}
+			require.GreaterOrEqual(t, compared, 3, "the chain's odd and even paths alternate over several passes")
+		})
+	}
+}
+
 func TestEvaluateRules_StratifiedNegation(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(chainDatoms(4))
 	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
@@ -310,7 +384,7 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 	variable := func(s query.Symbol) query.PatternElement { return query.Variable{Name: s} }
 
 	t.Run("renames the positions to the arguments", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(variable(x), variable(y)), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(variable(x), variable(y)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -322,7 +396,7 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 		}
 	})
 	t.Run("a constant filters its position", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(variable(x), query.Constant{Value: page(3)}), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(variable(x), query.Constant{Value: page(3)}), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -335,7 +409,7 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 		}
 	})
 	t.Run("a repeated variable filters to equal positions", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(variable(x), variable(x)), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(variable(x), variable(x)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -345,7 +419,7 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 		}
 	})
 	t.Run("a blank is projected away", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(query.Blank{}, variable(y)), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(query.Blank{}, variable(y)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,7 +436,7 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 	})
 	t.Run("an environment-bound argument filters to its value", func(t *testing.T) {
 		env := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{page(1)}})
-		rel, err := exec.executeRuleInvocation(ctx.WithEnvironment(env), invoke(variable(x), variable(y)), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx.WithEnvironment(env), invoke(variable(x), variable(y)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -373,7 +447,7 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 	})
 	t.Run("an invocation of the delta symbol reads the delta", func(t *testing.T) {
 		inv := &query.RuleInvocation{Name: query.DeltaSymbol(follows), Args: []query.PatternElement{variable(x), variable(y)}}
-		rel, err := exec.executeRuleInvocation(ctx, inv, nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, inv, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -382,14 +456,14 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 		}
 	})
 	t.Run("an all-constant invocation is a verdict", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(query.Constant{Value: page(1)}, query.Constant{Value: page(2)}), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(query.Constant{Value: page(1)}, query.Constant{Value: page(2)}), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(rel.Symbols()) != 0 || rel.Size() != 1 {
 			t.Errorf("a held fact is the zero-symbol unit, got %v with %d tuples", rel.Symbols(), rel.Size())
 		}
-		rel, err = exec.executeRuleInvocation(ctx, invoke(query.Constant{Value: page(2)}, query.Constant{Value: page(1)}), nil)
+		rel, _, err = exec.executeRuleInvocation(ctx, invoke(query.Constant{Value: page(2)}, query.Constant{Value: page(1)}), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -398,7 +472,7 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 		}
 	})
 	t.Run("a predicate no scope derived and no rule set can derive is an error", func(t *testing.T) {
-		_, err := exec.executeRuleInvocation(NewContext(), invoke(variable(x), variable(y)), nil)
+		_, _, err := exec.executeRuleInvocation(NewContext(), invoke(variable(x), variable(y)), nil)
 		if err == nil {
 			t.Error("expected an error naming the invocation and the missing rule set")
 		}
@@ -424,7 +498,7 @@ func TestExecuteRuleInvocation_ReadsThePredicateInPlace(t *testing.T) {
 	}
 	allocations := func(ctx *Context, inv *query.RuleInvocation) float64 {
 		return testing.AllocsPerRun(10, func() {
-			if _, err := exec.executeRuleInvocation(ctx, inv, nil); err != nil {
+			if _, _, err := exec.executeRuleInvocation(ctx, inv, nil); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -752,17 +826,20 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 				}
 				for i := 0; i < f.arity; i++ {
 					bound := mustParse(t, fmt.Sprintf(`[:find %s :in $ %% %s :where (%s %s)]`, head, vars[i], f.predicate, head))
-					values := NewTupleKeyMap()
+					values := NewTupleSet([]int{i}, []int{i}, 0)
 					for _, tuple := range all {
-						if values.PutIfAbsent(NewTupleKeyFull(Tuple{tuple[i]}), struct{}{}) {
+						_, hash, held := values.Find(tuple)
+						if held {
 							continue
 						}
+						values.Add(tuple, hash)
 						v := tuple[i]
-						want := NewTupleKeyMap()
+						positions := allPositions(len(tuple))
+						want := NewTupleSet(positions, positions, 0)
 						wantCount := 0
 						for _, w := range all {
 							if datalog.ValuesEqual(w[i], v) {
-								want.PutIfAbsent(NewTupleKeyFull(w), struct{}{})
+								want.Add(w, hashTuplePositions(w, positions))
 								wantCount++
 							}
 						}
@@ -779,7 +856,7 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 							t.Errorf("position %d bound to %v: got %d tuples, want %d", i, v, len(got), wantCount)
 						}
 						for _, g := range got {
-							if !want.Exists(NewTupleKeyFull(g)) {
+							if !want.Probe(g) {
 								t.Errorf("position %d bound to %v: %v is not among the whole invocation's tuples", i, v, g)
 							}
 						}
@@ -832,16 +909,18 @@ func tuplesBoundTo(t *testing.T, exec *Executor, rs *query.RuleSet, q *query.Que
 // pages given.
 func requireSamePages(t *testing.T, label string, got []Tuple, want ...datalog.Identity) {
 	t.Helper()
-	have := NewTupleKeyMap()
+	have := NewTupleSet([]int{0}, []int{0}, len(got))
 	for _, tuple := range got {
-		have.PutIfAbsent(NewTupleKeyFull(tuple), struct{}{})
+		if _, hash, held := have.Find(tuple); !held {
+			have.Add(tuple, hash)
+		}
 	}
 	if len(got) != len(want) {
 		t.Errorf("%s = %v, want %v", label, got, want)
 		return
 	}
 	for _, p := range want {
-		if !have.Exists(NewTupleKeyFull(Tuple{p})) {
+		if !have.Probe(Tuple{p}) {
 			t.Errorf("%s = %v, want %v", label, got, want)
 			return
 		}
@@ -1322,7 +1401,7 @@ func TestInvocationBindsEachArgumentByTheHeadsSymbolWhateverTheSourcesLayout(t *
 	every := map[[2]datalog.Identity]bool{{page(1), page(2)}: true, {page(2), page(3)}: true, {page(3), page(3)}: true}
 
 	t.Run("distinct free variables over a materialized source", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(follows, variable(x), variable(y)), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(follows, variable(x), variable(y)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1330,14 +1409,14 @@ func TestInvocationBindsEachArgumentByTheHeadsSymbolWhateverTheSourcesLayout(t *
 	})
 	t.Run("distinct free variables over a streaming source", func(t *testing.T) {
 		streaming := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{follows: NewStreamingRelation([]query.Symbol{b, a}, held.Iterator())})
-		rel, err := exec.executeRuleInvocation(streaming, invoke(follows, variable(x), variable(y)), nil)
+		rel, _, err := exec.executeRuleInvocation(streaming, invoke(follows, variable(x), variable(y)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		requireSamePairs(t, pairsBySymbol(t, rel), every)
 	})
 	t.Run("a constant fixes the head's position", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(follows, variable(x), query.Constant{Value: page(3)}), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(follows, variable(x), query.Constant{Value: page(3)}), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1354,7 +1433,7 @@ func TestInvocationBindsEachArgumentByTheHeadsSymbolWhateverTheSourcesLayout(t *
 		}
 	})
 	t.Run("a repeated variable equates the head's positions", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(follows, variable(x), variable(x)), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(follows, variable(x), variable(x)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1367,14 +1446,14 @@ func TestInvocationBindsEachArgumentByTheHeadsSymbolWhateverTheSourcesLayout(t *
 		}
 	})
 	t.Run("an all-constant invocation is the verdict on the head's positions", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(follows, query.Constant{Value: page(1)}, query.Constant{Value: page(2)}), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(follows, query.Constant{Value: page(1)}, query.Constant{Value: page(2)}), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if rel.Size() != 1 {
 			t.Errorf("page1→page2 is held, so the verdict is the unit relation, got %d tuples", rel.Size())
 		}
-		rel, err = exec.executeRuleInvocation(ctx, invoke(follows, query.Constant{Value: page(2)}, query.Constant{Value: page(1)}), nil)
+		rel, _, err = exec.executeRuleInvocation(ctx, invoke(follows, query.Constant{Value: page(2)}, query.Constant{Value: page(1)}), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1383,7 +1462,7 @@ func TestInvocationBindsEachArgumentByTheHeadsSymbolWhateverTheSourcesLayout(t *
 		}
 	})
 	t.Run("the delta symbol is read by the predicate's head", func(t *testing.T) {
-		rel, err := exec.executeRuleInvocation(ctx, invoke(query.DeltaSymbol(follows), variable(x), variable(y)), nil)
+		rel, _, err := exec.executeRuleInvocation(ctx, invoke(query.DeltaSymbol(follows), variable(x), variable(y)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1392,7 +1471,7 @@ func TestInvocationBindsEachArgumentByTheHeadsSymbolWhateverTheSourcesLayout(t *
 	t.Run("the required run is read by its own symbols", func(t *testing.T) {
 		run := NewMaterializedRelation([]query.Symbol{y, x}, []Tuple{{page(2), page(1)}})
 		scoped := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{query.ScopeRequired: run})
-		rel, err := exec.executeRuleInvocation(scoped, invoke(query.ScopeRequired, variable(x), variable(y)), nil)
+		rel, _, err := exec.executeRuleInvocation(scoped, invoke(query.ScopeRequired, variable(x), variable(y)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1414,7 +1493,7 @@ func TestInvocationErrorsOnASourceLackingAHeadSymbol(t *testing.T) {
 	t.Run("a predicate's relation", func(t *testing.T) {
 		held := NewMaterializedRelation([]query.Symbol{p, q}, []Tuple{{page(1), page(2)}})
 		ctx := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{follows: held})
-		_, err := exec.executeRuleInvocation(ctx, &query.RuleInvocation{Name: follows, Args: args}, nil)
+		_, _, err := exec.executeRuleInvocation(ctx, &query.RuleInvocation{Name: follows, Args: args}, nil)
 		if err == nil {
 			t.Fatal("a relation over [?p ?q] held under follows, whose head is (follows ?a ?b), lacks ?a: expected an error naming it")
 		}
@@ -1425,7 +1504,7 @@ func TestInvocationErrorsOnASourceLackingAHeadSymbol(t *testing.T) {
 	t.Run("the required run", func(t *testing.T) {
 		run := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{page(1)}})
 		ctx := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{query.ScopeRequired: run})
-		_, err := exec.executeRuleInvocation(ctx, &query.RuleInvocation{Name: query.ScopeRequired, Args: args}, nil)
+		_, _, err := exec.executeRuleInvocation(ctx, &query.RuleInvocation{Name: query.ScopeRequired, Args: args}, nil)
 		if err == nil {
 			t.Fatal("a run over [?x] under (scope/required ?x ?y) lacks ?y: expected an error naming it")
 		}

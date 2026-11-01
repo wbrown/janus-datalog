@@ -126,7 +126,9 @@ func TestQueryIdentity_EveryPartDecidesIt(t *testing.T) {
 		{"a pattern's attribute", func(q *Query) {
 			q.Where[0] = &DataPattern{Elements: []PatternElement{Variable{Name: e}, Constant{Value: other}, Variable{Name: v}}}
 		}},
-		{"a pattern's source", func(q *Query) { q.Where[0] = &DataPattern{Source: datalog.SymDollar, Elements: q.Where[0].(*DataPattern).Elements} }},
+		{"a pattern's source", func(q *Query) {
+			q.Where[0] = &DataPattern{Source: datalog.SymDollar, Elements: q.Where[0].(*DataPattern).Elements}
+		}},
 		{"a pattern's blank", func(q *Query) {
 			q.Where[0] = &DataPattern{Elements: []PatternElement{Variable{Name: e}, Constant{Value: name}, Blank{}}}
 		}},
@@ -156,7 +158,9 @@ func TestQueryIdentity_EveryPartDecidesIt(t *testing.T) {
 		{"a database predicate's attribute", func(q *Query) {
 			q.Where[9] = &DatabaseFunctionPredicate{Function: &MissingFunction{Entity: VariableTerm{Symbol: e}, Attr: other}}
 		}},
-		{"a transaction range's bound", func(q *Query) { q.Where[10] = &TxRangePredicate{TxVar: q.Where[10].(*TxRangePredicate).TxVar, Low: 1, High: 10} }},
+		{"a transaction range's bound", func(q *Query) {
+			q.Where[10] = &TxRangePredicate{TxVar: q.Where[10].(*TxRangePredicate).TxVar, Low: 1, High: 10}
+		}},
 		{"an arithmetic operator", func(q *Query) {
 			q.Where[11] = &Expression{Function: ArithmeticFunction{Op: datalog.SymSubtract, Args: []Term{VariableTerm{Symbol: v}, ConstantTerm{Value: int64(1)}}}, Binding: n}
 		}},
@@ -174,9 +178,13 @@ func TestQueryIdentity_EveryPartDecidesIt(t *testing.T) {
 		{"a get-else's default", func(q *Query) {
 			q.Where[14] = &Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: name, Default: "some"}, Binding: CollectionBinding{Variable: w}}
 		}},
-		{"a ground's vector", func(q *Query) { q.Where[15] = &Expression{Function: GroundFunction{Value: []interface{}{int64(1), "three"}}} }},
+		{"a ground's vector", func(q *Query) {
+			q.Where[15] = &Expression{Function: GroundFunction{Value: []interface{}{int64(1), "three"}}}
+		}},
 		{"a not's clause", func(q *Query) { q.Where[16] = &NotClause{Clauses: []Clause{pattern(e, v)}} }},
-		{"a not-join's header", func(q *Query) { q.Where[17] = &NotJoinClause{RequiredVars: []Symbol{v}, Clauses: []Clause{pattern(e, w)}} }},
+		{"a not-join's header", func(q *Query) {
+			q.Where[17] = &NotJoinClause{RequiredVars: []Symbol{v}, Clauses: []Clause{pattern(e, w)}}
+		}},
 		{"an or's branch", func(q *Query) { q.Where[18] = &OrClause{Branches: [][]Clause{{pattern(e, v)}, {pattern(w, e)}}} }},
 		{"an or's branch removed", func(q *Query) { q.Where[18] = &OrClause{Branches: [][]Clause{{pattern(e, v)}}} }},
 		{"a form's kind", func(q *Query) { q.Where[18] = &OrDefaultClause{Branches: q.Where[18].(*OrClause).Branches} }},

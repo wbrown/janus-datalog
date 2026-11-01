@@ -85,7 +85,20 @@ Types in `datalog/query`:
 - `RuleSet`: the rules grouped by name, each predicate's arity and required positions, the strata, and the attribute roster the bodies name, collected once. `Required` reports a predicate's required positions. `planner.Rewrite` (`datalog/planner/magic.go`) rewrites the set for a binding pattern, in the planner's order (§1.3).
 - `RuleInvocation`: a clause holding the name and the arguments. Its scope comes from the rule set the query runs with. `ScopeOf(clause, rules)` makes the variables at the predicate's required positions mandatory correlates and provides the rest.
 - `RulesInput`: the `%` input spec.
-- The engine mints predicates in namespaces of its own. `adorned.bf/reach` is `reach` adorned with a binding pattern. `magic.bf/reach` is its magic predicate. `delta/reach` holds the tuples the last iteration of its stratum added (`DeltaSymbol`). `scope/required` is the required run a nested scope runs over (`ScopeRequired`). The kind leads the namespace, and the predicate's own namespace follows it. It mints variables the same way: `?unify/x.2` is a pattern's later occurrence of `?x` (`UnifiedVariable`), `?scope/input.2` the holder of a collection input's whole value (`ScopeInput`), and `?magic.bf/reach.0` a seed predicate's head position. The namespaces are the engine's for predicates and variables alike: `NewRuleSet` refuses a rule set that declares a predicate in one of them or names a variable in one, and `Prepare` refuses a query naming a variable in one, each before the inference writes the engine's own, naming the variable, the namespace and the repair (`engineNamespace`, `EngineNamespaceError`). `ParseQuery` and `qb.Build` accept the spelling, since the prepared text carries the engine's variables and every phase the planner emits parses back through `ParseQuery` (`NESTED_SCOPES_AS_QUERIES.md` §5.5). The alternative, minting names no user text can spell, is excluded by that parse-back.
+- The engine mints predicates in namespaces of its own. The kind leads the namespace, and the predicate's own namespace follows it.
+  - `adorned.bf/reach` is `reach` adorned with a binding pattern.
+  - `magic.bf/reach` is its magic predicate.
+  - `delta/reach` holds, in a copy, the tuples `reach` gained since the copy last ran (`DeltaSymbol`).
+  - `scope/required` is the required run a nested scope runs over (`ScopeRequired`).
+- The engine mints variables the same way.
+  - `?unify/x.2` is a pattern's later occurrence of `?x` (`UnifiedVariable`).
+  - `?scope/input.2` is the holder of a collection input's whole value (`ScopeInput`).
+  - `?magic.bf/reach.0` is a seed predicate's head position.
+- The namespaces are the engine's for predicates and variables alike.
+  - `NewRuleSet` refuses a rule set that declares a predicate in one of them or names a variable in one.
+  - `Prepare` refuses a query naming a variable in one.
+  - Each refuses before the inference writes the engine's own, naming the variable, the namespace and the repair (`engineNamespace`, `EngineNamespaceError`).
+- `ParseQuery` and `qb.Build` accept the spelling, since the prepared text carries the engine's variables and every phase the planner emits parses back through `ParseQuery` (`NESTED_SCOPES_AS_QUERIES.md` §5.5). The alternative, minting names no user text can spell, is excluded by that parse-back.
 
 `parser.ParseRules` parses a rule set. `parseInputSpec` accepts `%`. A list clause whose head names no reserved form is an invocation. An invocation requires `%` in its query's own `:in`, and so does a subquery call that passes `%`. The query builder has `qb.Rules`, `qb.Rule`, `qb.DefineRule`, `qb.RuleSet`, `qb.MustRuleSet` and `RuleBuilder.Require`. The CLI reads the `-in` value at the `%` position as rule text.
 
@@ -113,7 +126,7 @@ A clause with no visible selectivity is scheduled only when no other clause is s
 
 The planner's input is the query and those bindings. Every phase it returns declares `%` when one of the phase's own clauses uses `%`, by invoking a predicate or by passing `%` to a subquery. Every phase parses back to itself. The alternative is a clause mark the text does not render. Under it a phase does not parse back: a body passing only `%` printed a phase the parser refused.
 
-An invocation evaluates its predicate when its clause runs. The derived relation it reads is materialized (`derivedSet.relation`, `datalog/executor/rules.go`). Two alternatives are excluded. A subquery pattern has no inner query to run, since a fixpoint is not a query. Evaluation before planning derives the predicate whole and leaves the invocation to filter it, at the cost the closure measurement below prices.
+An invocation evaluates its predicate when its clause runs. The derived relation it reads is materialized (`derivedSet.relation`, `datalog/executor/rules.go`), a view of the predicate's set that carries nothing of the set. The set keeps an index over its tuples per key its joins read, and inside a body a join at an invocation of a held predicate probes the index and drains nothing of the view (`A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md`). Two alternatives are excluded. A subquery pattern has no inner query to run, since a fixpoint is not a query. Evaluation before planning derives the predicate whole and leaves the invocation to filter it, at the cost the closure measurement below prices.
 
 An invocation's bound positions are the ones holding a constant, or a variable the environment or a relation group binds. With none bound, the needed strata evaluate to a fixpoint and the invocation reads the predicate whole (`deriveInvocation`, `datalog/executor/rules.go`). There is one exception. When a needed stratum holds a predicate with required positions, the set is rewritten with the invocation's head all free, and each required predicate is adorned from the clauses before its invocation (`NESTED_SCOPES_AS_QUERIES.md` §5.5).
 
@@ -121,11 +134,15 @@ With some positions bound, the rule set is rewritten for the binding pattern. Fo
 
 Each predicate the bindings reach gets an adorned copy, `adorned.bf/reach`. A magic predicate, `magic.bf/reach`, guards it. The bound values, projected from the relation groups, seed the magic predicate. The rewritten set evaluates as any set does. The invocation reads the adorned predicate.
 
+A predicate the evaluation derives whole, an original predicate among those the invoked one needs, gets no copy and is read whole at every invocation of it (`A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md`).
+
+When the invoked predicate itself is derived whole, the evaluation runs the set as given.
+
 The bindings pass through each body in the planner's order of that body as a scope, and flow into the invocations after them. A subquery in a body is read as a scope of the rewrite, as a branch is. `magicRewriter.rewriteClauses` (`datalog/planner/magic.go`) walks the planned clauses (`NESTED_SCOPES_AS_QUERIES.md` §5.5). The non-monotone forms are a negation, a fallback form and an aggregating inner query. An invocation under one of them receives the bindings of the clauses before the first invocation of the rule's own stratum. That bound set is the sealed passing. So no magic rule depends, through such a form, on that stratum's adorned predicate (`NON_MONOTONE_FORMS_PROOF.md` T6).
 
 Some sites under a non-monotone form cannot be adorned. Either adorning the site would place its adorned predicate in the rule's own stratum, or the sealed passing leaves a required position free. Such a site is left unadorned, its predicate's original rules join the set, and the set is rebuilt without it. So every rewrite is accepted, and none is declined (`NON_MONOTONE_FORMS_PROOF.md` T6, L4). A predicate with required positions at such a site is derived at its clause, under the positions the branch binds there (its T5). Each rewrite is recorded as a `rules/magic-sets` event carrying the predicate and its adornment (`magicSetsEvent`, `datalog/executor/rules.go`).
 
-A recursive stratum iterates semi-naively. Iteration 0 absorbs the seed, when the stratum has one, and runs the rules with no same-stratum invocation. Each later iteration runs one copy of each body per same-stratum occurrence in it. In that copy the occurrence invokes the predicate's delta symbol, `delta/reach`. The scope holds the previous iteration's delta under that symbol, so the occurrence reads it. Every other occurrence reads the full relation. The tuples not yet derived become the next delta. The stratum ends when every delta is empty.
+A recursive stratum iterates semi-naively. Iteration 0 absorbs the seed, when the stratum has one, and runs the rules with no same-stratum invocation. Each body has one copy per same-stratum occurrence in it. In that copy the occurrence invokes the predicate's delta symbol, `delta/reach`. A copy's delta is the tuples its predicate gained since the copy last ran, held under that symbol when the copy runs, and every other occurrence reads the relation as it stands. Each later iteration is a pass: it visits the copies in the pass order, the postorder of a depth-first walk of the stratum's dependency graph, runs each copy whose delta is not empty, and absorbs the copy's result before the next copy is visited, so a pass carries a new tuple along every edge of the graph but a back edge. The stratum ends at a pass that runs no copy (`A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md`).
 
 A body is an ordinary `query.Query`, planned under the rule set. Its plan enters the plan cache under the body's own structure, which carries `%` and the delta symbols, so the cached plan is the one the fixpoint would make. The alternative is keeping body plans out of the cache. That would be an exception to the cache's one rule: every plan is served under its query, its rule set and the symbols bound when it was made (`NESTED_SCOPES_AS_QUERIES.md` §5.2). A body is planned under no bound symbol, so the rule covers it. `stratumEvaluation.run` (`datalog/executor/rules.go`) runs each body's plan through `executeRealizedPlan`, the phase executor. So base patterns stream from storage, and an invocation's relation joins at collapse. The whole fixpoint runs inside the query's one `ReadSession`, so every iteration reads one snapshot.
 
@@ -133,7 +150,7 @@ The invoking query receives the derived relation through the invocation clause, 
 
 ### 1.4 Bounds
 
-`PlannerOptions` has two fields for this. `MaxRuleIterations` caps the iterations per stratum. `MaxDerivedTuples` caps the tuples per evaluation of an invocation, with the magic predicates counted. Zero is unbounded. Exceeding either is `RuleIterationLimitError` or `DerivedTupleLimitError`, naming the predicates, the limit and the count reached.
+`PlannerOptions` has two fields for this. `MaxRuleIterations` caps the iterations per stratum, each a pass over its copies. `MaxDerivedTuples` caps the tuples per evaluation of an invocation, with the magic predicates counted. Zero is unbounded. Exceeding either is `RuleIterationLimitError` or `DerivedTupleLimitError`, naming the predicates, the limit and the count reached.
 
 ---
 

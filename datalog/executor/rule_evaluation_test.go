@@ -127,9 +127,10 @@ func TestRuleEvaluation_ALaterSeedDerivesTheNewKeysAlone(t *testing.T) {
 	}
 }
 
-// edgeKeysMatcher counts, per entity symbol, the keys a :page/next pattern
-// is matched against through a binding carrying that symbol: the pages
-// whose edges a body seeks.
+// edgeKeysMatcher counts, per variable of a :page/next pattern, the keys the
+// pattern is matched against through a binding carrying that variable: the
+// pages whose edges a body seeks, at the entity position or the value
+// position.
 type edgeKeysMatcher struct {
 	PatternMatcher
 	keys map[query.Symbol]int
@@ -145,17 +146,220 @@ func (m *edgeKeysMatcher) Match(q *query.Query, bindings Relations) (Relation, e
 		if !ok || attr.Value != pageNext {
 			continue
 		}
-		entity, ok := pattern.GetE().(query.Variable)
-		if !ok {
-			continue
-		}
-		for _, binding := range bindings {
-			if query.SymbolIndex(binding.Symbols(), entity.Name) >= 0 {
-				m.keys[entity.Name] += binding.Size()
+		for _, elem := range pattern.Elements {
+			v, ok := elem.(query.Variable)
+			if !ok {
+				continue
+			}
+			for _, binding := range bindings {
+				if query.SymbolIndex(binding.Symbols(), v.Name) >= 0 {
+					m.keys[v.Name] += binding.Size()
+				}
 			}
 		}
 	}
 	return m.PatternMatcher.Match(q, bindings)
+}
+
+// A delta copy seeks its pattern on the delta's keys: over the closure no
+// magic predicate guards, the recursive copy matches the edge pattern under
+// the binding its delta provides, so the keys the pattern is matched against
+// through a binding carrying ?b total the closure's pairs, one per delta
+// tuple across the iterations (docs/proposals/DELTA_LEADS_ITS_COPY_PROOF.md,
+// T3).
+func TestRunStratum_ADeltaCopySeeksItsPatternOnTheDeltasKeys(t *testing.T) {
+	b := datalog.NewSymbol("?b")
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			matcher := &edgeKeysMatcher{PatternMatcher: NewMemoryPatternMatcher(chainDatoms(6)), keys: map[query.Symbol]int{}}
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			require.NoError(t, err)
+			requireSamePairs(t, identityPairs(t, result), chainClosure(6))
+			require.Equal(t, len(chainClosure(6)), matcher.keys[b], "the recursive copy seeks the edge pattern on the delta's ?b, one key per delta tuple")
+		})
+	}
+}
+
+// A copy's pattern over its materialized delta binds through the matcher
+// under the whole delta and runs under no window
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.4, §7): over the
+// closure no magic predicate guards, under a window cap of two, no window
+// event fires, and the keys the edge pattern is matched against total the
+// deltas' tuples, so the matcher's boundary reads each delta's size whole.
+func TestRunStratum_ACopyMatchesItsPatternUnderTheWholeDelta(t *testing.T) {
+	b := datalog.NewSymbol("?b")
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			events := &ruleEvents{}
+			opts := mode.plannerOptions()
+			opts.ScopeWindowCap = 2
+			opts.Handler = events.handle
+			matcher := &edgeKeysMatcher{PatternMatcher: NewMemoryPatternMatcher(chainDatoms(6)), keys: map[query.Symbol]int{}}
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			require.NoError(t, err)
+			requireSamePairs(t, identityPairs(t, result), chainClosure(6))
+			require.Equal(t, len(chainClosure(6)), matcher.keys[b], "the edge pattern is matched under each delta whole, one key per delta tuple")
+			require.Zero(t, events.count(annotations.ScopeWindow), "a pattern over a group held in memory binds through the matcher and reads no window")
+			require.Equal(t, 6, events.count(annotations.RulesIteration), "the chain's five deltas and the empty one")
+		})
+	}
+}
+
+// predicates is every predicate an iteration event reported a delta for.
+func (r *ruleEvents) predicates() []query.Symbol {
+	var out []query.Symbol
+	seen := map[query.Symbol]bool{}
+	for _, e := range r.events {
+		if e.Name != annotations.RulesIteration {
+			continue
+		}
+		for pred := range e.Data["delta"].(map[query.Symbol]int) {
+			if !seen[pred] {
+				seen[pred] = true
+				out = append(out, pred)
+			}
+		}
+	}
+	return out
+}
+
+// leafwardRulesText is the closure with a rule reaching the leaves a page
+// follows: its invocation of follows stands beside a pattern with a value
+// constant on the invocation's second argument.
+const leafwardRulesText = `[[(follows ?a ?b) [?a :page/next ?b]]
+                           [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
+                           [(leafward ?a ?x) (follows ?a ?x) [?x :page/kind "leaf"]]]`
+
+// A body's invocation with an available argument beside a pattern with a
+// value constant on its other argument, a clause outside the seed component,
+// is adorned for the available argument alone, so the fixpoint derives what
+// the seed reaches and the pattern filters it after
+// (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md T1, T3): over
+// the chain, leafward bound to the first page runs follows adorned for its
+// first position and under no adornment of both, and answers the five pages
+// after the first.
+func TestRuleEvaluation_ABodysInvocationBesideAValueConstantPatternDerivesWhatTheSeedReaches(t *testing.T) {
+	follows := datalog.NewSymbol("follows")
+	rs := mustRules(t, leafwardRulesText)
+	q := mustParse(t, `[:find ?x :in $ % :where (leafward #id "page1" ?x)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			events := &ruleEvents{}
+			opts := mode.plannerOptions()
+			opts.Handler = events.handle
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, opts)
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			require.NoError(t, err)
+			var got []datalog.Identity
+			require.NoError(t, ForEach(result, func(tuple Tuple) error {
+				got = append(got, tuple[0].(datalog.Identity))
+				return nil
+			}))
+			require.ElementsMatch(t, []datalog.Identity{page(2), page(3), page(4), page(5), page(6)}, got, "the leaves the first page follows")
+			derived := events.predicates()
+			require.Contains(t, derived, query.AdornedSymbol(follows, []bool{true, false}), "follows runs adorned for the available first argument")
+			require.NotContains(t, derived, query.AdornedSymbol(follows, []bool{true, true}), "the pattern with a value constant binds no position of follows")
+		})
+	}
+}
+
+// A copy's join into a held predicate probes the index the predicate's set
+// keeps with the delta's tuples and drains nothing of the predicate
+// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T1, T3, L4,
+// L6): over the closure of step through reach, whose recursive copy joins
+// reach's delta into step, the probe event of each iteration after the
+// first reports as many probes as the iteration before added to reach, no
+// build.copy event drains step, and the answer is the chain's closure.
+func TestRunStratum_ACopysJoinIntoAHeldPredicateProbesTheDeltaAlone(t *testing.T) {
+	reach := datalog.NewSymbol("reach")
+	rs := mustRules(t, `[[(step ?a ?b) [?a :page/next ?b]]
+	                     [(reach ?x ?y) (step ?x ?y)]
+	                     [(reach ?x ?z) (reach ?x ?y) (step ?y ?z)]]`)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (reach ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			events := &ruleEvents{}
+			opts := mode.plannerOptions()
+			opts.Handler = events.handle
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, opts)
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			require.NoError(t, err)
+			requireSamePairs(t, identityPairs(t, result), chainClosure(6))
+			require.Zero(t, events.count(annotations.JoinBuildCopy), "no join drains a held predicate")
+
+			// The probes of each iteration's join are read between the
+			// iteration events of reach's stratum: the delta the iteration
+			// before added to reach is the probe side of the copy's join into
+			// step, and no other join runs in the iteration.
+			var probes []int
+			previous, compared := -1, 0
+			for _, e := range events.events {
+				switch e.Name {
+				case annotations.JoinProbe:
+					probes = append(probes, e.Data["tuple_count"].(int))
+				case annotations.RulesIteration:
+					if !query.ContainsSymbol(e.Data["predicates"].([]query.Symbol), reach) {
+						probes = nil
+						continue
+					}
+					if previous >= 0 {
+						require.Equal(t, []int{previous}, probes, "iteration %v: the copy's join probes the delta of reach the iteration before added", e.Data["iteration"])
+						compared++
+					}
+					previous = e.Data["delta"].(map[query.Symbol]int)[reach]
+					probes = nil
+				}
+			}
+			require.Equal(t, 5, compared, "the chain's five deltas, each the probe side of one join")
+		})
+	}
+}
+
+// A pass carries a chain of derivations along every edge of the stratum's
+// dependency graph but its back edges
+// (docs/proposals/A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, T1,
+// T4, L2, L6): over the ring a, b, c, where b reads a, c reads b and a's
+// recursive body reads c, one hop of a's closure runs through b and c back
+// to a inside one pass, so the iteration events number one more than the
+// chain's longest path's edge count, every pass but the last adds to a, b
+// and c alike, and the answer is the chain's closure.
+func TestRunStratum_APassCarriesAChainOfDerivations(t *testing.T) {
+	a, b, c := datalog.NewSymbol("a"), datalog.NewSymbol("b"), datalog.NewSymbol("c")
+	rs := mustRules(t, `[[(a ?x ?y) [?x :page/next ?y]]
+	                     [(b ?x ?y) (a ?x ?y)]
+	                     [(c ?x ?y) (b ?x ?y)]
+	                     [(a ?x ?z) (c ?x ?y) [?y :page/next ?z]]]`)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (a ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			events := &ruleEvents{}
+			opts := mode.plannerOptions()
+			opts.Handler = events.handle
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, opts)
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			require.NoError(t, err)
+			requireSamePairs(t, identityPairs(t, result), chainClosure(6))
+
+			var passes []map[query.Symbol]int
+			for _, e := range events.events {
+				if e.Name == annotations.RulesIteration {
+					passes = append(passes, e.Data["delta"].(map[query.Symbol]int))
+				}
+			}
+			require.Len(t, passes, 6, "the seeding run and the chain's five hops, one pass each: %v", passes)
+			for i, delta := range passes[1 : len(passes)-1] {
+				for _, p := range []query.Symbol{a, b, c} {
+					require.Positive(t, delta[p], "pass %d adds to %s: %v", i+1, p, delta)
+				}
+			}
+		})
+	}
 }
 
 // A stratum above a changed one runs, at a later window, the copies of its

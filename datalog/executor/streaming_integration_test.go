@@ -37,10 +37,10 @@ func TestStreamingIntegration(t *testing.T) {
 		rightSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city"), datalog.NewSymbol("?age")}
 
 		// Create streaming relations with options
-		leftIter := newMockIterator(leftTuples)
+		leftIter := &sliceIterator{tuples: leftTuples, pos: -1}
 		leftRel := NewStreamingRelationWithOptions(leftSymbols, leftIter, opts)
 
-		rightIter := newMockIterator(rightTuples)
+		rightIter := &sliceIterator{tuples: rightTuples, pos: -1}
 		rightRel := NewStreamingRelationWithOptions(rightSymbols, rightIter, opts)
 
 		// Verify relations report as streaming
@@ -128,7 +128,7 @@ func TestStreamingIntegration(t *testing.T) {
 			{2, "bob"},
 			{3, "charlie"},
 		}
-		streamIter := newMockIterator(streamTuples)
+		streamIter := &sliceIterator{tuples: streamTuples, pos: -1}
 		streamRel := NewStreamingRelationWithOptions([]query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}, streamIter, opts)
 
 		// Create materialized relation with options
@@ -171,7 +171,7 @@ func TestStreamingIntegration(t *testing.T) {
 		}
 		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
-		source := newMockIterator(tuples)
+		source := &sliceIterator{tuples: tuples, pos: -1}
 		rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 		// Apply predicate filter (x > 30)
@@ -215,7 +215,7 @@ func TestStreamingIntegration(t *testing.T) {
 		}
 		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
-		source := newMockIterator(tuples)
+		source := &sliceIterator{tuples: tuples, pos: -1}
 		rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 		// Apply function evaluation (x + y)
@@ -267,7 +267,7 @@ func TestStreamingIntegration(t *testing.T) {
 		}
 		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
-		source := newMockIterator(largeTuples)
+		source := &sliceIterator{tuples: largeTuples, pos: -1}
 		rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 		// Apply aggressive filter (only 1% pass, every 100th tuple)
@@ -343,7 +343,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			source := newMockIterator(tuples)
+			source := &sliceIterator{tuples: tuples, pos: -1}
 			rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 			// Filter to 1% (every 100th tuple)
@@ -372,7 +372,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			source := newMockIterator(tuples)
+			source := &sliceIterator{tuples: tuples, pos: -1}
 			rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 			// Filter to 1% (every 100th tuple)

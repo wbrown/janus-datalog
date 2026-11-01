@@ -521,10 +521,10 @@ func ValuesEqual(a, b interface{}) bool {
 	// Comparable primitives. The == fast path is correct (and allocation-free)
 	// whenever the two dynamic types match — the dominant case, and the only one
 	// reached after boundary normalization makes user integers int64. Only when
-	// == is false do we pay to unify integer width: a non-canonical width
-	// (int/int8/int16/int32) compares by magnitude against any other integer
-	// width, while int-vs-float stays strict (asInt64 reports false for float64),
-	// so mixed-numeric values are never conflated.
+	// == is false do we pay to unify integer width: a non-canonical signed
+	// width (int/int8/int16/int32) compares by magnitude against the other
+	// signed widths, while uint64 and float64 stay strict (asInt64 reports
+	// false for both), so mixed-numeric values are never conflated.
 	switch a.(type) {
 	case int64, float64, string, bool, uint64, int, int8, int16, int32:
 		if a == b {
@@ -544,15 +544,19 @@ func ValuesEqual(a, b interface{}) bool {
 		return ok && av.Equal(bv)
 	}
 
-	// Slice comparison for typed slices ([]string, []int64) and
-	// []interface{}, element-wise via reflect. Slow path; must precede the
-	// general == fallback below, which would panic on two values that share
-	// an uncomparable (slice) dynamic type.
+	// A vector compares element-wise against another vector, through reflect
+	// for typed slices ([]string, []int64) and []interface{} alike. IsVector
+	// excludes a byte slice, the domain's scalar, which the []byte arm above
+	// decides, so a vector against one is unequal from this side as from
+	// that. Slow path; must precede the general == fallback below, which
+	// would panic on two values that share an uncomparable (slice) dynamic
+	// type.
 	ra := reflect.ValueOf(a)
 	rb := reflect.ValueOf(b)
-	if ra.Kind() == reflect.Slice || rb.Kind() == reflect.Slice {
-		if ra.Kind() != reflect.Slice || rb.Kind() != reflect.Slice {
-			return false // one is a slice, the other isn't
+	va, vb := IsVector(a), IsVector(b)
+	if va || vb {
+		if !va || !vb {
+			return false
 		}
 		if ra.Len() != rb.Len() {
 			return false

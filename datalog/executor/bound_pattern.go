@@ -1,6 +1,9 @@
 package executor
 
-import "github.com/wbrown/janus-datalog/datalog/query"
+import (
+	"github.com/wbrown/janus-datalog/datalog/planner"
+	"github.com/wbrown/janus-datalog/datalog/query"
+)
 
 // A data pattern over a streaming group composed over the modules
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.2, §4.6, §4.8): the
@@ -28,24 +31,19 @@ func streamsThrough(symbols []query.Symbol, groups Relations) bool {
 // executeBoundPattern runs the pattern as one body over the window of its
 // subject, the groups holding a variable it names joined into one, under
 // the header of the variables the subject carries, with the pattern's other
-// variables as the outputs. The result's keys survive when the pattern
+// variables as the outputs, framed through planner.WindowFraming as the
+// planner's walk frames it. The result's keys survive when the pattern
 // answers at most one tuple per subject tuple, a cardinality-one attribute
 // keyed by a required entity, as a fallback's do.
 func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.DataPattern, groups Relations) (Relations, error) {
 	symbols := pattern.Symbols()
 	subject, consumed := e.findOuterRelation(symbols, groups)
 	outerSyms := subject.Symbols()
-	var required, outputs []query.Symbol
-	for _, sym := range symbols {
-		if query.ContainsSymbol(outerSyms, sym) {
-			required = append(required, sym)
-		} else {
-			outputs = append(outputs, sym)
-		}
-	}
-	find := make([]query.FindElement, len(outputs))
-	for i, sym := range outputs {
-		find[i] = query.FindVariable{Symbol: sym}
+	framed := planner.WindowFraming(symbols, outerSyms)
+	required, find := framed.Required, framed.Find
+	outputs := make([]query.Symbol, len(find))
+	for i, elem := range find {
+		outputs[i] = elem.(query.FindVariable).Symbol
 	}
 	resultSyms := append(append([]query.Symbol(nil), outerSyms...), outputs...)
 	carriedSet := make(map[query.Symbol]bool, len(required))

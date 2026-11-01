@@ -284,9 +284,9 @@ is observable through `scope/window`, which carries the form, its ordinal, its
 tuple count and its distinct key count. A window's keys bind the branch's
 patterns. At or below the matcher's boundary, `executor.SmallBindingBoundary`,
 which is also the cap's default, a binding of several keys is served by one
-narrowed scan per distinct key, the `per-key-seek` strategy on
-`storage/scan-complete`; above it, one scan of the pattern's extent serves
-every key.
+scan of the pattern's extent sought per distinct key, the `per-key-seek`
+strategy on `storage/scan-complete`; above it, one scan of the extent probed
+once serves every key.
 
 ### Replayable Sources, Single-Use Products
 

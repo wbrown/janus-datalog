@@ -23,12 +23,16 @@ import (
 func assertNoDuplicates(t *testing.T, name string, rel Relation) {
 	t.Helper()
 	var seen []Tuple
+	copies := rel.RequiresCopy()
 	iter := rel.Iterator()
 	defer iter.Close()
 
 	idx := 0
 	for iter.Next() {
 		tuple := iter.Tuple()
+		if copies {
+			tuple = copyTuple(tuple)
+		}
 		if firstIdx := setTestFindDuplicate(seen, tuple); firstIdx >= 0 {
 			t.Errorf("%s: duplicate tuple at index %d (first seen at %d): %v", name, idx, firstIdx, tuple)
 		}

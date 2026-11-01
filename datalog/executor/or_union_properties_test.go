@@ -69,10 +69,21 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 
 	require.Equal(t, ordering, rel.Properties().Ordering)
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
-	require.Len(t, events, 1)
-	require.Equal(t, annotations.OrPropertiesDerived, events[0].Name)
-	require.Equal(t, true, events[0].Data["branches_at_most_one"])
-	require.Equal(t, false, events[0].Data["deduplicate"])
+	// The executor plans the branch frames at construction, under no plan
+	// cache, and reports each; the properties are derived once.
+	var derived []annotations.Event
+	for _, event := range events {
+		switch event.Name {
+		case annotations.OrPropertiesDerived:
+			derived = append(derived, event)
+		case annotations.PlannerPlanMade:
+		default:
+			require.Failf(t, "an event of another name reached the handler", "%s", event.Name)
+		}
+	}
+	require.Len(t, derived, 1)
+	require.Equal(t, true, derived[0].Data["branches_at_most_one"])
+	require.Equal(t, false, derived[0].Data["deduplicate"])
 }
 
 func TestOrDefaultDecorrelatedAggregatePreservesOuterGroupKey(t *testing.T) {

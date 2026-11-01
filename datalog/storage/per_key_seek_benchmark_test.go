@@ -11,7 +11,7 @@ import (
 
 // perKeySeekKeyCounts are the binding sizes BenchmarkPerKeySeek runs: one
 // key, thirty-two, the boundary at and below which the hash join seeks each
-// key by its own narrowed scan, and one past it, where it scans the extent
+// key in one scan of the extent, and one past it, where it scans the extent
 // once and probes.
 var perKeySeekKeyCounts = []int{1, 32, executor.SmallBindingBoundary, executor.SmallBindingBoundary + 1}
 
@@ -21,7 +21,8 @@ var perKeySeekKeyCounts = []int{1, 32, executor.SmallBindingBoundary, executor.S
 // between two key counts on one extent, and the per-key seek at the boundary
 // stands beside the one-scan arm one key past it. The keys name the
 // fixture's first k entities, so a count past the extent carries one key the
-// index does not hold.
+// index does not hold. The EA cache is off, as in the seek tests, so the
+// binding-driven pattern reaches the matcher's scan paths and not the cache.
 func BenchmarkPerKeySeek(b *testing.B) {
 	q, err := parser.ParseQuery(`[:find ?e ?v :in $ [?e ...] :where [?e :t/n ?v]]`)
 	if err != nil {
@@ -32,7 +33,7 @@ func BenchmarkPerKeySeek(b *testing.B) {
 			for _, mode := range optimizerModes {
 				b.Run(fmt.Sprintf("%d/%s/keys%d", n, mode.name, k), func(b *testing.B) {
 					opts := mode.plannerOptions()
-					d := openBackendDB(b, mode.backend, DatabaseOptions{PlannerOptions: &opts})
+					d := openBackendDB(b, mode.backend, DatabaseOptions{PlannerOptions: &opts, DisableCache: true})
 					writeScopeBenchmarkFixture(b, d, n)
 					keys := make([]interface{}, k)
 					for i := range keys {

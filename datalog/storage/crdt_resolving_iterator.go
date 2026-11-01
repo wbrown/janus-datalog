@@ -2,7 +2,6 @@ package storage
 
 import (
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -41,15 +40,16 @@ type CRDTResolvingIterator struct {
 	// declared Unique in the schema):
 	//   - uniqueMode: true if the current group is a unique CardinalityOne
 	//     attribute.
-	//   - uniqueRemovedAt: value → highest Remove Tx seen within the current
-	//     (E, A) group. Used to skip Set entries that have been cancelled by
-	//     a later Remove. Nothing is deleted: the datom a Remove cancels stays
-	//     in the store and in History.
+	//   - uniqueWalk: the walk's state for the current (E, A) group, each
+	//     removed value with the highest Remove Tx seen for it. Used to skip
+	//     Set entries that have been cancelled by a later Remove. Nothing is
+	//     deleted: the datom a Remove cancels stays in the store and in
+	//     History.
 	//   - uniqueEmitted: whether we have already emitted a value for the
 	//     current group (emit at most one).
-	uniqueMode      bool
-	uniqueRemovedAt *executor.TupleKeyMap
-	uniqueEmitted   bool
+	uniqueMode    bool
+	uniqueWalk    *uniqueWalkState
+	uniqueEmitted bool
 
 	// report accounts for the AVET supersession scans the unique walk opens,
 	// one per Set entry it considers. Those are index reads this iterator
@@ -262,6 +262,12 @@ func (it *CRDTResolvingIterator) Next() bool {
 	}
 }
 
+// smallGroupValues is the most entries a many-state map may hold at a group's
+// end and be kept for the next group. A Go map that has held at most eight
+// entries is one group of slots and is cleared in that group's time, where a
+// map grown past eight keeps every table it grew and clears them all.
+const smallGroupValues = 8
+
 // startNewGroup initializes state for a new (E, A) group.
 func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	it.currentE = datom.E
@@ -289,12 +295,25 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	switch it.card {
 	case schema.CardinalityOne:
 		if it.uniqueMode {
-			it.uniqueRemovedAt = executor.NewTupleKeyMap()
+			it.uniqueWalk = newUniqueWalkState()
 			it.uniqueEmitted = false
 		}
 	case schema.CardinalityMany:
-		it.emitted = make(map[any]bool)
-		it.tombstones = make(map[any]uint64)
+		// The many state is the group's own, so both maps hold nothing at
+		// the group's first datom. A map kept from a small group is cleared
+		// and keeps its slot group, so the group's emits allocate nothing;
+		// a map a wide group grew is made anew
+		// (docs/proposals/RESOLVING_ITERATOR_GROUP_STATE_PROOF.md, T2, T3).
+		if it.emitted != nil && len(it.emitted) <= smallGroupValues {
+			clear(it.emitted)
+		} else {
+			it.emitted = make(map[any]bool)
+		}
+		if it.tombstones != nil && len(it.tombstones) <= smallGroupValues {
+			clear(it.tombstones)
+		} else {
+			it.tombstones = make(map[any]uint64)
+		}
 	case schema.CardinalityVector:
 		it.rgaElements = it.rgaElements[:0]
 	case schema.CardinalityUnknown:
@@ -492,11 +511,11 @@ func (it *CRDTResolvingIterator) Close() error {
 }
 
 // Seek positions the iterator at or after the bound's start, discarding the
-// group state accumulated for the run it is leaving.
+// group state accumulated for the run it is leaving. The many state's maps
+// stay for the next group start to empty, so their capacity survives the
+// seek.
 func (it *CRDTResolvingIterator) Seek(bound ScanBound) {
 	it.hasGroup = false
-	it.emitted = nil
-	it.tombstones = nil
 	it.rgaElements = nil
 	it.emitBuffer = nil
 	it.emitIdx = 0
@@ -552,10 +571,9 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 	copy(aBytes[:], datom.A.String())
 	eBytes := Entity(datom.E.Hash())
 
-	state := &uniqueWalkState{removedAt: it.uniqueRemovedAt}
 	// Accrues whether or not the check fails: a failed supersession check
 	// still read the index to fail.
-	decision, err := it.matcher.walkApplyEntry(state, datom, eBytes, aBytes, it.report)
+	decision, err := it.matcher.walkApplyEntry(it.uniqueWalk, datom, eBytes, aBytes, it.report)
 	if err != nil {
 		return false, err
 	}
@@ -564,6 +582,6 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 		return true, nil
 	}
 	// walkEntrySkip or walkEntryRemoved — no emission. The removal
-	// bookkeeping already updated it.uniqueRemovedAt via the shared map.
+	// bookkeeping already updated it.uniqueWalk's record.
 	return false, nil
 }

@@ -9,40 +9,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// mockIterator provides test data for iterator composition tests
-type mockIterator struct {
-	tuples []Tuple
-	pos    int
-	err    error
-}
-
-func newMockIterator(tuples []Tuple) *mockIterator {
-	return &mockIterator{
-		tuples: tuples,
-		pos:    -1,
-	}
-}
-
-func (it *mockIterator) Next() bool {
-	it.pos++
-	return it.pos < len(it.tuples)
-}
-
-func (it *mockIterator) Tuple() Tuple {
-	if it.pos >= 0 && it.pos < len(it.tuples) {
-		return it.tuples[it.pos]
-	}
-	return nil
-}
-
-func (it *mockIterator) RequiresCopy() bool { return false }
-
-func (it *mockIterator) Close() error {
-	return nil
-}
-
-func (it *mockIterator) Error() error { return it.err }
-
 func TestProjectIterator(t *testing.T) {
 	// Create test data
 	tuples := []Tuple{
@@ -89,7 +55,7 @@ func TestDedupIterator(t *testing.T) {
 	}
 
 	// Create dedup iterator
-	source := newMockIterator(tuples)
+	source := &sliceIterator{tuples: tuples, pos: -1}
 	dedupIter := NewDedupIterator(source, 10, false)
 
 	// Collect deduplicated results
@@ -121,7 +87,7 @@ func TestComposedIterators(t *testing.T) {
 	symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?salary")}
 
 	// Step 1: Filter by age >= 30
-	source := newMockIterator(tuples)
+	source := &sliceIterator{tuples: tuples, pos: -1}
 	filterIter := NewPredicateFilterIterator(source, symbols, &query.Comparison{
 		Op:    datalog.SymGTE,
 		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
@@ -170,7 +136,7 @@ func TestStreamingRelationWithComposition(t *testing.T) {
 	symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
 
 	// Create a StreamingRelation
-	source := newMockIterator(tuples)
+	source := &sliceIterator{tuples: tuples, pos: -1}
 	rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 	// Test that Size() doesn't materialize when TrueStreaming is enabled
@@ -228,7 +194,7 @@ func TestPredicateFilterIterator(t *testing.T) {
 		Right: query.ConstantTerm{Value: 20},
 	}
 
-	source := newMockIterator(tuples)
+	source := &sliceIterator{tuples: tuples, pos: -1}
 	predIter := NewPredicateFilterIterator(source, symbols, pred)
 
 	// Collect filtered results
@@ -265,7 +231,7 @@ func TestFunctionEvaluatorIterator(t *testing.T) {
 		},
 	}
 
-	source := newMockIterator(tuples)
+	source := &sliceIterator{tuples: tuples, pos: -1}
 	evalIter := NewFunctionEvaluatorIterator(source, symbols, fn, datalog.NewSymbol("?sum"))
 
 	// Collect results with new symbol
@@ -307,7 +273,7 @@ func TestFunctionEvaluatorIterator_UnifiesExistingSymbol(t *testing.T) {
 		},
 	}
 
-	source := newMockIterator(tuples)
+	source := &sliceIterator{tuples: tuples, pos: -1}
 	evalIter := NewFunctionEvaluatorIterator(source, symbols, fn, datalog.NewSymbol("?x"))
 
 	var results []Tuple
@@ -346,7 +312,7 @@ func TestFunctionEvaluatorIterator_UnifiesFilters(t *testing.T) {
 		},
 	}
 
-	source := newMockIterator(tuples)
+	source := &sliceIterator{tuples: tuples, pos: -1}
 	evalIter := NewFunctionEvaluatorIterator(source, symbols, fn, datalog.NewSymbol("?x"))
 
 	var results []Tuple
@@ -376,7 +342,7 @@ func BenchmarkIteratorComposition(b *testing.B) {
 
 	b.Run("Composed", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			source := newMockIterator(tuples)
+			source := &sliceIterator{tuples: tuples, pos: -1}
 
 			// Filter -> Project
 			filterIter := NewPredicateFilterIterator(source, symbols, &query.Comparison{

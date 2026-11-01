@@ -51,11 +51,12 @@ const maxKeyValueSize = 60000
 
 // NormalizeValue returns a value as the domain admits it: int, int8, int16 and
 // int32 become int64, the engine's canonical integer representation, as does
-// an unsigned integer within int64's range, since the engine's equality holds
-// uint64(5) equal to int64(5); a float's signed zero becomes 0.0, since the
-// equality holds the two zeros equal and a value's encoding agrees with its
-// equality; and a vector's elements are normalized as scalars are, a
-// []interface{} elementwise at any depth and a []float64's signed zeros.
+// an unsigned integer within int64's range, since the equality unifies only
+// the signed widths and holds a uint64(5) unequal to an int64(5); a float's
+// signed zero becomes 0.0, since the equality holds the two zeros equal and a
+// value's encoding agrees with its equality; and a vector's elements are
+// normalized as scalars are, a []interface{} elementwise at any depth and a
+// []float64's signed zeros.
 // Storage decode, the EDN parser, and comparison all standardize on int64, so
 // normalizing user-supplied values where they enter the engine (writes, query
 // inputs, query-builder constants) keeps a Go int from diverging from stored

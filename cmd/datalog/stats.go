@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"sort"
 	"strconv"
@@ -18,18 +17,19 @@ import (
 // runStats scans the full database (EAVT index, all history) and reports
 // per-attribute cardinality, value size distribution, and value duplication.
 // The source may be a BadgerDB directory or an .edn/.jdzl dump.
-func runStats(dbPath string) {
+func runStats(dbPath string) error {
 	db, cleanup, err := openDatabaseOrEDN(dbPath, nil)
 	if err != nil {
-		log.Fatalf("%v", err)
+		return err
 	}
 	defer cleanup()
 
 	report, err := collectStats(db)
 	if err != nil {
-		log.Fatalf("Failed to collect statistics: %v", err)
+		return fmt.Errorf("Failed to collect statistics: %v", err)
 	}
 	report.print(os.Stdout, dbPath)
+	return nil
 }
 
 // valueInfo tracks one distinct value: how often it occurs, its encoded size,

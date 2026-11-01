@@ -22,10 +22,14 @@ import (
 // carrying the symbols a relation group binds before each clause, the
 // phase's relation inputs and what each clause provides, and the symbols the
 // environment alone binds, the phase's scalar inputs, and plans each form's
-// frames and each invocation's evaluation, returning the evaluations by
-// clause for the plan to carry. The scopes are planned under the rule set
-// and the held invocations alone, the bindings the executor plans them
-// under, so the cache serves one plan to both.
+// frames, each invocation's evaluation, and the window scope of each
+// windowable clause, a data pattern or an invocation derived at its clause
+// that stands after a clause of the phase other than scope/required and
+// shares a symbol with what is bound before it
+// (docs/proposals/EXECUTION_PLANS_NOTHING_PROOF.md §1), returning the
+// evaluations by clause for the plan to carry. The scopes are planned under
+// the rule set and the held invocations alone, the bindings the executor
+// plans them under, so the cache serves one plan to both.
 func (p *ClauseBasedPlanner) planFormScopes(phases []RealizedPhase, bindings query.Bindings, handler annotations.Handler) (map[*query.RuleInvocation]*InvocationEvaluation, error) {
 	scopeBindings := query.Bindings{Rules: bindings.Rules, Held: bindings.Held}
 	evaluations := map[*query.RuleInvocation]*InvocationEvaluation{}
@@ -39,17 +43,39 @@ func (p *ClauseBasedPlanner) planFormScopes(phases []RealizedPhase, bindings que
 				carried = append(carried, spec.Symbols...)
 			}
 		}
+		// preceded reports whether a clause of the phase other than
+		// scope/required has been walked: a group that reports no size holds
+		// such a clause's result, so only a clause after one can window.
+		preceded := false
 		for _, clause := range phase.Query.Where {
-			if inv, ok := clause.(*query.RuleInvocation); ok {
-				planned, err := p.planInvocation(inv, carried, environment, scopeBindings, handler)
+			switch c := clause.(type) {
+			case *query.RuleInvocation:
+				planned, err := p.planInvocation(c, carried, environment, scopeBindings, handler)
 				if err != nil {
 					return nil, err
 				}
 				if planned != nil {
-					evaluations[inv] = planned
+					evaluations[c] = planned
+					if preceded {
+						bound := append(append([]query.Symbol(nil), carried...), environment...)
+						if err := p.planWindowScope(c.Variables(), c, bound, scopeBindings, handler); err != nil {
+							return nil, err
+						}
+					}
 				}
-			} else if err := p.planFormScope(clause, carried, environment, scopeBindings, handler); err != nil {
-				return nil, err
+			case *query.DataPattern:
+				if preceded {
+					if err := p.planWindowScope(c.Symbols(), c, carried, scopeBindings, handler); err != nil {
+						return nil, err
+					}
+				}
+			default:
+				if err := p.planFormScope(clause, carried, environment, scopeBindings, handler); err != nil {
+					return nil, err
+				}
+			}
+			if inv, ok := clause.(*query.RuleInvocation); !ok || inv.Name != query.ScopeRequired {
+				preceded = true
 			}
 			for _, sym := range query.ScopeOf(clause, bindings.Rules).Provides {
 				if !query.ContainsSymbol(carried, sym) {
@@ -59,6 +85,26 @@ func (p *ClauseBasedPlanner) planFormScopes(phases []RealizedPhase, bindings que
 		}
 	}
 	return evaluations, nil
+}
+
+// planWindowScope frames a windowable clause as the executor's windowed
+// route frames it, through WindowFraming over the symbols bound before the
+// clause, and plans the frame, so a run reads it from the cache
+// (docs/proposals/EXECUTION_PLANS_NOTHING_PROOF.md T1). A clause sharing no
+// bound symbol frames over no required run and never windows, so it is
+// planned nothing.
+func (p *ClauseBasedPlanner) planWindowScope(symbols []query.Symbol, clause query.Clause, bound []query.Symbol, bindings query.Bindings, handler annotations.Handler) error {
+	f := WindowFraming(symbols, bound)
+	if len(f.Required) == 0 {
+		return nil
+	}
+	f.Carried = f.CarriedBy(bound)
+	for _, frame := range f.Branches([][]query.Clause{{clause}}, bindings.Rules) {
+		if _, err := p.PlanScope(frame.Scope, bindings, handler); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // planInvocation plans the evaluation an invocation runs, as the executor's

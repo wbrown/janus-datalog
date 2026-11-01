@@ -6,20 +6,20 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// LimitRelation caps a relation to at most N tuples. It materializes lazily,
-// pulling the source iterator no more than N times — so a :limit with no
-// :order-by stops the underlying scan early instead of draining it. When the
-// source is already materialized (e.g. after :order-by sorts), the cap is a
-// cheap truncation of the first N tuples.
+// LimitRelation caps a relation to at most N tuples. It takes them from the
+// source on first read, pulling its iterator no more than N times, so a :limit
+// with no :order-by stops the underlying scan early instead of draining it.
+// When the source is already materialized (e.g. after :order-by sorts), the
+// cap is a cheap truncation of the first N tuples.
 //
-// All relational operations delegate to the bounded materialization, so the
-// source iterator is consumed exactly once regardless of access pattern.
+// All relational operations read the taken tuples, so the source iterator is
+// consumed exactly once regardless of access pattern.
 type LimitRelation struct {
 	source Relation
 	limit  int
 
-	once sync.Once
-	mat  *MaterializedRelation
+	once  sync.Once
+	taken *MaterializedRelation
 }
 
 // NewLimitRelation wraps source so that at most limit tuples are produced.
@@ -31,8 +31,9 @@ func NewLimitRelation(source Relation, limit int) *LimitRelation {
 	return &LimitRelation{source: source, limit: limit}
 }
 
-// ensure materializes at most limit tuples from the source exactly once.
-func (r *LimitRelation) ensure() *MaterializedRelation {
+// take pulls at most limit tuples from the source, exactly once, and holds
+// them.
+func (r *LimitRelation) take() *MaterializedRelation {
 	r.once.Do(func() {
 		tuples := make([]Tuple, 0, r.limit)
 		var err error
@@ -55,63 +56,63 @@ func (r *LimitRelation) ensure() *MaterializedRelation {
 			}
 		}
 
-		r.mat = newMaterializedRelationFromSet(
+		r.taken = newMaterializedRelationFromSet(
 			r.source.Symbols(),
 			tuples,
 			r.source.Options(),
 			r.source.Properties(),
 		)
 		// Carry any deferred source error so it isn't laundered by materialization.
-		r.mat.err = err
+		r.taken.err = err
 	})
-	return r.mat
+	return r.taken
 }
 
 func (r *LimitRelation) Symbols() []query.Symbol { return r.source.Symbols() }
 
-// Rename is the bounded materialization under the substitution.
+// Rename is the taken tuples under the substitution.
 func (r *LimitRelation) Rename(subst query.Substitution) (Relation, error) {
-	return r.ensure().Rename(subst)
+	return r.take().Rename(subst)
 }
 func (r *LimitRelation) Properties() RelationProperties {
 	return r.source.Properties()
 }
-func (r *LimitRelation) Iterator() Iterator { return r.ensure().Iterator() }
-func (r *LimitRelation) Size() int          { return r.ensure().Size() }
-func (r *LimitRelation) Get(i int) Tuple    { return r.ensure().Get(i) }
-func (r *LimitRelation) String() string     { return r.ensure().String() }
-func (r *LimitRelation) Table() string      { return r.ensure().Table() }
+func (r *LimitRelation) Iterator() Iterator { return r.take().Iterator() }
+func (r *LimitRelation) Size() int          { return r.take().Size() }
+func (r *LimitRelation) Get(i int) Tuple    { return r.take().Get(i) }
+func (r *LimitRelation) String() string     { return r.take().String() }
+func (r *LimitRelation) Table() string      { return r.take().Table() }
 
 func (r *LimitRelation) ProjectFromPattern(pattern *query.DataPattern) Relation {
-	return r.ensure().ProjectFromPattern(pattern)
+	return r.take().ProjectFromPattern(pattern)
 }
-func (r *LimitRelation) Sorted() ([]Tuple, error) { return r.ensure().Sorted() }
+func (r *LimitRelation) Sorted() ([]Tuple, error) { return r.take().Sorted() }
 func (r *LimitRelation) Project(symbols []query.Symbol) (Relation, error) {
-	return r.ensure().Project(symbols)
+	return r.take().Project(symbols)
 }
-func (r *LimitRelation) Materialize() Relation { return r.ensure() }
+func (r *LimitRelation) Materialize() Relation { return r.take() }
 func (r *LimitRelation) Sort(orderBy []query.OrderByClause) Relation {
-	return r.ensure().Sort(orderBy)
+	return r.take().Sort(orderBy)
 }
 func (r *LimitRelation) FilterWithPredicate(pred query.Predicate) Relation {
-	return r.ensure().FilterWithPredicate(pred)
+	return r.take().FilterWithPredicate(pred)
 }
 func (r *LimitRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
-	return r.ensure().EvaluateFunction(fn, outputSymbol)
+	return r.take().EvaluateFunction(fn, outputSymbol)
 }
-func (r *LimitRelation) Select(pred func(Tuple) bool) Relation { return r.ensure().Select(pred) }
-func (r *LimitRelation) Join(other Relation) Relation          { return r.ensure().Join(other) }
+func (r *LimitRelation) Select(pred func(Tuple) bool) Relation { return r.take().Select(pred) }
+func (r *LimitRelation) Join(other Relation) Relation          { return r.take().Join(other) }
 func (r *LimitRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
-	return r.ensure().HashJoin(other, joinSyms)
+	return r.take().HashJoin(other, joinSyms)
 }
 func (r *LimitRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
-	return r.ensure().SemiJoin(other, joinSyms)
+	return r.take().SemiJoin(other, joinSyms)
 }
 func (r *LimitRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
-	return r.ensure().AntiJoin(other, joinSyms)
+	return r.take().AntiJoin(other, joinSyms)
 }
 func (r *LimitRelation) Aggregate(findElements []query.FindElement) Relation {
-	return r.ensure().Aggregate(findElements)
+	return r.take().Aggregate(findElements)
 }
 func (r *LimitRelation) Options() ExecutorOptions { return r.source.Options() }
 func (r *LimitRelation) RequiresCopy() bool       { return false }

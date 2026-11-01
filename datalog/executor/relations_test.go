@@ -219,7 +219,9 @@ func TestRelationsCollapse(t *testing.T) {
 		assert.Equal(t, 1, len(groups))
 
 		result := groups[0]
-		assert.Equal(t, 2, result.Size()) // Alice and Bob's full paths
+		tuples, err := CollectTuples(result, nil)
+		assert.NoError(t, err)
+		assert.Len(t, tuples, 2) // Alice and Bob's full paths
 
 		// Check symbols
 		symbols := result.Symbols()
@@ -262,7 +264,9 @@ func TestRelationsCollapse(t *testing.T) {
 
 		assert.NotNil(t, joinedGroup)
 		assert.NotNil(t, disjointGroup)
-		assert.Equal(t, 2, joinedGroup.Size())
+		joined, err := CollectTuples(joinedGroup, nil)
+		assert.NoError(t, err)
+		assert.Len(t, joined, 2)
 		assert.Equal(t, 2, disjointGroup.Size())
 	})
 
@@ -283,7 +287,9 @@ func TestRelationsCollapse(t *testing.T) {
 
 		// Should have one group with empty result
 		assert.Equal(t, 1, len(groups))
-		assert.Equal(t, 0, groups[0].Materialize().Size())
+		tuples, err := CollectTuples(groups[0], nil)
+		assert.NoError(t, err)
+		assert.Empty(t, tuples)
 	})
 
 	t.Run("handles empty relations", func(t *testing.T) {

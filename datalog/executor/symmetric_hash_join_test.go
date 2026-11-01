@@ -31,10 +31,10 @@ func TestSymmetricHashJoin(t *testing.T) {
 
 	t.Run("BasicJoin", func(t *testing.T) {
 		// Create streaming relations
-		leftIter := newMockIterator(leftTuples)
+		leftIter := &sliceIterator{tuples: leftTuples, pos: -1}
 		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
-		rightIter := newMockIterator(rightTuples)
+		rightIter := &sliceIterator{tuples: rightTuples, pos: -1}
 		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		// Perform symmetric hash join on ?name
@@ -106,10 +106,10 @@ func TestSymmetricHashJoin(t *testing.T) {
 		leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 		rightSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
 
-		leftIter := newMockIterator(leftTuples)
+		leftIter := &sliceIterator{tuples: leftTuples, pos: -1}
 		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
-		rightIter := newMockIterator(rightTuples)
+		rightIter := &sliceIterator{tuples: rightTuples, pos: -1}
 		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		// Join on both ?id and ?name
@@ -141,10 +141,10 @@ func TestSymmetricHashJoin(t *testing.T) {
 
 	t.Run("EmptyRelations", func(t *testing.T) {
 		// Test with empty left relation
-		emptyIter := newMockIterator([]Tuple{})
+		emptyIter := &sliceIterator{tuples: []Tuple{}, pos: -1}
 		emptyRel := NewStreamingRelation(leftSymbols, emptyIter)
 
-		rightIter := newMockIterator(rightTuples)
+		rightIter := &sliceIterator{tuples: rightTuples, pos: -1}
 		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
@@ -155,10 +155,10 @@ func TestSymmetricHashJoin(t *testing.T) {
 		it.Close()
 
 		// Test with empty right relation
-		leftIter := newMockIterator(leftTuples)
+		leftIter := &sliceIterator{tuples: leftTuples, pos: -1}
 		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
-		emptyIter2 := newMockIterator([]Tuple{})
+		emptyIter2 := &sliceIterator{tuples: []Tuple{}, pos: -1}
 		emptyRel2 := NewStreamingRelation(rightSymbols, emptyIter2)
 
 		result = SymmetricHashJoin(leftRel, emptyRel2, joinSymbols)
@@ -182,10 +182,10 @@ func TestSymmetricHashJoin(t *testing.T) {
 		leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
 		rightSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name2")}
 
-		leftIter := newMockIterator(leftTuples)
+		leftIter := &sliceIterator{tuples: leftTuples, pos: -1}
 		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
-		rightIter := newMockIterator(rightTuples)
+		rightIter := &sliceIterator{tuples: rightTuples, pos: -1}
 		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		// Join on ?id which has no matches
@@ -197,53 +197,6 @@ func TestSymmetricHashJoin(t *testing.T) {
 		it.Close()
 	})
 
-	t.Run("DuplicateHandling", func(t *testing.T) {
-		// Test that duplicates are properly handled
-		leftTuples := []Tuple{
-			{1, "alice"},
-			{1, "alice"}, // Exact duplicate
-			{2, "bob"},
-		}
-		rightTuples := []Tuple{
-			{1, "NYC"},
-			{1, "Boston"}, // Same key, different value
-		}
-
-		leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
-		rightSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?city")}
-
-		leftIter := newMockIterator(leftTuples)
-		leftRel := NewStreamingRelation(leftSymbols, leftIter)
-
-		rightIter := newMockIterator(rightTuples)
-		rightRel := NewStreamingRelation(rightSymbols, rightIter)
-
-		joinSymbols := []query.Symbol{datalog.NewSymbol("?id")}
-		result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)
-
-		var results []Tuple
-		it := result.Iterator()
-		for it.Next() {
-			tuple := it.Tuple()
-			tupleCopy := make(Tuple, len(tuple))
-			copy(tupleCopy, tuple)
-			results = append(results, tupleCopy)
-		}
-		it.Close()
-
-		// Should have 2 results for id=1 (alice with NYC and Boston)
-		// Duplicates should be deduplicated
-		assert.Len(t, results, 2)
-
-		// Verify deduplication
-		seen := make(map[string]bool)
-		for _, r := range results {
-			key := fmt.Sprintf("%v-%v-%v", r[0], r[1], r[2])
-			assert.False(t, seen[key], "Found duplicate result")
-			seen[key] = true
-		}
-	})
-
 	t.Run("StreamingBehavior", func(t *testing.T) {
 		// Test that join truly streams (processes incrementally)
 		// This is harder to test directly, but we can verify it returns
@@ -252,10 +205,10 @@ func TestSymmetricHashJoin(t *testing.T) {
 		// Enable true streaming for this test
 		opts := ExecutorOptions{EnableTrueStreaming: true}
 
-		leftIter := newMockIterator(leftTuples)
+		leftIter := &sliceIterator{tuples: leftTuples, pos: -1}
 		leftRel := NewStreamingRelationWithOptions(leftSymbols, leftIter, opts)
 
-		rightIter := newMockIterator(rightTuples)
+		rightIter := &sliceIterator{tuples: rightTuples, pos: -1}
 		rightRel := NewStreamingRelationWithOptions(rightSymbols, rightIter, opts)
 
 		joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
@@ -270,10 +223,10 @@ func TestSymmetricHashJoin(t *testing.T) {
 	})
 
 	t.Run("InvalidJoinSymbol", func(t *testing.T) {
-		leftIter := newMockIterator(leftTuples)
+		leftIter := &sliceIterator{tuples: leftTuples, pos: -1}
 		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
-		rightIter := newMockIterator(rightTuples)
+		rightIter := &sliceIterator{tuples: rightTuples, pos: -1}
 		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		// Try to join on non-existent symbol
@@ -293,7 +246,7 @@ func TestChooseJoinStrategy(t *testing.T) {
 	matSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	matRel := NewMaterializedRelation(matSymbols, matTuples)
 
-	streamIter := newMockIterator(matTuples)
+	streamIter := &sliceIterator{tuples: matTuples, pos: -1}
 	streamRel := NewStreamingRelation(matSymbols, streamIter)
 
 	joinSymbols := []query.Symbol{datalog.NewSymbol("?x")}
@@ -326,6 +279,78 @@ func TestChooseJoinStrategy(t *testing.T) {
 	})
 }
 
+// TestSymmetricHashJoinNextAdvancesAndTupleAnswersTheCurrent pins the
+// Iterator contract on the symmetric join's iterator: Next advances to the
+// next joined tuple and Tuple answers the current one, so a reader that
+// pulls with Next alone, as a count does, reaches the end.
+func TestSymmetricHashJoinNextAdvancesAndTupleAnswersTheCurrent(t *testing.T) {
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?quire"), datalog.NewSymbol("?leaves")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?quire"), datalog.NewSymbol("?press")}
+	left := NewStreamingRelation(leftSymbols, &sliceIterator{tuples: []Tuple{
+		{int64(1), int64(8)}, {int64(2), int64(12)}, {int64(3), int64(16)},
+	}, pos: -1})
+	right := NewStreamingRelation(rightSymbols, &sliceIterator{tuples: []Tuple{
+		{int64(1), "north"}, {int64(2), "south"}, {int64(3), "east"},
+	}, pos: -1})
+	joinSymbols := []query.Symbol{datalog.NewSymbol("?quire")}
+
+	it := SymmetricHashJoin(left, right, joinSymbols).Iterator()
+	defer it.Close()
+
+	if !it.Next() {
+		t.Fatal("the join of three matching pairs answers a first tuple")
+	}
+	first := it.Tuple()
+	positions := allPositions(len(first))
+	if again := it.Tuple(); !tupleKeysMatch(first, positions, again, positions) {
+		t.Fatalf("Tuple answers the current tuple until the next Next: got %v then %v", first, again)
+	}
+	if !it.Next() {
+		t.Fatal("the join of three matching pairs answers a second tuple")
+	}
+	second := it.Tuple()
+	if tupleKeysMatch(first, positions, second, positions) {
+		t.Fatalf("Next advances to the next joined tuple: got %v twice", first)
+	}
+	pulled := 2
+	for it.Next() {
+		pulled++
+	}
+	if pulled != 3 {
+		t.Fatalf("a reader pulling with Next alone reaches the end: pulled %d of 3 pairs", pulled)
+	}
+}
+
+// A key held by two tuples of the left side and by two of the right answers
+// one joined tuple per pair agreeing on it, each holding that pair's values,
+// with the join symbol last on the left and first on the right, so each
+// side's index is probed at the other side's positions
+// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T1, P3, L3).
+func TestSymmetricHashJoin_AKeyHeldTwiceOnEitherSideAnswersEachPair(t *testing.T) {
+	quire, leaves, press := datalog.NewSymbol("?quire"), datalog.NewSymbol("?leaves"), datalog.NewSymbol("?press")
+	q1, q2 := datalog.NewIdentity("shj:quire1"), datalog.NewIdentity("shj:quire2")
+	left := NewStreamingRelation([]query.Symbol{leaves, quire}, &sliceIterator{tuples: []Tuple{
+		{int64(8), q1}, {int64(12), q2}, {int64(16), q1},
+	}, pos: -1})
+	right := NewStreamingRelation([]query.Symbol{quire, press}, &sliceIterator{tuples: []Tuple{
+		{q1, "folded"}, {q2, "sewn"}, {q1, "pressed"},
+	}, pos: -1})
+
+	result := SymmetricHashJoin(left, right, []query.Symbol{quire})
+	assert.Equal(t, []query.Symbol{leaves, quire, press}, result.Symbols())
+	var joined []Tuple
+	it := result.Iterator()
+	for it.Next() {
+		joined = append(joined, it.Tuple())
+	}
+	assert.NoError(t, it.Close())
+	assert.ElementsMatch(t, []Tuple{
+		{int64(8), q1, "folded"}, {int64(8), q1, "pressed"},
+		{int64(16), q1, "folded"}, {int64(16), q1, "pressed"},
+		{int64(12), q2, "sewn"},
+	}, joined)
+}
+
 // BenchmarkSymmetricHashJoin compares symmetric vs standard hash join
 func BenchmarkSymmetricHashJoin(b *testing.B) {
 	// Create larger test data
@@ -345,10 +370,10 @@ func BenchmarkSymmetricHashJoin(b *testing.B) {
 
 	b.Run("SymmetricHashJoin", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			leftIter := newMockIterator(leftTuples)
+			leftIter := &sliceIterator{tuples: leftTuples, pos: -1}
 			leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
-			rightIter := newMockIterator(rightTuples)
+			rightIter := &sliceIterator{tuples: rightTuples, pos: -1}
 			rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 			result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)

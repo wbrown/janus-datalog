@@ -67,18 +67,22 @@ func rewriteOf(rs *query.RuleSet, name string, bound ...bool) (*Magic, error) {
 	return Rewrite(NewClauseBasedPlanner(nil, PlannerOptions{}), rs, sym(name), bound, nil)
 }
 
-// An aggregating subquery the planner places before the recursion is not
-// read by the recursion's magic rule, so the inner invocation it adorns stays
-// below the recursive stratum and the recursion after it, whose argument the
-// subquery alone provides, keeps the original predicate.
+// An aggregating subquery the planner places before an invocation of a
+// recursive predicate is read by no magic rule, so the inner invocation it
+// holds is adorned from the clauses before the form, and the invocation after
+// it, whose argument the subquery alone provides, keeps the original
+// predicate, derived whole, under a root that is rewritten
+// (docs/proposals/A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md T1, T5).
 func TestMagic_AnAggregatingSubqueryBeforeTheRecursionIsNotRead(t *testing.T) {
 	rs := mustParseRules(t, `[[(low ?a ?b) [?a :edge ?b]]
 	                          [(p ?a ?b) [?a :edge ?b]]
-	                          [(p ?a ?c) [?a :edge _] [(q [:find ?w (count ?z) :in $ % ?x :where (low ?x ?w) (low ?w ?z)] $ % ?a) [[?v ?n]]] [(identity ?v) ?m] (p ?m ?c)]]`)
-	magic, err := rewriteOf(rs, "p", true, false)
+	                          [(p ?a ?c) [?a :edge ?b] (p ?b ?c)]
+	                          [(top ?a ?c) [?a :edge _] [(q [:find ?w (count ?z) :in $ % ?x :where (low ?x ?w) (low ?w ?z)] $ % ?a) [[?v ?n]]] [(identity ?v) ?m] (p ?m ?c)]]`)
+	magic, err := rewriteOf(rs, "top", true, false)
 	require.NoError(t, err, "the rewritten set is accepted")
-	require.Empty(t, magic.Rules.Rules(sym("magic.bf/p")), "the recursion after the subquery is not adorned, since its argument is provided through a clause no magic rule reads")
-	require.NotEmpty(t, magic.Rules.Rules(sym("p")), "the recursion keeps the original predicate")
+	require.NotEmpty(t, magic.Rules.Rules(sym("adorned.bf/top")), "the root is rewritten")
+	require.Empty(t, magic.Rules.Rules(sym("magic.bf/p")), "the invocation after the subquery is not adorned, since its argument is provided through a clause no magic rule reads")
+	require.NotEmpty(t, magic.Rules.Rules(sym("p")), "the invocation after the subquery keeps the original predicate")
 	require.NotEmpty(t, magic.Rules.Rules(sym("adorned.bf/low")), "the subquery's inner invocation is adorned from the clauses before the form")
 }
 
@@ -176,17 +180,20 @@ func TestMagic_ANonMonotoneFormInsideASubqueryTheMagicRuleReadsIsLeftOut(t *test
 }
 
 // A subquery whose read inner clauses no longer bind every find variable is
-// not read, so the recursion after it, whose argument the subquery alone
-// provides, keeps the original predicate, as an aggregating subquery before
-// the recursion leaves it.
+// not read, so the invocation after it, whose argument the subquery alone
+// provides, keeps the original predicate, derived whole, as an aggregating
+// subquery before the invocation leaves it, under a root that is rewritten
+// (docs/proposals/A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md T1, T5).
 func TestMagic_ASubqueryWhoseReadNoLongerBindsItsFindIsNotRead(t *testing.T) {
 	rs := mustParseRules(t, `[[(low ?a ?b) [?a :edge ?b]]
 	                          [(p ?a ?b) [?a :edge ?b]]
-	                          [(p ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [(q [:find ?u (count ?z) :in $ % ?y :where (low ?y ?u) (low ?u ?z)] $ % ?x) [[?w ?n]]]] $ % ?a) [[?m]]] (p ?m ?c)]]`)
-	magic, err := rewriteOf(rs, "p", true, false)
+	                          [(p ?a ?c) [?a :edge ?b] (p ?b ?c)]
+	                          [(top ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [(q [:find ?u (count ?z) :in $ % ?y :where (low ?y ?u) (low ?u ?z)] $ % ?x) [[?w ?n]]]] $ % ?a) [[?m]]] (p ?m ?c)]]`)
+	magic, err := rewriteOf(rs, "top", true, false)
 	require.NoError(t, err, "the rewritten set is accepted")
-	require.Empty(t, magic.Rules.Rules(sym("magic.bf/p")), "the recursion after the subquery is not adorned, since its argument is provided through a subquery no magic rule reads")
-	require.NotEmpty(t, magic.Rules.Rules(sym("p")), "the recursion keeps the original predicate")
+	require.NotEmpty(t, magic.Rules.Rules(sym("adorned.bf/top")), "the root is rewritten")
+	require.Empty(t, magic.Rules.Rules(sym("magic.bf/p")), "the invocation after the subquery is not adorned, since its argument is provided through a subquery no magic rule reads")
+	require.NotEmpty(t, magic.Rules.Rules(sym("p")), "the invocation after the subquery keeps the original predicate")
 	require.NotEmpty(t, magic.Rules.Rules(sym("adorned.bf/low")), "the aggregating inner query's invocation is adorned from the clauses before the form")
 	for _, r := range magicRules(magic) {
 		require.Nil(t, firstNonMonotoneForm(r.Body), "magic rule %s reads a non-monotone form", r)
@@ -259,7 +266,10 @@ func TestMagic_AFallbackAfterTheRecursionIsWalkedUnderTheSealedPassing(t *testin
 // the set (docs/proposals/NON_MONOTONE_FORMS_PROOF.md T6). Here the
 // aggregating subquery of p3 reads adorned.bf/p2 before it, which draws
 // adorned.bf/p0 into adorned.bf/p2's stratum, and the fallback in p2's
-// recursive rule invokes p0 free; p0 reaches the required nb.
+// recursive rule invokes p0 free; p0 reaches the required nb. With its
+// original rules in the set p0 is derived whole, so its bound sites read it
+// whole too, with no adorned copy of p0
+// (docs/proposals/A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md T1, T5).
 func TestMagic_AFreeSiteUnderAFallbackWhoseAllFreeNameWouldNotStratifyKeepsTheOriginalRules(t *testing.T) {
 	rs := mustParseRules(t, `[[(nb [?x] ?y) [?x :edge ?y]]
 	                          [(p0 ?a ?b) [?a :edge ?b]]
@@ -273,7 +283,7 @@ func TestMagic_AFreeSiteUnderAFallbackWhoseAllFreeNameWouldNotStratifyKeepsTheOr
 	require.NoError(t, err, "the rewritten set is accepted")
 	require.NotEmpty(t, magic.Rules.Rules(sym("p0")), "the fallback's free site keeps p0's original rules")
 	require.Empty(t, magic.Rules.Rules(sym("adorned.ff/p0")), "no all-free p0 joins the set")
-	require.NotEmpty(t, magic.Rules.Rules(sym("adorned.bf/p0")), "the bound sites of p0 stay adorned")
+	require.Empty(t, magic.Rules.Rules(sym("adorned.bf/p0")), "the bound sites of p0 read it whole")
 }
 
 // A read of a subquery scope passes the sources, the rule set and the call

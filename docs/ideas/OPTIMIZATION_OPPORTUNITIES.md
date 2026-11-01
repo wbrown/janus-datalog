@@ -67,18 +67,22 @@ Source: Go benchmark plus `benchstat`, darwin/arm64, 2026-07-11.
 
 ## 2. Use `PutIfAbsent` Across Deduplication Paths
 
-**Status:** Complete in the current working tree.
+**Status:** Complete; superseded by the one table, `TupleSet`, which the
+dedup paths key through one find and one add (`PERFORMANCE_STATUS.md` item
+40, `docs/proposals/ONE_TUPLE_TABLE_PROOF.md`).
 
-Eight production paths implemented set insertion as `Exists` followed by `Put`,
-even though `TupleKeyMap.PutIfAbsent` already performs the operation in one
-bucket walk. They now call `PutIfAbsent` directly. This remains a local
-implementation optimization: it does not skip deduplication, change set
+Eight production paths implemented set insertion as a lookup followed by a
+put, two walks of the table where one performs the operation. This step made
+them one walk. Under the one table each of these paths keys `TupleSet`
+through one find and one add, or `TupleKeyMap.PutIfAbsent` where it stores a
+value beside the member, and the walk is the table's probe. This remains a
+local implementation optimization: it does not skip deduplication, change set
 semantics, or require relational property propagation.
 
-The changed paths cover materialized and streaming deduplication, union,
-subquery input combinations, relation operations, and symmetric hash joins.
-A direct contract test pins first-insert/repeated-insert behavior and verifies
-that a repeated call does not replace the original map value.
+The paths cover materialized and streaming deduplication, union, subquery
+input combinations, relation operations, and symmetric hash joins. A direct
+contract test pins first-insert/repeated-insert behavior and verifies that a
+repeated call does not replace the original map value.
 
 ### Measured evidence
 
@@ -94,13 +98,15 @@ that a repeated call does not replace the original map value.
 | **Geomean** | | 363.6 µs | 336.9 µs | **-7.34%** |
 
 Memory and allocation counts are unchanged, as expected: this step removes
-redundant lookup work without changing `TupleKeyMap` storage. Every timing
+redundant lookup work without changing the table's storage. Every timing
 comparison is statistically significant (`p≤0.019`, `n=10`). The full
 `go test -count=1 ./...` suite passes.
 
-A specialized `TupleSet` is not part of this step. Consider one only if a later
-memory profile shows that `mapEntry.value` materially contributes to the
-remaining cost.
+A `TupleSet` holding no value beside a member is the tree's one table, the
+recursive reproduction's allocation profile having shown the entry's owned
+values slice and its unread value among the largest shares
+(`PERFORMANCE_STATUS.md`, "The binding-driven match and the frame's record
+allocate what they answer").
 
 Relevant code and design:
 

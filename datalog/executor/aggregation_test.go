@@ -418,22 +418,22 @@ func TestAggregationWithTimeValues(t *testing.T) {
 	}
 }
 
+// Two tuples whose rendered forms collide are two keys of the groupings'
+// map: each holds its own value.
 func TestAggregationTupleKeysPreserveTypes(t *testing.T) {
 	for _, pair := range adversarialTuplePairs {
 		t.Run(pair.name, func(t *testing.T) {
-			aKey := NewTupleKeyFull(pair.a)
-			bKey := NewTupleKeyFull(pair.b)
-			if aKey.Equal(bKey) {
-				t.Fatalf("distinct typed aggregation keys compare equal: %v and %v", pair.a, pair.b)
+			positions := allPositions(len(pair.a))
+			groups := NewTupleKeyMap(positions, positions, 0)
+			groups.Put(pair.a, "a")
+			groups.Put(pair.b, "b")
+			if groups.Len() != 2 {
+				t.Fatalf("distinct typed aggregation keys were conflated: %v and %v hold %d keys", pair.a, pair.b, groups.Len())
 			}
-
-			groups := NewTupleKeyMap()
-			groups.Put(aKey, "a")
-			groups.Put(bKey, "b")
-			if got, ok := groups.Get(aKey); !ok || got != "a" {
+			if got, ok := groups.Get(pair.a); !ok || got != "a" {
 				t.Fatalf("first typed key was lost: got %v, found %v", got, ok)
 			}
-			if got, ok := groups.Get(bKey); !ok || got != "b" {
+			if got, ok := groups.Get(pair.b); !ok || got != "b" {
 				t.Fatalf("second typed key was lost: got %v, found %v", got, ok)
 			}
 		})

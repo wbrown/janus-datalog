@@ -68,7 +68,7 @@ func SymmetricHashJoinWithOptions(
 	}
 	resultProperties := joinProperties(left.Properties(), right.Properties(), joinSyms)
 	if opts.Handler != nil {
-		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, "symmetric", "both", false)
+		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, "symmetric", "both", false, false)
 	}
 
 	// Determine initial hash table size
@@ -87,12 +87,15 @@ func SymmetricHashJoinWithOptions(
 		rightJoinPos[i] = query.ContainsSymbol(joinSyms, sym)
 	}
 
-	// Create the symmetric hash join iterator
+	// Create the symmetric hash join iterator. Each side's table is the
+	// join index over that side's tuples at its join positions, probed by
+	// the other side's tuples at theirs
+	// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, P3).
 	iter := &symmetricHashJoinIterator{
 		leftIt:       left.Iterator(),
 		rightIt:      right.Iterator(),
-		leftTable:    NewTupleKeyMapWithCapacity(tableSize),
-		rightTable:   NewTupleKeyMapWithCapacity(tableSize),
+		leftTable:    NewJoinIndex(rightIndices, leftIndices, tableSize),
+		rightTable:   NewJoinIndex(leftIndices, rightIndices, tableSize),
 		leftIndices:  leftIndices,
 		rightIndices: rightIndices,
 		joinSyms:     joinSyms,
@@ -102,9 +105,6 @@ func SymmetricHashJoinWithOptions(
 		outputSyms:   outputSyms,
 		resultQueue:  make([]Tuple, 0),
 		batchSize:    100, // Process tuples in batches for efficiency
-	}
-	if len(resultProperties.Keys) == 0 {
-		iter.seen = NewTupleKeyMapWithCapacity(tableSize)
 	}
 
 	// Return a streaming relation with the symmetric join iterator
@@ -119,22 +119,22 @@ func SymmetricHashJoinWithOptions(
 // symmetricHashJoinIterator implements Iterator for symmetric hash join
 type symmetricHashJoinIterator struct {
 	leftIt, rightIt           Iterator
-	leftTable, rightTable     *TupleKeyMap
+	leftTable, rightTable     *JoinIndex
 	leftIndices, rightIndices []int
 	joinSyms                  []query.Symbol
 	leftSyms, rightSyms       []query.Symbol
 	rightJoinPos              []bool // Per right position: is it a join symbol?
 	outputSyms                []query.Symbol
 	resultQueue               []Tuple
-	seen                      *TupleKeyMap // For deduplication
 	leftDone, rightDone       bool
 	batchSize                 int
 	resultPos                 int
 }
 
-// Next advances to the next result tuple
+// Next advances to the next result tuple: the next one queued, or the
+// first of the next batch of matches the two sides yield.
 func (it *symmetricHashJoinIterator) Next() bool {
-	// If we have queued results, return them first
+	it.resultPos++
 	if it.resultPos < len(it.resultQueue) {
 		return true
 	}
@@ -171,30 +171,16 @@ func (it *symmetricHashJoinIterator) processLeftBatch() {
 		copy(leftTupleCopy, leftTuple)
 		leftTuple = leftTupleCopy
 
-		// Extract join key from left tuple
-		key := NewTupleKey(leftTuple, it.leftIndices)
-
 		// Probe right table for matches
-		if rightMatchesVal, ok := it.rightTable.Get(key); ok {
-			rightMatches := rightMatchesVal.([]Tuple)
-			for _, rightTuple := range rightMatches {
-				// Combine tuples
-				joined := it.combineTuples(leftTuple, rightTuple, true)
-
-				// A nil seen map means a result key proves uniqueness.
-				if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
-					it.resultQueue = append(it.resultQueue, joined)
-				}
-			}
+		for _, rightTuple := range it.rightTable.Probe(leftTuple) {
+			// Every combined tuple is one the join answers: the join of
+			// two sets is a set
+			// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
+			it.resultQueue = append(it.resultQueue, it.combineTuples(leftTuple, rightTuple, true))
 		}
 
 		// Add to left table (tuple already copied above)
-		if existingVal, ok := it.leftTable.Get(key); ok {
-			existing := existingVal.([]Tuple)
-			it.leftTable.Put(key, append(existing, leftTuple))
-		} else {
-			it.leftTable.Put(key, []Tuple{leftTuple})
-		}
+		it.leftTable.Add(leftTuple)
 
 		processed++
 	}
@@ -217,30 +203,16 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 		copy(rightTupleCopy, rightTuple)
 		rightTuple = rightTupleCopy
 
-		// Extract join key from right tuple
-		key := NewTupleKey(rightTuple, it.rightIndices)
-
 		// Probe left table for matches
-		if leftMatchesVal, ok := it.leftTable.Get(key); ok {
-			leftMatches := leftMatchesVal.([]Tuple)
-			for _, leftTuple := range leftMatches {
-				// Combine tuples
-				joined := it.combineTuples(leftTuple, rightTuple, true)
-
-				// A nil seen map means a result key proves uniqueness.
-				if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
-					it.resultQueue = append(it.resultQueue, joined)
-				}
-			}
+		for _, leftTuple := range it.leftTable.Probe(rightTuple) {
+			// Every combined tuple is one the join answers: the join of
+			// two sets is a set
+			// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1).
+			it.resultQueue = append(it.resultQueue, it.combineTuples(leftTuple, rightTuple, true))
 		}
 
 		// Add to right table (tuple already copied above)
-		if existingVal, ok := it.rightTable.Get(key); ok {
-			existing := existingVal.([]Tuple)
-			it.rightTable.Put(key, append(existing, rightTuple))
-		} else {
-			it.rightTable.Put(key, []Tuple{rightTuple})
-		}
+		it.rightTable.Add(rightTuple)
 
 		processed++
 	}
@@ -275,12 +247,7 @@ func (it *symmetricHashJoinIterator) combineTuples(leftTuple, rightTuple Tuple, 
 
 // Tuple returns the current result tuple
 func (it *symmetricHashJoinIterator) Tuple() Tuple {
-	if it.resultPos < len(it.resultQueue) {
-		tuple := it.resultQueue[it.resultPos]
-		it.resultPos++
-		return tuple
-	}
-	return nil
+	return it.resultQueue[it.resultPos]
 }
 
 // RequiresCopy is false: every joined tuple is a fresh slice combineTuples

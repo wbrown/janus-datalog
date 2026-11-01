@@ -36,6 +36,16 @@ const (
 	QueryComplete                     = "query/completed"
 	QueryRewriteConditionalAggregates = "query/rewrite.conditional-aggregates"
 
+	// PlannerPlanMade is one plan made: the plan cache held none under the
+	// request's key, and the planner made one and stored it. It carries the
+	// query planned under KeyQuery and, under "bindings", the bindings the
+	// plan was made under, the symbols bound, the rule set and the
+	// invocations held, typed as the planner's own
+	// (docs/proposals/EXECUTION_PLANS_NOTHING_PROOF.md). A plan the cache
+	// serves reports nothing, so a run of a query the planner has planned
+	// reports none.
+	PlannerPlanMade = "planner/plan.made"
+
 	// Phase execution
 	PhaseBegin    = "phase/begin"
 	PhaseComplete = "phase/complete"
@@ -270,9 +280,12 @@ const (
 	// meaning, one type.
 	KeyStrategy = "strategy"
 
-	// What a binding-driven scan was driven by.
-	KeyBindingSize = "binding.size"
-	KeyScansOpened = "scans.opened"
+	// What a binding-driven scan was driven by, and the runs an arm addressed,
+	// standing in the bound's place when the arm addressed no single run: one
+	// per key sought, per binding resolved, per entity prefetched, and one
+	// from an arm that names its bound beside it.
+	KeyBindingSize   = "binding.size"
+	KeyRunsAddressed = "runs.addressed"
 
 	// Whether the operation this event completes ran to the end. A scan that
 	// aborted mid-iteration reports its funnel as far as it got, and this is
@@ -352,9 +365,9 @@ const (
 	// ScanMergeJoin merges the sorted binding stream against index order.
 	ScanMergeJoin ScanStrategy = "merge-join"
 
-	// ScanPerKeySeek opens one narrowed scan per distinct key of the bindings
-	// and probes the hash set against the keys' datoms as one stream, so it
-	// addresses one run per key and no single run.
+	// ScanPerKeySeek opens one scan over the pattern's extent, seeks it to
+	// each distinct key's run, and probes the hash set against the keys'
+	// datoms as one stream, so it addresses one run per key and no single run.
 	ScanPerKeySeek ScanStrategy = "per-key-seek"
 
 	// ScanPerBinding opens one scan per binding tuple, so it addresses no

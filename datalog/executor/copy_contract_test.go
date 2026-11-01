@@ -21,7 +21,7 @@ func TestAStreamingRelationAnswersTheCopyContractFromItsIterator(t *testing.T) {
 	reused := [][]interface{}{{int64(1), "a"}, {int64(2), "b"}, {int64(3), "c"}}
 
 	t.Run("an iterator handing out stable tuples", func(t *testing.T) {
-		rel := NewStreamingRelation(symbols, newMockIterator(stable))
+		rel := NewStreamingRelation(symbols, &sliceIterator{tuples: stable, pos: -1})
 		require.False(t, rel.RequiresCopy(), "the iterator's tuples are the caller's to keep")
 		var collected []Tuple
 		require.NoError(t, collectTuplesInto(&collected, rel))
@@ -34,7 +34,7 @@ func TestAStreamingRelationAnswersTheCopyContractFromItsIterator(t *testing.T) {
 	t.Run("a retaining reader allocates nothing per tuple over stable tuples", func(t *testing.T) {
 		allocsOver := func(tuples []Tuple) float64 {
 			return testing.AllocsPerRun(50, func() {
-				rel := NewStreamingRelation(symbols, newMockIterator(tuples))
+				rel := NewStreamingRelation(symbols, &sliceIterator{tuples: tuples, pos: -1})
 				collected := make([]Tuple, 0, len(tuples))
 				_ = collectTuplesInto(&collected, rel)
 			})

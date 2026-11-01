@@ -349,7 +349,7 @@ func TestCacheResolverInterface(t *testing.T) {
 			set, maxID, present, err := matcher.ResolveAddWins(eBytes, tagsAttr, addWins)
 			require.NoError(t, err)
 			assert.True(t, present, "the (E, A) carries datoms, so it is present")
-			_, hasDev := set["dev"]
+			_, hasDev := set[memberKey("dev")]
 			assert.True(t, hasDev)
 			assert.NotZero(t, maxID.Lamport)
 			assert.Positive(t, addWins.scanned, "resolution read the index and must report it")
@@ -525,8 +525,8 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
-			_, hasDeveloper := entry.ManySet()["developer"]
-			_, hasGolang := entry.ManySet()["golang"]
+			_, hasDeveloper := entry.ManySet()[memberKey("developer")]
+			_, hasGolang := entry.ManySet()[memberKey("golang")]
 			assert.True(t, hasDeveloper)
 			assert.True(t, hasGolang)
 		})

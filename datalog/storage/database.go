@@ -201,6 +201,21 @@ type DatabaseOptions struct {
 	Dump io.ReadSeeker
 }
 
+// newBinaryKeyEncoder is the encoder a database opens a backend with for a
+// CompressionThreshold option. 0 is the default of 512 bytes, a positive value
+// is the threshold, and a negative one turns compression off. Values below
+// about 500 bytes rarely compress, given the roughly 300 bytes of FSE table
+// and block header the compressed format carries.
+func newBinaryKeyEncoder(threshold int) *BinaryKeyEncoder {
+	if threshold == 0 {
+		threshold = 512
+	}
+	if threshold < 0 {
+		threshold = 0
+	}
+	return &BinaryKeyEncoder{CompressionThreshold: threshold}
+}
+
 // NewDatabaseWithOptions creates a database with the specified options.
 // This is the most flexible constructor, supporting all configuration options.
 //
@@ -267,17 +282,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		if named && !backend.Persistent && opts.Path != "" {
 			return nil, fmt.Errorf("backend %q holds its data in process: Path %q would be discarded and the data lost at Close", backend.Name, opts.Path)
 		}
-		encoder = &BinaryKeyEncoder{}
-		// Default compression threshold is 512 bytes. Use -1 to disable.
-		// Values below ~500 bytes rarely compress due to ~300 bytes of
-		// FSE table + block header overhead in the compressed format.
-		threshold := opts.CompressionThreshold
-		if threshold == 0 {
-			threshold = 512
-		}
-		if threshold > 0 {
-			encoder.CompressionThreshold = threshold
-		}
+		encoder = newBinaryKeyEncoder(opts.CompressionThreshold)
 		var err error
 		if store, err = backend.Open(opts.Path, encoder); err != nil {
 			return nil, fmt.Errorf("failed to open %s store: %w", backend.Name, err)
@@ -799,7 +804,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableSymmetricHashJoin: false, // Conservative for now
 
 		// Other executor options
-		EnableStreamingJoins:       false, // Keep false for stability
+		EnableStreamingJoins:       false, // Selects nothing in the hash join, which streams in every setting
 		EnableStreamingAggregation: true,  // Streaming aggregation
 
 		// Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple
@@ -2057,14 +2062,19 @@ func validateAttributeStorable(t *Transaction, a datalog.Keyword) error {
 	return nil
 }
 
-// memberKey derives a hashable map key for a cardinality-many set member:
-// a type tag plus the value's encoded bytes. []byte (and other non-comparable
-// values) cannot be used as Go map keys directly, so membership maps key by
-// this string and carry the original value separately. It is byte-for-byte the
-// same key resolveAddWinsSet uses internally, so the Set diff lines up with
-// stored membership. The encoding agrees with datalog.ValuesEqual on every
-// value the domain admits: NormalizeValue takes a signed zero as zero, and NaN
-// is excluded at the boundary.
+// memberKey is the key a value is held under in a cardinality-many set: a
+// type tag plus the value's encoded bytes, one key per value under
+// datalog.ValuesEqual, so a lookup by any representation of a member finds
+// it, an instant in any location or carrying a clock reading among them. The
+// encoding agrees with ValuesEqual on every value the domain admits:
+// NormalizeValue takes a signed zero as zero, and NaN is excluded at the
+// boundary. Every set keys through it: the cache entry's set and the
+// resolution result's members hold each member's original value under it,
+// and the Set diff reads membership by it. An index entry's key-encoded
+// value span equals it for a value the encoder stores raw and is the
+// compressed bytes or the blob hash past the compression threshold, so the
+// add-wins accumulator keys its states by the span and holds each surviving
+// member under the memberKey of its decoded value.
 func memberKey(v interface{}) string {
 	return string(append([]byte{byte(datalog.Type(v))}, datalog.ValueBytes(v)...))
 }
@@ -3379,7 +3389,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 			data := map[string]interface{}{
 				annotations.KeyDatomsScanned: report.scanned,
 				annotations.KeyValuesServed:  served,
-				annotations.KeyScansOpened:   1,
+				annotations.KeyRunsAddressed: 1,
 			}
 			addBoundFields(data, bound)
 			d.plannerOptions.Handler(annotations.Event{

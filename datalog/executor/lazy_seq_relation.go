@@ -278,7 +278,7 @@ func (it *selectionIterator) Next() bool {
 	return false
 }
 
-func (it *selectionIterator) Tuple() Tuple        { return it.current }
-func (it *selectionIterator) Close() error        { return it.source.Close() }
-func (it *selectionIterator) Error() error        { return it.source.Error() }
+func (it *selectionIterator) Tuple() Tuple       { return it.current }
+func (it *selectionIterator) Close() error       { return it.source.Close() }
+func (it *selectionIterator) Error() error       { return it.source.Error() }
 func (it *selectionIterator) RequiresCopy() bool { return it.source.RequiresCopy() }

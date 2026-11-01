@@ -357,9 +357,10 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 	outer := r.outerRel
 	envRel, setupErr := environmentRelation(r.ctx, r.given, outer.Symbols())
 
-	var seen *TupleKeyMap
+	var seen *TupleSet
 	if r.deduplicate {
-		seen = NewTupleKeyMap()
+		positions := allPositions(len(r.symbols))
+		seen = NewTupleSet(positions, positions, 0)
 	}
 
 	if r.options.Handler != nil {
@@ -575,7 +576,9 @@ type OrFallbackIterator struct {
 	// a later branch is never run for.
 	answered []*answeredKeys
 
-	seen *TupleKeyMap
+	// seen holds, under the deduplicating union, each emitted tuple as its
+	// own whole-tuple key (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T4).
+	seen *TupleSet
 
 	// prefetched is true once a window's entities have been prefetched into
 	// the EA cache, after which a branch of the EA arm's shape is built from
@@ -838,12 +841,14 @@ func (it *OrFallbackIterator) buildFromCache(branchIdx int, run *MaterializedRel
 	return tuples, branchSyms, it.err
 }
 
-// answeredKeys is the keys a fallback branch's runs have answered: each
-// result tuple's projection onto the key symbols the result holds, recorded
-// at the tuple's positions and probed at a keyed branch's run tuple at the
-// positions the run's own symbols give those key symbols.
+// answeredKeys is the keys a fallback branch's runs have answered: the
+// result tuples, each the member for its key read at the result's positions
+// of the key symbols it holds, probed by a keyed branch's run tuple at the
+// positions the run's own symbols give those key symbols
+// (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, P4). The members are the tuples
+// the branch's index retains, so they are stable for the query's lifetime.
 type answeredKeys struct {
-	keys      *TupleKeyMap
+	keys      *TupleSet
 	keySyms   []query.Symbol // the key symbols the branch's result holds
 	branchPos []int          // their positions in the branch's result tuple
 }
@@ -856,7 +861,7 @@ type answeredKeys struct {
 func (it *OrFallbackIterator) recordAnswered(branchIdx int, branchSyms []query.Symbol, tuples []Tuple) {
 	answered := it.answered[branchIdx]
 	if answered == nil {
-		answered = &answeredKeys{keys: NewTupleKeyMap()}
+		answered = &answeredKeys{}
 		for _, sym := range it.framing.key {
 			if bi := query.SymbolIndex(branchSyms, sym); bi >= 0 {
 				answered.keySyms = append(answered.keySyms, sym)
@@ -866,10 +871,15 @@ func (it *OrFallbackIterator) recordAnswered(branchIdx int, branchSyms []query.S
 		if len(answered.branchPos) == 0 {
 			return
 		}
+		answered.keys = NewTupleSet(nil, answered.branchPos, 0)
 		it.answered[branchIdx] = answered
 	}
 	for _, tuple := range tuples {
-		answered.keys.PutIfAbsentPositions(tuple, answered.branchPos, true)
+		_, hash, held := answered.keys.FindAt(tuple, answered.branchPos)
+		if held {
+			continue
+		}
+		answered.keys.Add(tuple, hash)
 	}
 }
 
@@ -902,7 +912,7 @@ func (it *OrFallbackIterator) unanswered(run *MaterializedRelation, branchIdx in
 		answered := false
 		for j := 0; j < branchIdx && !answered; j++ {
 			if earlier := it.answered[j]; earlier != nil {
-				_, answered = earlier.keys.GetPositions(tuple, runPos[j])
+				_, _, answered = earlier.keys.FindAt(tuple, runPos[j])
 			}
 		}
 		if !answered {
@@ -942,9 +952,14 @@ func (it *OrFallbackIterator) answer() bool {
 		if !advanced {
 			continue
 		}
-		if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(it.currentTuple), struct{}{}) {
-			return true
+		if it.seen != nil {
+			_, hash, held := it.seen.Find(it.currentTuple)
+			if held {
+				continue
+			}
+			it.seen.Add(it.currentTuple, hash)
 		}
+		return true
 	}
 }
 

@@ -206,8 +206,12 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 			// streaming group binding an argument is read in windows, the
 			// derivation seeded per window. An invocation of a predicate the
 			// scope holds reads the held relation, and one a group held in
-			// memory seeds through its projection; each joins its result at
-			// the collapse.
+			// memory seeds through its projection. A rename of a held
+			// predicate whose set the evaluation keeps joins into the first
+			// group sharing a symbol with it, through the set's index, the
+			// group on the left as the collapse joins it, and nothing is
+			// drained (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md,
+			// T3); every other result joins at the collapse.
 			if _, held := ctx.Derived(c.Name); !held && streamsThrough(c.Variables(), groups) {
 				var err error
 				groups, err = e.executeBoundInvocation(ctx, c, groups)
@@ -215,11 +219,27 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 					return nil, fmt.Errorf("clause %d (rule invocation) failed: %w", i, err)
 				}
 			} else {
-				newRel, err := e.executeRuleInvocation(ctx, c, groups)
+				newRel, set, err := e.executeRuleInvocation(ctx, c, groups)
 				if err != nil {
 					return nil, fmt.Errorf("clause %d (rule invocation) failed: %w", i, err)
 				}
-				groups = append(groups, newRel)
+				target := -1
+				for j := 0; set != nil && j < len(groups); j++ {
+					if hasSharedSymbols(groups[j], newRel) {
+						target = j
+						break
+					}
+				}
+				if target < 0 {
+					groups = append(groups, newRel)
+				} else {
+					group := groups[target]
+					common := CommonSymbols(group, newRel)
+					groups = append(Relations(nil), groups...)
+					groups[target] = reportJoin(e.options.Handler, group, newRel, func() Relation {
+						return hashJoinWithSet(group, newRel, common, e.options, set)
+					})
+				}
 			}
 			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(e.options.Handler))

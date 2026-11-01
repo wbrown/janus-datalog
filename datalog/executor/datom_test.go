@@ -165,9 +165,17 @@ func TestDatomJoinScenario(t *testing.T) {
 	t.Logf("nameRel size: %d", nameRel.Size())
 	t.Logf("ageRel size: %d", ageRel.Size())
 
+	// Verify symbols
+	symbols := joined.Symbols()
+	expectedSymbols := []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
+	if len(symbols) != len(expectedSymbols) {
+		t.Errorf("expected %d symbols, got %d", len(expectedSymbols), len(symbols))
+	}
+
 	// Check results
-	if joined.Size() != 2 {
-		t.Errorf("expected 2 joined results, got %d", joined.Size())
+	tuples := collectTuples(joined)
+	if len(tuples) != 2 {
+		t.Errorf("expected 2 joined results, got %d", len(tuples))
 
 		// Debug: Print what's in the relations
 		it := nameRel.Iterator()
@@ -185,20 +193,9 @@ func TestDatomJoinScenario(t *testing.T) {
 		it.Close()
 	}
 
-	// Verify symbols
-	symbols := joined.Symbols()
-	expectedSymbols := []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
-	if len(symbols) != len(expectedSymbols) {
-		t.Errorf("expected %d symbols, got %d", len(expectedSymbols), len(symbols))
-	}
-
 	// Check actual data
-	it := joined.Iterator()
-	defer it.Close()
-
 	results := make(map[string]int64) // name -> age
-	for it.Next() {
-		tuple := it.Tuple()
+	for _, tuple := range tuples {
 		if name, ok := tuple[1].(string); ok {
 			if age, ok := tuple[2].(int64); ok {
 				results[name] = age

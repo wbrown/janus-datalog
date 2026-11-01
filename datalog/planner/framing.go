@@ -216,6 +216,27 @@ func GivenSymbols(required, carried []query.Symbol, shortCircuit bool) []query.S
 	return given
 }
 
+// WindowFraming is how a data pattern or an invocation over a streaming
+// group frames its one branch, from the clause's symbols and the symbols
+// bound before it (docs/proposals/EXECUTION_PLANS_NOTHING_PROOF.md §1): the
+// required run is the clause's symbols among the bound, in the clause's
+// order, and the find is the rest, each as a variable; the given symbols are
+// the required run, each standing for itself. The planner's walk at
+// PlanQuery and the executor's two routes frame through it alike, so the
+// scope the walk plans is the one a run reads.
+func WindowFraming(symbols, bound []query.Symbol) Framing {
+	var required []query.Symbol
+	var find []query.FindElement
+	for _, sym := range symbols {
+		if query.ContainsSymbol(bound, sym) {
+			required = append(required, sym)
+		} else {
+			find = append(find, query.FindVariable{Symbol: sym})
+		}
+	}
+	return Framing{Required: required, Find: find, Given: required, StandsFor: required}
+}
+
 // BranchReads is the given symbols a branch reads, in the given order: a
 // symbol a data pattern mentions, or one any clause consumes, whether or not
 // another clause of the branch provides it, since a clause binding a run

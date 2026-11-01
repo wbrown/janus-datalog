@@ -34,9 +34,18 @@ type Context struct {
 
 	// derived holds, per predicate symbol, the relation the fixpoint holds
 	// for it: a predicate's relation over its canonical symbols, and, under
-	// the predicate's delta symbol, the tuples the last iteration added. An
+	// the predicate's delta symbol, the tuples the predicate gained since the
+	// copy reading it last ran. An
 	// invocation reads the relation held under the symbol it invokes.
 	derived map[query.Symbol]Relation
+
+	// sets holds, per predicate symbol, the derived set the running
+	// evaluation keeps for it, nil outside a body the fixpoint runs. The
+	// relation held under the predicate's symbol is the set's tuples up to its
+	// count, and a join at an invocation of the predicate probes the index the
+	// set keeps at the join key
+	// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md).
+	sets map[query.Symbol]*derivedSet
 
 	// continued holds the rule evaluations the enclosing form execution
 	// continues across its windows, by the invocation clause each evaluates,
@@ -69,6 +78,7 @@ func forkContext(ctx *Context) *Context {
 		run:          ctx.run,
 		rules:        ctx.rules,
 		derived:      ctx.derived,
+		sets:         ctx.sets,
 		continued:    ctx.continued,
 		held:         ctx.held,
 		cancellation: ctx.cancellation,
@@ -130,6 +140,14 @@ func (c *Context) Rules() *query.RuleSet {
 func (c *Context) WithDerived(derived map[query.Symbol]Relation) *Context {
 	next := c.WithEnvironment(c.env)
 	next.derived = derived
+	return next
+}
+
+// WithSets derives a context carrying the derived sets the running
+// evaluation keeps, by predicate symbol, replacing the map.
+func (c *Context) WithSets(sets map[query.Symbol]*derivedSet) *Context {
+	next := c.WithEnvironment(c.env)
+	next.sets = sets
 	return next
 }
 
@@ -195,6 +213,7 @@ func (c *Context) WithEnvironment(env Relation) *Context {
 		run:          c.run,
 		rules:        c.rules,
 		derived:      c.derived,
+		sets:         c.sets,
 		continued:    c.continued,
 		held:         c.held,
 		cancellation: c.cancellation,

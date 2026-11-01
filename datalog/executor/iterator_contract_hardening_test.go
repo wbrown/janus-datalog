@@ -151,7 +151,10 @@ func TestHashJoinPropagatesBuildAndProbeCloseErrors(t *testing.T) {
 			failAfter: 100,
 			closeErr:  closeErr,
 		}
-		require.ErrorIs(t, driveErr(HashJoin(build, probe, []query.Symbol{key})), closeErr)
+		// The join's iterator returns the probe's close error from Close, so
+		// the drive reads what Close returns.
+		_, err := CollectTuples(HashJoin(build, probe, []query.Symbol{key}), nil)
+		require.ErrorIs(t, err, closeErr)
 	})
 }
 

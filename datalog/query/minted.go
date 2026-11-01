@@ -63,12 +63,24 @@ func MagicSymbol(name Symbol, bound []bool) Symbol {
 	return mint(magicNamespace+"."+adornment(bound), name)
 }
 
-// DeltaSymbol names the delta of a predicate: the tuples the last iteration
-// of its stratum added, which a body's occurrence of the predicate reads
-// under semi-naive evaluation. The delta of reach is delta/reach, and the
-// delta of the adorned predicate adorned.bf/reach is delta.adorned.bf/reach.
+// DeltaSymbol names the delta of a predicate: in a copy, the tuples the
+// predicate gained since the copy last ran, which the copy's occurrence of
+// the predicate reads under semi-naive evaluation. The delta of reach is
+// delta/reach, and the delta of the adorned predicate adorned.bf/reach is
+// delta.adorned.bf/reach.
 func DeltaSymbol(name Symbol) Symbol {
 	return mint(deltaNamespace, name)
+}
+
+// IsDeltaSymbol reports whether a predicate is one DeltaSymbol minted: the
+// delta of a predicate, whose relation, in a copy, is the tuples the
+// predicate gained since the copy last ran. A copy's invocation of one leads
+// the plan of the scope it stands
+// in, since every other clause of that scope reads what those tuples reach
+// (docs/proposals/DELTA_LEADS_ITS_COPY_PROOF.md).
+func IsDeltaSymbol(name Symbol) bool {
+	kind, _, _ := strings.Cut(name.Namespace(), ".")
+	return kind == deltaNamespace
 }
 
 // seedHead is the head of a seed predicate no rule derives: one minted

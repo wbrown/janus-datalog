@@ -2,6 +2,7 @@ package planner
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -35,9 +36,12 @@ func NewClauseBasedPlanner(stats *Statistics, options PlannerOptions) *ClauseBas
 // plan is served from the cache and stored in it, under the query, the rule
 // set, the options, the symbols bound when the plan is made and the
 // invocations held, so a plan is made once per distinct text, rule set and
-// bound set. The handler (may be nil) is request-scoped annotation
-// state, threaded through planning rather than stored on the planner, so
-// concurrent queries through a shared planner do not race on it.
+// bound set. Each plan made is reported through the handler as
+// PlannerPlanMade, with the query, the bound symbols, the held set and
+// planning's time; a plan the cache serves is reported not at all. The
+// handler (may be nil) is request-scoped annotation state, threaded through
+// planning rather than stored on the planner, so concurrent queries through
+// a shared planner do not race on it.
 func (p *ClauseBasedPlanner) Plan(q *query.Query, bindings query.Bindings, handler annotations.Handler) (*RealizedPlan, error) {
 	cacheable := p.cache != nil
 	if cacheable {
@@ -46,9 +50,19 @@ func (p *ClauseBasedPlanner) Plan(q *query.Query, bindings query.Bindings, handl
 		}
 	}
 
+	var start time.Time
+	if handler != nil {
+		start = time.Now()
+	}
 	plan, err := p.planWithBindings(q, bindings, handler, nil)
 	if err != nil {
 		return nil, err
+	}
+	if handler != nil {
+		handler(annotations.TimedEvent(annotations.PlannerPlanMade, start, map[string]interface{}{
+			annotations.KeyQuery: q,
+			"bindings":           bindings,
+		}))
 	}
 
 	if cacheable {

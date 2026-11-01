@@ -54,7 +54,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 			EnableTrueStreaming: true,
 		}
 
-		streamSource := newMockIterator(tuples)
+		streamSource := &sliceIterator{tuples: tuples, pos: -1}
 		streamRel := NewStreamingRelationWithOptions(symbols, streamSource, streamOpts)
 
 		// Filter to 1% (every 100th tuple)
@@ -107,8 +107,8 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		// Test with materialized
 		matOpts := ExecutorOptions{}
 
-		matLeft := NewStreamingRelationWithOptions(leftSymbols, newMockIterator(leftTuples), matOpts)
-		matRight := NewStreamingRelationWithOptions(rightSymbols, newMockIterator(rightTuples), matOpts)
+		matLeft := NewStreamingRelationWithOptions(leftSymbols, &sliceIterator{tuples: leftTuples, pos: -1}, matOpts)
+		matRight := NewStreamingRelationWithOptions(rightSymbols, &sliceIterator{tuples: rightTuples, pos: -1}, matOpts)
 
 		matJoined := HashJoinWithOptions(matLeft, matRight, []query.Symbol{datalog.NewSymbol("?name")}, matOpts)
 		matProjected, err := matJoined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})
@@ -129,8 +129,8 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 			EnableTrueStreaming: true,
 		}
 
-		streamLeft := NewStreamingRelationWithOptions(leftSymbols, newMockIterator(leftTuples), streamOpts)
-		streamRight := NewStreamingRelationWithOptions(rightSymbols, newMockIterator(rightTuples), streamOpts)
+		streamLeft := NewStreamingRelationWithOptions(leftSymbols, &sliceIterator{tuples: leftTuples, pos: -1}, streamOpts)
+		streamRight := NewStreamingRelationWithOptions(rightSymbols, &sliceIterator{tuples: rightTuples, pos: -1}, streamOpts)
 
 		streamJoined := HashJoinWithOptions(streamLeft, streamRight, []query.Symbol{datalog.NewSymbol("?name")}, streamOpts)
 		streamProjected, err := streamJoined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})
