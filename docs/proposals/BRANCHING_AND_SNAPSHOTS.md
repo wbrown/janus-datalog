@@ -1097,6 +1097,12 @@ Steps 2–6 run without `db.mu` held, so a rollback never blocks the brief `db.m
 
 `Fork(name)` takes the name of a snapshot the database holds and returns a writable handle holding the database's state as of that snapshot, the state `AsOfSnapshot(name)` reads, writing as its own write stream (§4.1) and resolving by the parent's schema. Its store is the parent's published copy-on-write version as of the snapshot's point (§9.6). Forking records the fork in the parent as a `:db.branch/*` entity (§11.4) carrying the snapshot's name, the point it captured, and the point the branch holds the parent's state as of. While a snapshot of that name holds the captured point, `TruncateTo`'s descendant check (§10.7) refuses to rewind below the branch's point. `Fork` opens the transaction that records the fork before it looks up the snapshot, so a `TruncateTo` that starts holding writers while it runs waits for the record, and a fork begun after a `TruncateTo` starts holding writers is refused. It takes no snapshot of its own. The branch contract is the test set §12.1 states, run by every backend.
 
+The descendant check counts the branch records a database wrote under its own `ReplicaID` (`branchesForkedAfter`). A record it inherited from its parent was written under the parent's `ReplicaID`, and the check passes it by.
+- A dump carries every datom of the database, its `:db.branch/*` records among them (`ExportBinary` scans the whole EAVT index and skips only what a caller's `SkipEntity` names).
+- A database opened from the dump writes under a fresh `ReplicaID` unless `WithReplicaID` names one.
+- So the reopened database's check counts none of the records the dump carried. Those records name forks of the database the dump came from, not of the reopened one, so they guard none of its branches.
+- Opening it under the dump's `ReplicaID` would make it a second write stream under that id, beside the original, and the two could stamp the same ElementID (§4.1).
+
 `Database.Fork` errors on a store that cannot fork a branch. `BadgerStore` and `BadgerEmulatorStore` cannot until the arena prefix lands (§12.4).
 
 ### 12.4 The arena prefix on Badger and `badger-emulator`, and the stages after it

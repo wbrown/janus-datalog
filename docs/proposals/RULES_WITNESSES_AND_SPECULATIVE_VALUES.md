@@ -232,6 +232,8 @@ Import bypasses the transaction layer and preserves ElementIDs. So an imported c
 - `With` over a store with cardinality-one, many and vector attributes: adds, removes, and an add superseding a base value, each read back through a query, a pull and `PullInto`.
 - `With` against `Fork` on the memory-tree store: the same transaction applied both ways and every query in the matrix giving the same result.
 - `With` under predicate pushdown and under an `AsOf` base, checked against the base's own results plus the overlay's.
+- `History` of a `With` value: the base's history plus the overlay's datoms, each with its operation, as `History` of a fork with the transaction committed answers. `Since` at the base's newest point answers the overlay's datoms alone (`A_SINCE_VIEW_READS_THE_DATOMS_AFTER_A_POINT.md`).
+- `With` on a `History` handle is refused, naming `d.With(tx).History()` as the composition that answers.
 - `Diff` on a conjunctive query, on an aggregate, and on a closure, checked by hand.
 - A benchmark: `With` on the OHLC store with a thousand overlay datoms, against the base query.
 
@@ -242,6 +244,8 @@ Import bypasses the transaction layer and preserves ElementIDs. So an imported c
 Resolution across the two is index ordering plus filtering, as `CRDT_STREAMING_RESOLUTION.md` describes for one source. The overlay matcher merges the base scan and the overlay's datoms in the index's order, per `(E, A)` group, and hands the merged stream to `CRDTResolvingIterator`. A remove in the overlay is a tombstone the resolver already interprets. The matcher lands on the `PatternMatcher` seam, so `SourceRouter`, predicate pushdown and the EA cache compose with it unchanged. A `With` value has a cache of its own, as an `AsOf` handle does.
 
 `With` composes: `d.With(a).With(b)` reads `b` over `a` over `d`. It works on every backend. On the memory-tree store the same value is also reachable as a fork with the transaction applied. The two agree on every query, which the differential test asserts.
+
+`History` runs on a `With` value as on a branch. It answers the base's history plus the overlay's datoms, unresolved, each carrying its operation. A branch's `History` shows what it inherited plus its own writes (`BRANCHING_AND_SNAPSHOTS.md` §12.1), and a `With` value agrees with its fork on every query. `With` on a `History` handle is refused, and the refusal names `d.With(tx).History()`. A transaction's `Set` reads the committed state it diffs against (`TRANSACTION_ENVELOPES.md`), and a History handle resolves no state. An `AsOf` base resolves, so `With` over it stands.
 
 ### 3.2 Fork
 
@@ -349,7 +353,6 @@ Each runs under both optimizer modes. A benchmark that regresses the base query 
 
 ## 9. Open
 
-- `With` over a `History` handle: whether the overlay's datoms appear unresolved beside the base's history, or `With` refuses a history base.
 - Recursive aggregation (shortest paths, counts over closures): deferred, with the monotone cases named when reopened.
 - Fork on the Badger store: deferred, per [BRANCHING_AND_SNAPSHOTS.md](BRANCHING_AND_SNAPSHOTS.md).
 - A second grammar: deferred, per §6.

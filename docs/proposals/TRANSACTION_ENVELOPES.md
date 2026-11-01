@@ -46,7 +46,8 @@ The grouping feature must not alter the CRDT substrate established by [`CRDT.md`
 - Verify per-replica range lookup at boundaries: first/last operation of a range, the marker ID itself, IDs inside sequencer gaps from failed commits, and cross-replica interleaved ranges.
 - Verify digest mismatch under one TransactionID is reported as corruption and applies nothing.
 - Verify merge returns the combined `SnapshotBasis`, an explicit post-merge `Snapshot(name)` captures exactly that basis as its `ParentBasis`, and repeated bidirectional syncs of quiesced databases append no envelopes.
-- Verify a `Count == 0` envelope remains a legal encoding that round-trips storage and JDZL.
+- Verify a commit of a transaction with no operations writes no envelope and returns the newest TransactionID the store holds.
+- Verify a `Count == 0` envelope, which no commit produces, remains a legal encoding that round-trips storage and JDZL.
 - Verify `Snapshot` on an empty database yields a valid empty `ParentBasis` distinct from History, and `AsOfSnapshot` excludes the marker entity.
 - Verify `TransactionByOperation` falls back from a `TxRange` miss to `TxMemberByOperation` for explicit-membership envelopes.
 - Verify JDZL digest validation rejects a corrupted datom chunk, a missing operation, and an operation claimed by two records.
@@ -66,7 +67,7 @@ The grouping feature must not alter the CRDT substrate established by [`CRDT.md`
 
 ## Primary representation
 
-Add one append-only transaction envelope per successful logical commit:
+Add one append-only transaction envelope per successful logical commit that holds an operation:
 
 ```go
 type TransactionID struct {
@@ -101,7 +102,7 @@ The record stores exactly one basis: `ParentBasis`, captured under the commit se
 
 `Digest` is the SHA-256 of the canonical envelope encoding (parent basis, instant, membership, ordered datoms). Keys-only storage cannot cheaply compare "same content" on duplicate delivery; the digest makes idempotency a point compare, and it is what the merge lineage check compares over shared history.
 
-Membership is explicit in the contract and kind-tagged in the representation: no consumer may assume an allocation convention, but every current commit mode produces one contiguous authoritative range, and `MembershipKind` records that fact instead of materializing million-element slices. Contiguous membership stores only `[First..Last]` plus `Count` and derives the member list; the explicit list is the semantic fallback for any future non-contiguous envelope. `Count == 0` remains a legal datom-less encoding with no current producer. The range doubles as the scalar visibility cut and an integrity check.
+Membership is explicit in the contract and kind-tagged in the representation: no consumer may assume an allocation convention, but every current commit mode produces one contiguous authoritative range, and `MembershipKind` records that fact instead of materializing million-element slices. Contiguous membership stores only `[First..Last]` plus `Count` and derives the member list; the explicit list is the semantic fallback for any future non-contiguous envelope. A transaction with no operations writes no envelope, and its commit returns the newest TransactionID the store holds (`../bugs/BUG_AN_EMPTY_COMMIT_WRITES_A_COMMIT_MARK.md`). So `Count == 0` is a legal datom-less encoding that no commit produces. The range doubles as the scalar visibility cut and an integrity check.
 
 The envelope is the primary representation of transaction grouping. Datom indices remain the primary representation of queryable CRDT state.
 

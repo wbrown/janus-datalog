@@ -4,7 +4,7 @@ Every nested form of a query states its interface in a header. The header is com
 
 ## 1. Goals
 
-The design answers to the goals below. Two of them are product choices the other goals do not settle: the headerless forms (goal 10) and the binding grammar (goal 12). Each of those two states the alternative's cost beside it.
+The design answers to the goals below. Two of them are product choices the other goals do not settle: the headerless forms (goal 10) and Datomic's forms (goal 12). Each of those two states the alternative's cost beside it.
 
 1. The most correct fix, not the tactical one: the design question is derived to the most correct fix for Janus Datalog.
 2. Clarity is not diluted: Janus Datalog's unusual clarity is kept.
@@ -17,7 +17,13 @@ The design answers to the goals below. Two of them are product choices the other
 9. The design is concrete: a design, not a collection of rulings.
 10. The language keeps headerless `or`, `or-default` and `not`, including the existential `not`. Two alternatives are priced. A header on every nested form makes every author rewrite every headerless form in every query. The uniform same-set rule refuses the fourth example of §2.3, which would then have to be written as `not-join`.
 11. The engine's own queries run on every database it opens, whatever the user's schema declares and whether or not the database refuses unknown attributes.
-12. The binding grammar is Datomic's. A subquery's binding, an expression's destructuring and an `:in` entry take the forms Datomic's query reference gives (`bind-scalar`, `bind-tuple`, `bind-coll`, `bind-rel`), with Datomic's meanings. A spelling of janus's own is a synonym of a Datomic form, never a form with a meaning of its own. The alternative's cost: a query written for Datomic would read differently here, and a janus spelling with its own meaning would give one text two readings across the two engines.
+12. A form Datomic gives takes Datomic's meaning, in its query grammar and in its database views. Among them:
+    - the binding forms (`bind-scalar`, `bind-tuple`, `bind-coll`, `bind-rel`) that a subquery's binding, an expression's destructuring and an `:in` entry take
+    - the source a database function's first argument names
+    - a data pattern's fifth position, `?added`
+    - the `as-of`, `since` and `history` views
+
+    A spelling of janus's own for a Datomic form is a synonym of it, never a form with a meaning of its own. A form for what Datomic has no form for, such as `or-default` or a function over a vector, is janus's own. The alternative's cost: a query written for Datomic would read differently here, and a janus spelling with its own meaning would give one text two readings across the two engines.
 
 ## 2. The language
 

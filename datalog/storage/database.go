@@ -3118,10 +3118,9 @@ func (d *Database) pullMatcher(pattern *query.PullPattern) (executor.PatternMatc
 // - CardinalityMany: Add-wins set
 // - CardinalityVector: RGA ordered list
 //
-// The method uses difference-based logic:
-// - Checks which attributes are already cached for this entity
-// - If few missing: individual GetOrResolve calls
-// - If many missing: full EAVT scan then resolve
+// With the cache on, it partitions the attributes by what the cache has
+// tracked for the entity, and resolves each attribute of both parts through
+// GetOrResolve, which serves a fresh entry and resolves from storage otherwise.
 //
 // Returns a map of keyword -> resolved value. Missing attributes are not included.
 // An attribute asked that is wider than storage holds is refused before any

@@ -52,9 +52,35 @@ delegates to `$` alone through `EntityLookupMatcher`; `query.RuleInvocation`,
 which carries no source, and the evaluation of its rules over one; and the
 vocabulary roster, which collects a rule body's attributes on `$`. That is
 the parser, the query package, the executor's routing, the rule evaluation
-and the roster, for two spellings the language expresses another way. It is
-taken up when a use needs the spelling, which is the failure the cost
-answers.
+and the roster, for two spellings the language expresses another way.
+
+## The use
+
+A downstream build keeps two stores and joins them in its queries. It reads
+attributes that a run may lack from the second store, and declares them
+`NeverZeroValue`, so a missing value is an absent datom. This query is
+refused:
+
+```clojure
+[:find ?r ?f
+ :in $ $build
+ :where [$build ?r :run/how _]
+        [(get-else $build ?r :run/failed "") ?f]]
+```
+
+The refusal reads `get-else: expected database reference ($), got $build`.
+
+The use reaches the database function's form alone. No use reaches the
+invocation's prefix. The two fixes touch different code:
+
+- The function's source touches the parser's `validateDatabaseRef`, the
+  function types, which carry no source, the routing through
+  `EntityLookupMatcher`, and the roster for a function's attribute.
+- The invocation's prefix touches `parseRuleInvocation`,
+  `query.RuleInvocation`, the evaluation of its rules over a source, and the
+  roster for a rule body's attributes.
+
+So the function's form can be fixed without the invocation's.
 
 ## Tests
 
