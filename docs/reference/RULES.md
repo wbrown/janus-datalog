@@ -163,9 +163,10 @@ decide what is derived.
 An invocation with no bound argument derives its predicate whole. The strata
 it needs are those holding the predicate or a predicate a needed body
 invokes. They evaluate in order, each to a fixpoint. The invocation reads the
-predicate's materialized relation, which keeps an index per key its joins
-read, so a join into it probes the index with the other side's tuples and
-drains nothing of it. One such invocation is rewritten first: a
+predicate's materialized relation, which carries nothing of the evaluation.
+Inside a body, a join at an invocation of a predicate the fixpoint holds
+probes an index the predicate's set keeps per key its joins read, with the
+group's tuples, and drains nothing of the set. One such invocation is rewritten first: a
 free invocation of a predicate one of whose needed bodies invokes a predicate
 with required positions is rewritten with its head all free, so each required
 predicate is adorned from the clauses before its invocation and derived in
@@ -265,8 +266,8 @@ window's iterations from zero.
 A rule body is planned by the query planner as a query of its own, under the
 database's planner options. Its plan enters the plan cache under its own
 text, which carries `%` and the delta symbol. An invocation of a delta,
-`delta/reach` or `delta.adorned.bf/reach`, reads the tuples the iteration
-before added, so the planner schedules it first in the scope its occurrence
+`delta/reach` or `delta.adorned.bf/reach`, reads the tuples its predicate
+gained since the copy last ran, so the planner schedules it first in the scope its occurrence
 stands in, the body for an occurrence at the top level and the branch or the
 inner query for one inside a form, and the clauses after it in that scope
 seek on the bindings it provides. An invocation of a predicate the

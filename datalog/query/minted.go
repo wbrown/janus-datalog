@@ -72,8 +72,9 @@ func DeltaSymbol(name Symbol) Symbol {
 }
 
 // IsDeltaSymbol reports whether a predicate is one DeltaSymbol minted: the
-// delta of a predicate, whose relation is the tuples the iteration before
-// added. A copy's invocation of one leads the plan of the scope it stands
+// delta of a predicate, whose relation, in a copy, is the tuples the
+// predicate gained since the copy last ran. A copy's invocation of one leads
+// the plan of the scope it stands
 // in, since every other clause of that scope reads what those tuples reach
 // (docs/proposals/DELTA_LEADS_ITS_COPY_PROOF.md).
 func IsDeltaSymbol(name Symbol) bool {

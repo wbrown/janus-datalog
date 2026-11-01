@@ -20,13 +20,14 @@ import (
 // Relation.Iterator(), which returns independent iterator instances.
 type hashJoinIterator struct {
 	buildIndex *JoinIndex
-	// kept is the index the build side's set keeps at the join key, when the
-	// build side is a view of a derived set
+	// kept is the index a derived set keeps at the join key, when the caller
+	// named the set whose tuples the build side is
 	// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2, T3).
 	// It is probed at probeIndices, the probe side's positions of the key,
-	// and bounded at bound, the view's count. A match is an ordinal naming a
-	// tuple of keptTuples, the view's tuples. Exactly one of buildIndex and
-	// kept is nil: a build side that is no view is drained into buildIndex.
+	// and bounded at bound, the build side's count. A match is an ordinal
+	// naming a tuple of keptTuples, the set's tuples up to that count. Exactly
+	// one of buildIndex and kept is nil: a build side with no set named is
+	// drained into buildIndex.
 	kept         *ordinalIndex
 	keptTuples   []Tuple
 	probeIndices []int
@@ -124,7 +125,7 @@ func (it *hashJoinIterator) Next() bool {
 
 		// Look up matches in the build index — a positional probe, so no key
 		// materializes, and a hit is the key's group of held tuples, or of
-		// the view's ordinals under a kept index.
+		// the set's ordinals under a kept index.
 		if it.kept != nil {
 			if ordinals := it.kept.probe(it.currentProbeTuple, it.probeIndices, it.bound); len(ordinals) > 0 {
 				it.ordinals, it.matchIdx, it.matchCount = ordinals, 0, len(ordinals)
@@ -198,8 +199,8 @@ func (it *hashJoinIterator) emitProbeAnnotation() {
 }
 
 // emitJoinStrategyAnnotation reports which join shape was chosen and what it
-// was chosen over, and whether the build side is a view probed through the
-// index its set keeps, under build_kept. Callers guard on the handler being
+// was chosen over, and whether the build side is probed through the index a
+// derived set keeps, under build_kept. Callers guard on the handler being
 // non-nil.
 //
 // left and right are rendered by type, not by value: the datum is which
@@ -240,11 +241,26 @@ func HashJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 }
 
 // HashJoinWithOptions performs a hash join with explicit options, reporting its
-// strategy and probe counters through opts.Handler when one is set.
-func HashJoinWithOptions(
+// strategy and probe counters through opts.Handler when one is set. Its build
+// side is drained into the join's index.
+func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts ExecutorOptions) Relation {
+	return hashJoinWithSet(left, right, joinSyms, opts, nil)
+}
+
+// hashJoinWithSet is the hash join of left and right on joinSyms. A non-nil
+// rightSet is the derived set whose first right.Size() tuples right is, at
+// the set's positions under right's symbols: right is the build side, probed
+// through the index the set keeps at the join key and bounded at right's
+// count, and nothing is drained
+// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2, T3).
+// With no set, the materialized side beside a stream is the build side, and
+// of two materialized sides the smaller, the right on a tie, and the build
+// side is drained into the join's index.
+func hashJoinWithSet(
 	left, right Relation,
 	joinSyms []query.Symbol,
 	opts ExecutorOptions,
+	rightSet *derivedSet,
 ) Relation {
 	// Check if we should use symmetric hash join for streaming relations
 	if opts.EnableSymmetricHashJoin {
@@ -296,25 +312,19 @@ func HashJoinWithOptions(
 	resultWidth := len(leftSyms) + len(rightNonJoinIndices)
 	resultProperties := joinProperties(left.Properties(), right.Properties(), joinSyms)
 
-	// Choose the build side. A side that is a view of a derived set is the
-	// build side, probed through the index its set keeps at the join key
-	// with nothing drained, and of two views the one with more tuples
-	// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T3).
-	// Otherwise the materialized side beside a stream is the build side, and
-	// of two materialized sides the smaller, the right on a tie.
+	// Choose the build side. The right side whose set the caller names is the
+	// build side, probed through the index the set keeps at the join key with
+	// nothing drained (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md,
+	// T3). Otherwise the materialized side beside a stream is the build side,
+	// and of two materialized sides the smaller, the right on a tie.
 	var buildRel, probeRel Relation
 	var buildIndices, probeIndices []int
 	var buildIsLeft bool
 
-	leftView, rightView := viewOf(left), viewOf(right)
 	leftStreaming := isStreaming(left)
 	rightStreaming := isStreaming(right)
 
-	if leftView != nil && (rightView == nil || leftView.Size() > rightView.Size()) {
-		buildRel, probeRel = left, right
-		buildIndices, probeIndices = leftIndices, rightIndices
-		buildIsLeft = true
-	} else if rightView != nil {
+	if rightSet != nil {
 		buildRel, probeRel = right, left
 		buildIndices, probeIndices = rightIndices, leftIndices
 		buildIsLeft = false
@@ -349,16 +359,16 @@ func HashJoinWithOptions(
 		}
 	}
 	buildKeysUnique := hasKeyWithin(buildRel.Properties().Keys, joinSymSet)
-	// kept is the index the build side's set keeps at the join key when the
-	// build side is a view, asked for through the view so it holds every
-	// tuple of the view, bounded at the view's count over the view's tuples.
+	// kept is the index rightSet keeps at the join key, asked for at right's
+	// count so it holds every tuple of right, and probed bounded at that
+	// count over the set's tuples up to it.
 	var kept *ordinalIndex
 	var keptTuples []Tuple
 	bound := 0
-	if view := viewOf(buildRel); view != nil {
-		bound = view.Size()
-		kept = view.set.index(buildIndices, bound)
-		keptTuples = view.tuples
+	if rightSet != nil {
+		bound = right.Size()
+		kept = rightSet.index(buildIndices, bound)
+		keptTuples = rightSet.tuples[:bound:bound]
 	}
 	buildSide := "right"
 	if buildIsLeft {
@@ -372,9 +382,9 @@ func HashJoinWithOptions(
 	var buildErr error
 	var buildCount int
 	if kept != nil {
-		// The build side is a view: the kept index is the build, and the
-		// build event reports the tuples it holds, which are at least the
-		// view's, with nothing copied
+		// The build side is the set's tuples up to its count: the kept index
+		// is the build, and the build event reports the tuples it holds,
+		// which are at least the build side's, with nothing copied
 		// (A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, L4).
 		buildCount = bound
 		if buildKeysUnique && kept.fanout {
@@ -515,8 +525,8 @@ func HashJoinWithOptions(
 	}
 
 	// Probe phase. An index holding no tuple matches no probe tuple
-	// (JoinIndex.Probe answers nil for every key, and a view of no tuples
-	// bounds every probe at zero), so the join is empty whatever the probe
+	// (JoinIndex.Probe answers nil for every key, and a kept build of count
+	// zero bounds every probe at zero), so the join is empty whatever the probe
 	// side holds and the probe side is never opened: a stream among the
 	// probe sides keeps its one use
 	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). A drained build
@@ -742,15 +752,6 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 func isStreaming(rel Relation) bool {
 	_, ok := rel.(*StreamingRelation)
 	return ok
-}
-
-// viewOf is rel as a view of a derived set, a materialized relation carrying
-// the set it views, and nil when rel is no view.
-func viewOf(rel Relation) *MaterializedRelation {
-	if mat, ok := rel.(*MaterializedRelation); ok && mat.set != nil {
-		return mat
-	}
-	return nil
 }
 
 func crossProduct(left, right Relation) Relation {

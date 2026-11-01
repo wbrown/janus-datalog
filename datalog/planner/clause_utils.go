@@ -168,7 +168,8 @@ func (s selection) clauseSelectable(clause query.Clause) bool {
 // that constant's extent, which the selection takes as visible selectivity;
 // whether the rewrite binds an invocation's position from such a pattern is
 // the rewrite's own rule (REWRITE_ORDER_PROOF.md F5). A delta's relation is
-// the tuples the iteration before added (DELTA_LEADS_ITS_COPY_PROOF.md). The
+// the tuples its copy's marked predicate gained since the copy last ran
+// (A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md §1). The
 // selection takes such a clause only when no other clause is selectable,
 // since a scan placed before an invocation the seed's bindings reach
 // multiplies that invocation's magic set by the scan's extent, and a form
@@ -232,8 +233,8 @@ func scansAWholeExtent(clause query.Clause, available map[query.Symbol]bool, rul
 // invocation of a predicate the seed restricts derives nothing at its clause:
 // it reads a relation holding only what the seed reaches, and scoreClause
 // gives it the lead over every pattern, so it waits on no provider. An
-// invocation of a delta reads the tuples the iteration before added and
-// leads the scope it stands in, so it waits on no provider either
+// invocation of a delta reads the tuples its predicate gained since the copy
+// last ran and leads the scope it stands in, so it waits on no provider either
 // (DELTA_LEADS_ITS_COPY_PROOF.md).
 //
 // The provider scan carries subqueryDependsOnPendingProvider's restrictions,

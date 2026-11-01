@@ -178,10 +178,13 @@ func newAddWinsAccumulator(m *PatternMatcher) *addWinsAccumulator {
 	}
 }
 
-// observeSpan records one entry from its key-encoded value span, which is
-// the value's memberKey. The span may alias iterator memory: the lookup does
-// not allocate, and the span is copied once on first sight of a distinct
-// value.
+// observeSpan records one entry from its key-encoded value span, the type
+// tag and the value's encoding as the key holds it: the value's memberKey
+// for a value the encoder stores raw, and the compressed bytes or the blob
+// hash under their own tags past the compression threshold. The span keys
+// the state and nothing else; finish holds the member under its memberKey.
+// The span may alias iterator memory: the lookup does not allocate, and the
+// span is copied once on first sight of a distinct value.
 func (a *addWinsAccumulator) observeSpan(vSpan []byte, tx datalog.ElementID, op datalog.CRDTOp) {
 	if a.matcher.shouldFilterTx(tx) {
 		return
@@ -218,15 +221,15 @@ func (a *addWinsAccumulator) observeDatom(datom *datalog.Datom) {
 
 // finish resolves each value's membership using add-wins semantics.
 // Members observed as spans decode here, through blobs — only survivors
-// pay for a value decode. A member is held under its state's key, which is
-// its memberKey.
+// pay for a value decode. A member is held under the memberKey of its
+// decoded value, whatever span its state was keyed by.
 func (a *addWinsAccumulator) finish(blobs BlobReader) (*SetResolutionResult, error) {
 	// states holds one entry per distinct value observed within the temporal
 	// bound, from an add or a remove alike, so a non-empty map is exactly "this
 	// (E, A) has datoms" — the question membership cannot answer.
 	a.result.Present = len(a.states) > 0
 
-	for key, state := range a.states {
+	for _, state := range a.states {
 		inSet := false
 		if state.hasAdd && !state.hasRemove {
 			// Only adds, no removes - definitely in set
@@ -255,7 +258,7 @@ func (a *addWinsAccumulator) finish(blobs BlobReader) (*SetResolutionResult, err
 			}
 			value = decoded
 		}
-		a.result.Members[key] = value
+		a.result.Members[memberKey(value)] = value
 	}
 
 	return a.result, nil

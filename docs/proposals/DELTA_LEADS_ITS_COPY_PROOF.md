@@ -21,7 +21,7 @@ Every name below is the code's, given a symbol for the proof.
 
 ## 2. Preconditions
 
-- **P1 (the delta's content).** The relation held under a delta symbol is the tuples the iteration before added to the predicate's set, or, for a lower copy at a window's iteration zero, the tuples the window added to the lower predicate, and nothing else (`runStratum`, SCOPE §4.2).
+- **P1 (the delta's content).** The relation held under a delta symbol is the tuples the iteration before added to the predicate's set, or, for a lower copy at a window's iteration zero, the tuples the window added to the lower predicate, and nothing else (`runStratum`, SCOPE §4.2). Withdrawn: under the passes of `A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md` (its §1), a delta copy's delta is the tuples its marked predicate gained since the copy last ran, and the later window's first run stands.
 - **P2 (the order as it stands).** A delta invocation of a magic or adorned predicate is seed-restricted: rank 1, scored 500 above an invocation of any other predicate, and held by no gate. A delta invocation of any other predicate has, at its copy's first selection, no constant and no available argument, so it scans a whole extent: rank 0, selected only when no other clause is selectable, and held by the gate behind any selectable provider of its arguments. Within rank 1 the score reads an invocation's constants, its available arguments and the symbols it provides, 10 each, so a seed-restricted delta invocation of fewer positions scores below a seed-restricted invocation of more.
 - **P3 (the copy's answers).** A copy's answers are the derivations through its body whose marked premise is in the delta (`DELTA_COPY_RUNS_ON_ITS_DELTA_PROOF.md` P1).
 - **P4 (the rewrite reads no delta).** The rewrite plans the bodies as the rule set holds them, which carry no delta symbol; `markDelta` runs after the rewrite, on the set it produced (`REWRITE_ORDER_PROOF.md` §1, `PlanStratum`).
@@ -67,9 +67,9 @@ The change carries these tests, each pinning the theorem named, written and run 
   - `scansAWholeExtent` answers false for a delta invocation.
   - `invocationDependsOnPendingProvider` holds no delta invocation.
 - `datalog/planner/clause_phasing.go`, `selectPhaseClauses`: a delta invocation ranks above every other clause.
-- `datalog/planner/rule_bodies.go`, `planBody`'s doc: the delta invocation leads its copy, a magic or adorned predicate leads the patterns, and any other invocation joins them at collapse.
+- `datalog/planner/rule_bodies.go`, `planBody`'s doc: a delta leads the scope its occurrence stands in, a magic or adorned predicate leads the body's patterns, and any other invocation joins them at collapse.
 - `REWRITE_ORDER_PROOF.md` §1, the definition of a clause that scans a whole extent, and §6, the rank: a delta invocation scans no whole extent and ranks above every clause, edited before the code the rank governs.
-- `docs/reference/RULES.md`, "Evaluation": the paragraph on what a body's invocations read states that the delta leads its copy.
+- `docs/reference/RULES.md`, "Evaluation": the paragraph on what a body's invocations read states that the planner schedules a delta invocation first in the scope its occurrence stands in, the body for an occurrence at the top level and the branch or the inner query for one inside a form.
 - `BUG_FIXPOINT_READS_THE_WHOLE_MAGIC_SET_PER_ITERATION.md`: item 2's status.
 - The tests of §5.
 

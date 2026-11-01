@@ -2,9 +2,9 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -33,9 +33,10 @@ func main() {
 }
 
 // run is the whole run under the flags: it parses them, starts the profiles
-// asked for, and dispatches to the command the flags name, answering that
-// command's failure as its error.
-func run() error {
+// asked for, and dispatches to the command the flags name. It answers every
+// failure as its error, the command's and the profiles' alike, a profile
+// written at the run's end joining its failure to the command's.
+func run() (err error) {
 	var dbPath string
 	var interactive bool
 	var help bool
@@ -105,33 +106,33 @@ func run() error {
 	}
 
 	if cpuProfilePath != "" {
-		profile, err := os.Create(cpuProfilePath)
-		if err != nil {
-			log.Fatalf("-cpuprofile: %v", err)
+		profile, createErr := os.Create(cpuProfilePath)
+		if createErr != nil {
+			return fmt.Errorf("-cpuprofile: %w", createErr)
 		}
-		if err := pprof.StartCPUProfile(profile); err != nil {
-			log.Fatalf("-cpuprofile: %v", err)
+		if startErr := pprof.StartCPUProfile(profile); startErr != nil {
+			return errors.Join(fmt.Errorf("-cpuprofile: %w", startErr), profile.Close())
 		}
 		defer func() {
 			pprof.StopCPUProfile()
-			if err := profile.Close(); err != nil {
-				log.Fatalf("-cpuprofile: %v", err)
+			if closeErr := profile.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("-cpuprofile: %w", closeErr))
 			}
 		}()
 	}
 	if memProfilePath != "" {
-		profile, err := os.Create(memProfilePath)
-		if err != nil {
-			log.Fatalf("-memprofile: %v", err)
+		profile, createErr := os.Create(memProfilePath)
+		if createErr != nil {
+			return fmt.Errorf("-memprofile: %w", createErr)
 		}
 		defer func() {
 			// The allocs profile is current as of the last collection.
 			runtime.GC()
-			if err := pprof.Lookup("allocs").WriteTo(profile, 0); err != nil {
-				log.Fatalf("-memprofile: %v", err)
+			if writeErr := pprof.Lookup("allocs").WriteTo(profile, 0); writeErr != nil {
+				err = errors.Join(err, fmt.Errorf("-memprofile: %w", writeErr))
 			}
-			if err := profile.Close(); err != nil {
-				log.Fatalf("-memprofile: %v", err)
+			if closeErr := profile.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("-memprofile: %w", closeErr))
 			}
 		}()
 	}

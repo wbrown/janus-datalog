@@ -18,7 +18,7 @@ Every name below is the code's, given a symbol for the proof.
 - A **lower copy** is the same replacement for an occurrence of a seed-restricted predicate of a lower stratum (`Bodies.Lower`).
 - The **marked predicate** of a copy is the predicate whose delta symbol the copy invokes.
 - The **set** of a predicate is its `derivedSet`: the tuples derived so far, each held once (`absorb`).
-- The **delta** of an iteration is, per predicate, the tuples the iteration before added to its set (`runStratum`'s `delta`).
+- The **delta** of an iteration is, per predicate, the tuples the iteration before added to its set (`runStratum`'s `delta`). Withdrawn: under `A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md` (its §1), a copy's delta is the tuples its marked predicate gained since the copy last ran.
 - A **derivation** of a tuple through a body is an assignment of the body's variables under which every clause holds, the occurrences reading the sets.
 - A derivation **fires** in an iteration when a copy run in that iteration answers its tuple.
 

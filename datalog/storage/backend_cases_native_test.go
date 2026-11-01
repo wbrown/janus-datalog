@@ -45,11 +45,7 @@ func appendNativeReopenCases(cases []reopenBackendCase) []reopenBackendCase {
 			priorStore = nil
 		}
 
-		encoder := &BinaryKeyEncoder{}
-		if opts.CompressionThreshold != 0 {
-			encoder.CompressionThreshold = opts.CompressionThreshold
-		}
-		store, err := NewBadgerStore(path, encoder)
+		store, err := NewBadgerStore(path, newBinaryKeyEncoder(opts.CompressionThreshold))
 		require.NoError(t, err)
 		priorStore = store
 

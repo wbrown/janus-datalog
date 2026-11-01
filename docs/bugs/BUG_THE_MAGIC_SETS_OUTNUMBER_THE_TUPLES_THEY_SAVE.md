@@ -13,7 +13,7 @@ over the same rules. `TestRules_ABoundInvocationOverTheKernelFactsReportsLessWor
 are the benchmark's `bound` and `unfilled` cells on memory-trees with the
 algebra optimizer on, one execution each under `-memprofile`, read with
 `go tool pprof -sample_index=alloc_space`. Every figure is read on the tree
-at de67b6a on an Apple M5.
+at 75d7f56 on an Apple M5.
 
 ## The figures
 
@@ -84,7 +84,7 @@ the root's `bb` adornment, `m` and `n` bound, the recursive occurrence binds
 positions are bound, the site is adorned `bb`, and its magic rule reads the
 seed and the occurrence: `magic.bb/step` holds, for each of the sixteen
 demanded pairs, every cell the recursion reaches for the pair's vector,
-16 × 5,867 = 93,878 tuples, and `adorned.bb/step` holds 19. The same body
+93,878 tuples over the sixteen, and `adorned.bb/step` holds 19. The same body
 under the `bf` copy, `n` free, adorns `(step ?c ?n)` `bf`, with the magic
 set the cells the recursion reaches, 5,843, and the copy 5,191 tuples. The
 `bb` copy's answers are among the `bf` copy's: both demands project onto

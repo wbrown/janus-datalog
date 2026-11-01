@@ -4,7 +4,7 @@
 
 - The code: `datalog/storage/crdt_resolving_iterator.go` (`CRDTResolvingIterator`, `Next`, `startNewGroup`, `processAddWins`, `accumulateRGA`, `resolveRGAGroup`, `Seek`), `datalog/storage/hash_join_matcher.go` (`matchWithHashJoin`, `hashJoinIterator`), `datalog/storage/matcher_relations.go` (`matchCardinalityManyScanAllEntities`).
 - The runtime: `internal/runtime/maps/map.go` in the Go distribution (`Map`, `NewMap`, `growToSmall`, `Clear`, `clearSmall`), the implementation of the builtin map.
-- The failure: the allocation profile of the reproduction of `docs/bugs/JANUS_REPRO_FILLED.md`, its `unfilled` query through the CLI. The hash-join arm over `:cell/next` seeks one key at a time, and the resolving iterator resolves one group per seek. At every group start it makes two maps, and the group's first emitted value allocates the first map's slot group. Those three allocations per group are the profile's largest share on the storage side. `PERFORMANCE_STATUS.md` carries the figures.
+- The failure: the allocation profile of the `unfilled` query of the downstream's first report through the CLI, over the dump and the rule set that report shipped, which the tree does not carry. The hash-join arm over `:cell/next` seeks one key at a time, and the resolving iterator resolves one group per seek. At every group start it makes two maps, and the group's first emitted value allocates the first map's slot group. Those three allocations per group are the profile's largest share on the storage side. `PERFORMANCE_STATUS.md` carries the figures.
 
 ## 1. Definitions
 

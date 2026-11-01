@@ -263,12 +263,15 @@ Some bound: the rule set rewritten for the binding pattern (magic sets)
   Seed, at the run: the bound values, projected from the phase's relations, as the magic predicate's relation
 For each needed stratum, in order, each rule's body planned as a query of its own:
   Iteration 0: absorb the seed, when the stratum has one; run the bodies holding no invocation of this stratum
-  While a recursive stratum's last iteration added tuples:
-    Check the cancellation, then the iteration bound
-    For each rule and each recursive invocation in its body:
-      Run the body with that occurrence invoking the predicate's delta symbol,
-      under which the scope holds the last delta, and every other reading the whole relation
-    The tuples not yet derived become the next delta (the tuple bound counts them)
+  While a pass of a recursive stratum runs a copy:
+    Check the cancellation
+    For each delta copy, one per recursive invocation in a body, in the pass order
+    (the postorder of a depth-first walk of the stratum's dependency graph):
+      If its predicate gained tuples since the copy last ran:
+        At the pass's first run, check the iteration bound
+        Run the copy, its occurrence invoking the predicate's delta symbol, under which
+        the scope holds those tuples, and every other invocation reading the relation as it stands
+        Absorb the result before the next copy (the tuple bound counts the tuples not yet derived)
   Materialize each predicate's relation
 ```
 

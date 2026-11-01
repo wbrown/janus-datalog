@@ -278,8 +278,8 @@ T1). No arm builds the table. `joinProperties` derives the composite of each
 left key with each right key (T3). `SemiJoin` and `AntiJoin` construct through
 the proven-set constructor over the left's symbols and properties (T5).
 
-The reproduction of `docs/bugs/JANUS_REPRO_FILLED.md`, its `unfilled` query over
-the kernel's facts through the CLI:
+The reproduction of the downstream's first report (which the tree does not
+carry), its `unfilled` query over the kernel's facts through the CLI:
 
 | | Before | After |
 |---|---:|---:|
@@ -312,7 +312,8 @@ T6):
 - A query whose final relation is a join result answers -1 for its size, as
   one ending in a scan does.
 
-The reproduction of `docs/bugs/JANUS_REPRO_FILLED.md`, its `unfilled` query over
+The reproduction of the downstream's first report (which the tree does not
+carry), its `unfilled` query over
 the kernel's facts through the CLI. The before column is the set change's
 after: its wall and user figures are the table above's, and its allocation
 figures are those the "Join output is a set" entry of `PERFORMANCE_STATUS.md`

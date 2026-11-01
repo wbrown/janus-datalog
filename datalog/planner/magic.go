@@ -547,12 +547,14 @@ func entityConstant(clause query.Clause) bool {
 // order, and the extent roots the read passes. The clauses are the seed
 // component's and, for the symbols needed, their extent chains: the
 // connected components, among the other clauses, that a needed symbol
-// touches. The roots passed are the extent roots a clause read mentions, and
-// no other: a read correlated on an extent root nothing it carries mentions
-// would run over every value of it for a result that does not depend on it.
-// A needed root no clause here provides is passed by nothing, and the
+// touches, followed by inner, the read of the scope inside, which is
+// carried whenever there is one. The roots passed are the extent roots a
+// clause read mentions, the inner read's correlates among them, and no
+// other: a read correlated on an extent root nothing it carries mentions
+// would run over every value of it for a result that does not depend on
+// it. A needed root no clause here provides is passed by nothing, and the
 // enclosing scope reads its chain (adornInvocation).
-func (w *magicRewriter) levelReads(roots, extentRoots map[query.Symbol]bool, clauses []query.Clause, needed map[query.Symbol]bool) ([]query.Clause, map[query.Symbol]bool) {
+func (w *magicRewriter) levelReads(roots, extentRoots map[query.Symbol]bool, clauses []query.Clause, needed map[query.Symbol]bool, inner query.Clause) ([]query.Clause, map[query.Symbol]bool) {
 	seed := w.seedOf(roots, clauses)
 	reached := make(map[query.Symbol]bool, len(needed))
 	for sym := range needed {
@@ -583,13 +585,18 @@ func (w *magicRewriter) levelReads(roots, extentRoots map[query.Symbol]bool, cla
 			}
 		}
 	}
-	passed := map[query.Symbol]bool{}
 	var read []query.Clause
 	for i, clause := range clauses {
 		if !chained[i] && !w.seedConnected(clause, seed) {
 			continue
 		}
 		read = append(read, clause)
+	}
+	if inner != nil {
+		read = append(read, inner)
+	}
+	passed := map[query.Symbol]bool{}
+	for _, clause := range read {
 		for _, sym := range query.FreeVariables([]query.Clause{clause}, w.rs) {
 			if extentRoots[sym] {
 				passed[sym] = true
@@ -1115,10 +1122,7 @@ func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvoca
 	var read query.Clause
 	for k := len(in.levels) - 1; k >= 0; k-- {
 		level := in.levels[k]
-		where, passed := w.levelReads(level.roots, level.extentRoots, level.clauses, needed)
-		if read != nil {
-			where = append(where, read)
-		}
+		where, passed := w.levelReads(level.roots, level.extentRoots, level.clauses, needed, read)
 		provided := map[query.Symbol]bool{}
 		for _, clause := range where {
 			for _, sym := range query.ScopeOf(clause, w.rs).Provides {
@@ -1171,7 +1175,7 @@ func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvoca
 			}
 		}
 	}
-	body, _ := w.levelReads(in.head, nil, in.prefix, needed)
+	body, _ := w.levelReads(in.head, nil, in.prefix, needed, nil)
 	for i, arg := range args {
 		if !bound[i] {
 			continue

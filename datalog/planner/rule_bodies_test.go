@@ -150,7 +150,7 @@ func TestPlanStratum_AnOccurrenceInsideASubqueryBodyIsADeltaCopy(t *testing.T) {
 }
 
 // Every copy opens with its delta invocation, whatever its predicate: the
-// delta holds the tuples the iteration before added, so the copy's joins
+// delta holds the tuples its predicate gained since the copy last ran, so the copy's joins
 // read them and what they reach, on both planner paths
 // (docs/proposals/DELTA_LEADS_ITS_COPY_PROOF.md, T2). The closure no magic
 // predicate guards has one delta copy; rewritten for a bound first

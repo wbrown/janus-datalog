@@ -201,6 +201,21 @@ type DatabaseOptions struct {
 	Dump io.ReadSeeker
 }
 
+// newBinaryKeyEncoder is the encoder a database opens a backend with for a
+// CompressionThreshold option. 0 is the default of 512 bytes, a positive value
+// is the threshold, and a negative one turns compression off. Values below
+// about 500 bytes rarely compress, given the roughly 300 bytes of FSE table
+// and block header the compressed format carries.
+func newBinaryKeyEncoder(threshold int) *BinaryKeyEncoder {
+	if threshold == 0 {
+		threshold = 512
+	}
+	if threshold < 0 {
+		threshold = 0
+	}
+	return &BinaryKeyEncoder{CompressionThreshold: threshold}
+}
+
 // NewDatabaseWithOptions creates a database with the specified options.
 // This is the most flexible constructor, supporting all configuration options.
 //
@@ -267,17 +282,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		if named && !backend.Persistent && opts.Path != "" {
 			return nil, fmt.Errorf("backend %q holds its data in process: Path %q would be discarded and the data lost at Close", backend.Name, opts.Path)
 		}
-		encoder = &BinaryKeyEncoder{}
-		// Default compression threshold is 512 bytes. Use -1 to disable.
-		// Values below ~500 bytes rarely compress due to ~300 bytes of
-		// FSE table + block header overhead in the compressed format.
-		threshold := opts.CompressionThreshold
-		if threshold == 0 {
-			threshold = 512
-		}
-		if threshold > 0 {
-			encoder.CompressionThreshold = threshold
-		}
+		encoder = newBinaryKeyEncoder(opts.CompressionThreshold)
 		var err error
 		if store, err = backend.Open(opts.Path, encoder); err != nil {
 			return nil, fmt.Errorf("failed to open %s store: %w", backend.Name, err)
@@ -2055,8 +2060,11 @@ func validateAttributeStorable(t *Transaction, a datalog.Keyword) error {
 // NormalizeValue takes a signed zero as zero, and NaN is excluded at the
 // boundary. Every set keys through it: the cache entry's set and the
 // resolution result's members hold each member's original value under it,
-// the add-wins accumulator's states are keyed by it, as is the key-encoded
-// value span of an index entry, and the Set diff reads membership by it.
+// and the Set diff reads membership by it. An index entry's key-encoded
+// value span equals it for a value the encoder stores raw and is the
+// compressed bytes or the blob hash past the compression threshold, so the
+// add-wins accumulator keys its states by the span and holds each surviving
+// member under the memberKey of its decoded value.
 func memberKey(v interface{}) string {
 	return string(append([]byte{byte(datalog.Type(v))}, datalog.ValueBytes(v)...))
 }

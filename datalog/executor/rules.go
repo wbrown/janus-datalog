@@ -25,15 +25,17 @@ import (
 // free variables is a rename of a materialized predicate: a relation over
 // its tuples under the arguments' names. With no variable left the result is
 // the zero-symbol verdict: one empty tuple when a tuple passes, none
-// otherwise.
-func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, error) {
-	source, head, err := e.invocationSource(ctx, inv, groups)
+// otherwise. A rename is answered with the set that keeps the predicate when
+// invocationSource answers one, so a join at the invocation probes the set's
+// index; every other result is answered with no set.
+func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, *derivedSet, error) {
+	source, head, set, err := e.invocationSource(ctx, inv, groups)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	positions, err := query.SymbolIndexTable(source.Symbols(), head)
 	if err != nil {
-		return nil, fmt.Errorf("rule invocation %s: %w", inv, err)
+		return nil, nil, fmt.Errorf("rule invocation %s: %w", inv, err)
 	}
 	envSymbols, envTuple := environmentTuple(ctx.Environment())
 
@@ -62,7 +64,7 @@ func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.Ru
 		case query.VectorConstant:
 			fixings = append(fixings, positionFixing{position, a.Values})
 		default:
-			return nil, fmt.Errorf("rule invocation %s: argument %d is %T", inv, i+1, arg)
+			return nil, nil, fmt.Errorf("rule invocation %s: argument %d is %T", inv, i+1, arg)
 		}
 	}
 	passes := func(tuple Tuple) bool {
@@ -89,25 +91,25 @@ func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.Ru
 			return nil
 		})
 		if err != nil && !errors.Is(err, errInvocationHeld) {
-			return nil, fmt.Errorf("rule invocation %s: %w", inv, err)
+			return nil, nil, fmt.Errorf("rule invocation %s: %w", inv, err)
 		}
 		if !held {
-			return NewMaterializedRelationWithOptions([]query.Symbol{}, nil, e.options), nil
+			return NewMaterializedRelationWithOptions([]query.Symbol{}, nil, e.options), nil, nil
 		}
-		return e.executor.unit, nil
+		return e.executor.unit, nil, nil
 	}
 
 	renames := len(keep) == len(inv.Args)
 	if mat, ok := source.(*MaterializedRelation); ok && renames && len(fixings) == 0 {
 		subst, err := query.SubstitutionOf(head, symbols)
 		if err != nil {
-			return nil, fmt.Errorf("rule invocation %s: %w", inv, err)
+			return nil, nil, fmt.Errorf("rule invocation %s: %w", inv, err)
 		}
-		view, err := mat.Rename(subst)
+		renamed, err := mat.Rename(subst)
 		if err != nil {
-			return nil, fmt.Errorf("rule invocation %s: %w", inv, err)
+			return nil, nil, fmt.Errorf("rule invocation %s: %w", inv, err)
 		}
-		return view, nil
+		return renamed, set, nil
 	}
 	asIs := renames && len(source.Symbols()) == len(head)
 	for i := 0; asIs && i < len(positions); i++ {
@@ -120,7 +122,7 @@ func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.Ru
 		// kept positions determine it.
 		it = NewDedupIterator(it, 0, false)
 	}
-	return NewStreamingRelationWithProperties(symbols, it, e.options, deduplicatedProperties(symbols)), nil
+	return NewStreamingRelationWithProperties(symbols, it, e.options, deduplicatedProperties(symbols)), nil, nil
 }
 
 // positionFixing fixes a position of the source to a value: a constant
@@ -185,28 +187,32 @@ func (it *invocationIterator) Error() error { return it.inner.Error() }
 // is the invocation's own arguments; or a predicate's relation, or the
 // stratum's last delta under the predicate's delta symbol, whose head is the
 // rule set's. Any other invocation, the query's own or one in a subquery, is
-// derived here.
-func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, []query.Symbol, error) {
+// derived here. The set is the one the running evaluation keeps for a
+// predicate's relation the fixpoint holds (Context.sets), whose tuples up to
+// its count the relation is; it is nil for the required run, a delta, and a
+// derived invocation, whose relation leaves the evaluation.
+func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, []query.Symbol, *derivedSet, error) {
 	rel, held := ctx.Derived(inv.Name)
 	if !held {
-		return e.deriveInvocation(ctx, inv, groups)
+		derived, head, err := e.deriveInvocation(ctx, inv, groups)
+		return derived, head, nil, err
 	}
 	if inv.Name == query.ScopeRequired {
 		head := make([]query.Symbol, len(inv.Args))
 		for i, arg := range inv.Args {
 			head[i] = arg.(query.Variable).Name
 		}
-		return rel, head, nil
+		return rel, head, nil, nil
 	}
 	rs := ctx.Rules()
 	if rs == nil {
-		return nil, nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", inv)
+		return nil, nil, nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", inv)
 	}
 	head, ok := rs.Head(inv.Name)
 	if !ok {
-		return nil, nil, fmt.Errorf("rule invocation %s: the rule set declares no predicate %s", inv, inv.Name)
+		return nil, nil, nil, fmt.Errorf("rule invocation %s: the rule set declares no predicate %s", inv, inv.Name)
 	}
-	return rel, head, nil
+	return rel, head, ctx.sets[inv.Name], nil
 }
 
 // deriveInvocation evaluates an invocation's predicate at its clause: the
@@ -493,11 +499,11 @@ func newDerivedSet(symbols []query.Symbol) *derivedSet {
 	return &derivedSet{symbols: symbols, keys: NewTupleSet(positions, positions, 0)}
 }
 
-// index is the set's index at the key positions, asked for through a view
-// of count tuples: made at the first ask over the tuples then held, and
-// extended to the set's count when the view's count is past the tuples it
-// holds, so a probe bounded at the view's count finds every tuple of the
-// view (A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, L1, L5).
+// index is the set's index at the key positions, asked for at a count of the
+// set's tuples: made at the first ask over the tuples then held, and
+// extended to the set's count when the count asked for is past the tuples it
+// holds, so a probe bounded at that count finds every tuple below it
+// (A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, L1, L5).
 func (s *derivedSet) index(positions []int, count int) *ordinalIndex {
 	var ix *ordinalIndex
 	for _, kept := range s.indexes {
@@ -558,14 +564,14 @@ func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
 	return added, err
 }
 
-// relation is the set as a relation over the tuples added so far: a view
-// carrying the set, so a join into it probes the index the set keeps
-// (A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2).
+// relation is the set as a relation over the tuples added so far, and
+// carries nothing of the set. A join at a held invocation of the predicate
+// reaches the set's index through the context the body runs under
+// (Context.sets), so a relation the evaluation hands out does not change when
+// it is joined (A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2).
 func (s *derivedSet) relation(opts ExecutorOptions) *MaterializedRelation {
 	n := len(s.tuples)
-	view := newMaterializedRelationFromSet(s.symbols, s.tuples[:n:n], opts, deduplicatedProperties(s.symbols))
-	view.set = s
-	return view
+	return newMaterializedRelationFromSet(s.symbols, s.tuples[:n:n], opts, deduplicatedProperties(s.symbols))
 }
 
 // stratumEvaluation is a stratum's planned bodies (planner.Bodies), under
@@ -724,6 +730,16 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 			added[ev.seed] = tuples
 		}
 	}
+	// The bodies run under a context carrying every set the evaluation keeps,
+	// by predicate, so a held invocation of a predicate joins through its
+	// set's index (Context.sets).
+	sets := map[query.Symbol]*derivedSet{}
+	for _, st := range ev.strata {
+		for p, set := range st.full {
+			sets[p] = set
+		}
+	}
+	scope := ctx.WithSets(sets)
 	held := view()
 	bodies := s.eval.bodies.Plain
 	if ev.windows > 1 {
@@ -741,7 +757,7 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 			held[query.DeltaSymbol(p)] = newMaterializedRelationFromSet(symbols, tuples, e.options, deduplicatedProperties(symbols))
 		}
 	}
-	seeding, err := s.eval.run(ctx, held, bodies)
+	seeding, err := s.eval.run(scope, held, bodies)
 	if err != nil {
 		return nil, err
 	}
@@ -784,7 +800,7 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 			symbols := s.eval.symbols[body.Marked]
 			held[query.DeltaSymbol(body.Marked)] = newMaterializedRelationFromSet(symbols, set.tuples[s.marks[i]:count:count], e.options, deduplicatedProperties(symbols))
 			s.marks[i] = count
-			results, err := s.eval.run(ctx, held, []planner.PlannedBody{body})
+			results, err := s.eval.run(scope, held, []planner.PlannedBody{body})
 			if err != nil {
 				return nil, err
 			}

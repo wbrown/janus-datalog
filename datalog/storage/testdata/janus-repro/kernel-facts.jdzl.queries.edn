@@ -58,6 +58,6 @@
 ;; the cells reached from the entry
 [:find (count ?c) :in $ % :where (reach ?c)]
 
-;; the reproduction (docs/plans/JANUS_REPRO_FILLED.md): unfilled invoked bound, the
+;; the downstream's later report's reproduction: unfilled invoked bound, the
 ;; magic-sets rewrite; several times the unbound query above
 [:find ?r :in $ % :where [?r :relies/cell ?c] [?r :relies/mem ?m] (unfilled ?m ?c)]

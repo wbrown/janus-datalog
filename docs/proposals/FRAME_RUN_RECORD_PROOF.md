@@ -5,7 +5,7 @@
 - The code: `datalog/executor/window_frame.go` (`windowFrame`, `windowFrames`, `windowRun`), `datalog/executor/windowed_form.go` (`newWindowedIterator`, `runWindow`), `datalog/executor/kept_branch.go` (`buildBranchTuples`, `collectBranch`), `datalog/executor/tuple_key.go` (`TupleKeyMap`, `PutIfAbsentPositions`, `hashTuplePositions`, `tupleValuesEqualPositions`), `datalog/executor/join_index.go` (`JoinIndex`, `tupleKeysMatch`), `datalog/executor/relation.go` (`newMaterializedRelationFromSet`).
 - The scope design: `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2, a frame's run over a window is the window's distinct keys less those an earlier window ran; §4.3, the frames module; §4.6, `JoinIndex`'s contracts. `docs/proposals/OR_FALLBACK_RELATION_PROOF.md` L2, the frames.
 - The record: `docs/proposals/TUPLEKEYMAP_OPTIMIZATION.md`, a set that stores no value. `docs/proposals/BINDING_MATCH_PROOF.md` P1, a relation is never written after construction.
-- The failure: the allocation profile of the reproduction of `docs/bugs/JANUS_REPRO_FILLED.md`, its `unfilled` query through the CLI, attributes its largest share of bytes to the record's writes: an owned values slice and a map entry per key run, beside the key tuple the run holds, and the run slice's growth. `PERFORMANCE_STATUS.md` carries the figures.
+- The failure: the allocation profile of the `unfilled` query of the downstream's first report through the CLI, over the dump and the rule set that report shipped, which the tree does not carry, attributes its largest share of bytes to the record's writes: an owned values slice and a map entry per key run, beside the key tuple the run holds, and the run slice's growth. `PERFORMANCE_STATUS.md` carries the figures.
 
 ## 1. Definitions
 

@@ -159,9 +159,10 @@ func openBackendDB(t testing.TB, backend Backend, opts DatabaseOptions) *Databas
 	return db
 }
 
-// backendOptions returns opts placed on the named backend: its name, a
-// temporary path when it persists, and compression off unless opts asks for
-// it. A test asserting that an open fails builds its options here and calls
+// backendOptions returns opts placed on the named backend: its name and a
+// temporary path when it persists. A threshold opts leaves unset is the
+// constructor's 512-byte default, the encoding a user's database writes. A
+// test asserting that an open fails builds its options here and calls
 // NewDatabaseWithOptions itself.
 func backendOptions(t testing.TB, backend Backend, opts DatabaseOptions) DatabaseOptions {
 	t.Helper()
@@ -169,13 +170,6 @@ func backendOptions(t testing.TB, backend Backend, opts DatabaseOptions) Databas
 	opts.Path = ""
 	if backend.Persistent {
 		opts.Path = t.TempDir()
-	}
-	if opts.CompressionThreshold == 0 {
-		// This harness has always handed its tests a bare BinaryKeyEncoder, so
-		// compression is off unless a test asks for it. The constructor reads an
-		// unset threshold as the 512-byte production default; -1 is how it spells
-		// the encoder these tests have been running on.
-		opts.CompressionThreshold = -1
 	}
 	return opts
 }

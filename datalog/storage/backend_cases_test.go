@@ -83,11 +83,7 @@ func inProcessReopenCase(backend storeContractCase) reopenBackendCase {
 		open: func(t testing.TB, opts DatabaseOptions) *Database {
 			t.Helper()
 			if backing == nil {
-				encoder := &BinaryKeyEncoder{}
-				if opts.CompressionThreshold != 0 {
-					encoder.CompressionThreshold = opts.CompressionThreshold
-				}
-				backing = backend.open(t, encoder)
+				backing = backend.open(t, newBinaryKeyEncoder(opts.CompressionThreshold))
 				t.Cleanup(func() { _ = backing.Close() })
 			}
 			// Spent on the encoder above, and on a reopen the store already
@@ -104,11 +100,7 @@ func inProcessReopenCase(backend storeContractCase) reopenBackendCase {
 func openContractDatabase(t testing.TB, testCase storeContractCase, opts DatabaseOptions) *Database {
 	t.Helper()
 	if opts.Store == nil {
-		encoder := &BinaryKeyEncoder{}
-		if opts.CompressionThreshold != 0 {
-			encoder.CompressionThreshold = opts.CompressionThreshold
-		}
-		opts.Store = testCase.open(t, encoder)
+		opts.Store = testCase.open(t, newBinaryKeyEncoder(opts.CompressionThreshold))
 	}
 	// Spent on the encoder above, or already carried by a store the caller
 	// supplied. Either way the store is the single answer from here.

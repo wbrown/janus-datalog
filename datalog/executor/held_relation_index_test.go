@@ -10,10 +10,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// A derived set's index at a key answers, through a view of the set, the
-// view's tuples holding the key and none the set admitted after the view,
-// and through a later view the later tuples too; a tuple enters the index
-// once, whatever views ask through it
+// A derived set's index at a key, asked for at the count of a view of the
+// set, answers the view's tuples holding the key and none the set admitted
+// after the view, and asked for at a later view's count the later tuples
+// too; a tuple enters the index once, whatever counts ask for it
 // (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2, T4, L1,
 // L5).
 func TestDerivedSet_AnIndexAnswersTheViewsTuplesUnderAKey(t *testing.T) {
@@ -32,14 +32,13 @@ func TestDerivedSet_AnIndexAnswersTheViewsTuplesUnderAKey(t *testing.T) {
 	second := set.relation(ExecutorOptions{})
 	absorb(Tuple{int64(1), "f"})
 	third := set.relation(ExecutorOptions{})
-	require.Same(t, set, first.set, "a view carries the set it views")
 	require.Equal(t, []int{3, 5, 6}, []int{first.Size(), second.Size(), third.Size()})
 
 	// The set is keyed at its position 0, and the probing tuple carries the
 	// key at its own position 1.
 	key := []int{0}
 	probe := func(view *MaterializedRelation, k int64) []Tuple {
-		ix := view.set.index(key, view.Size())
+		ix := set.index(key, view.Size())
 		var tuples []Tuple
 		for _, ordinal := range ix.probe(Tuple{"probe", k}, []int{1}, view.Size()) {
 			tuples = append(tuples, set.tuples[ordinal])
@@ -63,15 +62,157 @@ func TestDerivedSet_AnIndexAnswersTheViewsTuplesUnderAKey(t *testing.T) {
 		"asked for through the latest view, the index holds every tuple of the set")
 }
 
-// A join into a view of a derived set probes the index the set keeps at the
-// join key with the other side's tuples and drains nothing of the view
+// A join into a relation a derived set answers leaves the set as it was: the
+// relation is the set's tuples so far, and joining it writes nothing the set
+// holds, so a relation the evaluation hands out does not change when it is
+// joined (docs/proposals/CONCURRENCY_PROOF.md, P2). The join answers the
+// pairs a nested loop computes, under each planner profile.
+func TestDerivedSet_AJoinIntoItsRelationLeavesTheSetAsItWas(t *testing.T) {
+	e, l, r := datalog.NewSymbol("?e"), datalog.NewSymbol("?l"), datalog.NewSymbol("?r")
+	setTuples := []Tuple{{int64(1), "a"}, {int64(2), "b"}, {int64(2), "c"}}
+	groupTuples := []Tuple{{int64(2), "x"}, {int64(3), "y"}}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			set := newDerivedSet([]query.Symbol{e, r})
+			_, err := set.absorb(NewMaterializedRelation([]query.Symbol{e, r}, setTuples))
+			require.NoError(t, err)
+			opts := ExecutorOptionsFromPlanner(mode.plannerOptions())
+			group := NewMaterializedRelationWithOptions([]query.Symbol{e, l}, groupTuples, opts)
+			var got []Tuple
+			require.NoError(t, ForEach(HashJoinWithOptions(group, set.relation(opts), []query.Symbol{e}, opts), func(tuple Tuple) error {
+				got = append(got, copyTuple(tuple))
+				return nil
+			}))
+			require.ElementsMatch(t, []Tuple{{int64(2), "x", "b"}, {int64(2), "x", "c"}}, got, "the join answers the nested loop's pairs")
+			require.Empty(t, set.indexes, "a join into the set's relation wrote an index into the set")
+			require.Equal(t, setTuples, set.tuples, "the set holds the tuples it absorbed and nothing else")
+		})
+	}
+}
+
+// An invocation of a predicate the fixpoint holds, whose arguments are
+// distinct free variables, answers its relation renamed with the set the
+// running evaluation keeps for the predicate, so a join at the invocation
+// probes the set's index. Every other shape answers no set: a constant, a
+// repeated variable, the delta symbol, and a predicate the context keeps no
+// set for (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, P3).
+func TestExecuteRuleInvocation_ARenameOfAHeldPredicateAnswersItsSet(t *testing.T) {
+	a, b := datalog.NewSymbol("?a"), datalog.NewSymbol("?b")
+	x, y := datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
+	follows := datalog.NewSymbol("follows")
+	rs := mustRules(t, followsRulesText)
+	set := newDerivedSet([]query.Symbol{a, b})
+	_, err := set.absorb(NewMaterializedRelation([]query.Symbol{a, b}, []Tuple{{page(1), page(2)}, {page(2), page(3)}, {page(3), page(3)}}))
+	require.NoError(t, err)
+	delta := NewMaterializedRelation([]query.Symbol{a, b}, []Tuple{{page(2), page(3)}})
+	held := map[query.Symbol]Relation{follows: set.relation(ExecutorOptions{}), query.DeltaSymbol(follows): delta}
+	keeping := NewContext().WithRules(rs).WithDerived(held).WithSets(map[query.Symbol]*derivedSet{follows: set})
+	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	invoke := func(name query.Symbol, args ...query.PatternElement) *query.RuleInvocation {
+		return &query.RuleInvocation{Name: name, Args: args}
+	}
+	vx, vy := query.Variable{Name: x}, query.Variable{Name: y}
+
+	cases := []struct {
+		name string
+		ctx  *Context
+		inv  *query.RuleInvocation
+		set  *derivedSet
+	}{
+		{"distinct free variables", keeping, invoke(follows, vx, vy), set},
+		{"a constant", keeping, invoke(follows, vx, query.Constant{Value: page(3)}), nil},
+		{"a repeated variable", keeping, invoke(follows, vx, vx), nil},
+		{"the delta symbol", keeping, invoke(query.DeltaSymbol(follows), vx, vy), nil},
+		{"a held relation with no set kept", NewContext().WithRules(rs).WithDerived(held), invoke(follows, vx, vy), nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rel, got, err := exec.executeRuleInvocation(c.ctx, c.inv, nil)
+			require.NoError(t, err)
+			require.NotNil(t, rel)
+			if c.set == nil {
+				require.Nil(t, got, "the invocation answered a set where its relation is no rename of a kept set")
+				return
+			}
+			require.Same(t, c.set, got, "the rename of a held predicate answers the set the evaluation keeps for it")
+			require.Equal(t, c.set.tuples, rel.(*MaterializedRelation).tuples, "the rename is the set's tuples so far")
+		})
+	}
+}
+
+// A query's result carries no derived set. A :find that is exactly an
+// invocation's arguments answers the invocation's relation, the set's tuples
+// the evaluation derived; a join with the result as its build side drains
+// the result's tuples and probes no index the evaluation keeps, under each
+// planner profile (docs/proposals/CONCURRENCY_PROOF.md, P2).
+func TestExecuteWithRelations_AResultCarriesNoDerivedSet(t *testing.T) {
+	x, n := datalog.NewSymbol("?x"), datalog.NewSymbol("?n")
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, mode.plannerOptions())
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			require.NoError(t, err)
+			require.NotZero(t, result.Size(), "the fixture's closure holds pairs")
+
+			// The group holds one tuple per tuple of the result, its ?x and
+			// an ordinal, so the two sides tie in size and the result, on the
+			// right, is the build side.
+			position := query.SymbolIndex(result.Symbols(), x)
+			require.GreaterOrEqual(t, position, 0, "the result binds ?x")
+			var groupTuples []Tuple
+			perKey := map[interface{}]int{}
+			require.NoError(t, ForEach(result, func(tuple Tuple) error {
+				groupTuples = append(groupTuples, Tuple{tuple[position], int64(len(groupTuples))})
+				perKey[tuple[position]]++
+				return nil
+			}))
+			expected := 0
+			for _, c := range perKey {
+				expected += c * c
+			}
+			var events []annotations.Event
+			opts := ExecutorOptionsFromPlanner(mode.plannerOptions())
+			opts.Handler = func(event annotations.Event) { events = append(events, event) }
+			group := NewMaterializedRelationWithOptions([]query.Symbol{x, n}, groupTuples, opts)
+			require.Equal(t, result.Size(), group.Size())
+			count := 0
+			require.NoError(t, ForEach(HashJoinWithOptions(group, result, []query.Symbol{x}, opts), func(Tuple) error {
+				count++
+				return nil
+			}))
+			require.Equal(t, expected, count, "the join answers the nested loop's pairs")
+
+			var strategy, build []annotations.Event
+			for _, event := range events {
+				switch event.Name {
+				case annotations.JoinStrategy:
+					strategy = append(strategy, event)
+				case annotations.JoinBuild:
+					build = append(build, event)
+				}
+			}
+			require.Len(t, strategy, 1)
+			require.Equal(t, "right", strategy[0].Data["build_side"], "the result is the build side")
+			require.Equal(t, false, strategy[0].Data["build_kept"], "the join probed an index the evaluation keeps")
+			require.Len(t, build, 1)
+			require.Equal(t, false, build[0].Data["build_kept"])
+			require.Equal(t, result.Size(), build[0].Data["tuple_count"], "the join drained the result's tuples")
+		})
+	}
+}
+
+// A join of a group with a held relation whose set the caller names probes
+// the index the set keeps at the join key with the group's tuples and drains
+// nothing of the relation
 // (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T1, T3, L2,
-// L4): it answers the pairs a nested loop computes, each once, with the view
-// on either side, the group materialized or streaming, and under a rename of
-// the view, under each planner profile's executor options; the strategy
+// L4): it answers the pairs a nested loop computes, each once, the group on
+// the left, materialized or streaming, the relation under the set's symbols
+// and renamed, under each planner profile's executor options; the strategy
 // event names the kept index as the build side, no build.copy event fires,
 // and the probe event's tuple count is the group's.
-func TestHashJoin_AViewIsProbedAndNeverDrained(t *testing.T) {
+func TestHashJoinWithSet_AHeldRelationIsProbedAndNeverDrained(t *testing.T) {
 	e, l, r, s := datalog.NewSymbol("?e"), datalog.NewSymbol("?l"), datalog.NewSymbol("?r"), datalog.NewSymbol("?s")
 	// side is a set over the keys from first on, each repeated fanout times
 	// with a payload of its own.
@@ -107,16 +248,14 @@ func TestHashJoin_AViewIsProbedAndNeverDrained(t *testing.T) {
 	require.NoError(t, err)
 
 	cases := []struct {
-		name     string
-		viewLeft bool
-		stream   bool
-		renamed  bool
+		name    string
+		stream  bool
+		renamed bool
 	}{
-		{"the view on the right of a materialized group", false, false, false},
-		{"the view on the left of a materialized group", true, false, false},
-		{"the view on the right of a streaming group", false, true, false},
-		{"the view on the left of a streaming group", true, true, false},
-		{"the view renamed, on the right of a materialized group", false, false, true},
+		{"a materialized group", false, false},
+		{"a streaming group", true, false},
+		{"the relation renamed, a materialized group", false, true},
+		{"the relation renamed, a streaming group", true, true},
 	}
 	for _, mode := range optimizerModes {
 		for _, c := range cases {
@@ -124,26 +263,20 @@ func TestHashJoin_AViewIsProbedAndNeverDrained(t *testing.T) {
 				var events []annotations.Event
 				opts := ExecutorOptionsFromPlanner(mode.plannerOptions())
 				opts.Handler = func(event annotations.Event) { events = append(events, event) }
-				var view Relation = set.relation(opts)
+				var held Relation = set.relation(opts)
 				if c.renamed {
 					subst, err := query.SubstitutionOf([]query.Symbol{e, r}, []query.Symbol{e, s})
 					require.NoError(t, err)
-					view, err = view.Rename(subst)
+					held, err = held.Rename(subst)
 					require.NoError(t, err)
 				}
 				var group Relation = NewMaterializedRelationWithOptions([]query.Symbol{e, l}, groupTuples, opts)
 				if c.stream {
 					group = NewStreamingRelationWithOptions([]query.Symbol{e, l}, &sliceIterator{tuples: groupTuples, pos: -1}, opts)
 				}
-				left, right := group, view
 				expected := pairs(groupTuples, viewTuples)
 				buildSide := "right"
-				if c.viewLeft {
-					left, right = view, group
-					expected = pairs(viewTuples, groupTuples)
-					buildSide = "left"
-				}
-				result := HashJoinWithOptions(left, right, []query.Symbol{e}, opts)
+				result := hashJoinWithSet(group, held, []query.Symbol{e}, opts, set)
 
 				// The answers, each a pair of the nested loop and each once.
 				positions := allPositions(3)

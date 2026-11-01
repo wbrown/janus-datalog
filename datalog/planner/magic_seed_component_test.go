@@ -69,10 +69,12 @@ func TestSplit_PartitionsTheInnermostScopesSymbols(t *testing.T) {
 	require.Equal(t, symbolSet("?k", "?m"), extent, "the extent root nothing connects and the symbol its chain provides")
 }
 
-// A level's reads are its seed-connected clauses and the extent chains the
-// needed symbols touch, in the walk's order, and the read passes the extent
-// roots those mention alone: a needed extent root nothing here provides is
-// not passed, and the enclosing scope reads its chain.
+// A level's reads are its seed-connected clauses, the extent chains the
+// needed symbols touch, in the walk's order, and the read of the scope
+// inside when there is one, and the read passes the extent roots those
+// mention alone: a needed extent root nothing here provides is not passed,
+// and the enclosing scope reads its chain, where an inner read correlated
+// on an extent root is carried and mentions it.
 func TestLevelReads_CarriesTheSeedComponentAndTheNeededChains(t *testing.T) {
 	loose := defineRule("loose", []string{"?n"}, scopePattern("?n", "page/n", "_"))
 	w := &magicRewriter{rs: mustRuleSet(t, []*query.Rule{loose})}
@@ -83,21 +85,34 @@ func TestLevelReads_CarriesTheSeedComponentAndTheNeededChains(t *testing.T) {
 	clauses := []query.Clause{root, edge, next, onRoot}
 	roots, extentRoots := symbolSet("?a"), symbolSet("?k")
 
-	read, passed := w.levelReads(roots, extentRoots, clauses, nil)
+	read, passed := w.levelReads(roots, extentRoots, clauses, nil, nil)
 	require.Equal(t, []query.Clause{edge}, read, "the seed component alone when nothing is needed")
 	require.Empty(t, passed, "no extent root is mentioned")
 
-	read, passed = w.levelReads(roots, extentRoots, clauses, symbolSet("?m"))
+	read, passed = w.levelReads(roots, extentRoots, clauses, symbolSet("?m"), nil)
 	require.Equal(t, []query.Clause{edge, next}, read, "?m's chain, the pattern reading the extent root")
 	require.Equal(t, symbolSet("?k"), passed, "the extent root the chain mentions")
 
-	read, passed = w.levelReads(roots, extentRoots, clauses, symbolSet("?r"))
+	read, passed = w.levelReads(roots, extentRoots, clauses, symbolSet("?r"), nil)
 	require.Equal(t, []query.Clause{root, edge, onRoot}, read, "?r's chain, the pattern and the invocation on it, in the walk's order")
 	require.Empty(t, passed, "?r's chain mentions no extent root")
 
-	read, passed = w.levelReads(roots, extentRoots, []query.Clause{edge}, symbolSet("?k"))
+	read, passed = w.levelReads(roots, extentRoots, []query.Clause{edge}, symbolSet("?k"), nil)
 	require.Equal(t, []query.Clause{edge}, read, "a needed extent root nothing here provides adds no clause")
 	require.Empty(t, passed, "and is not passed, since no clause read mentions it")
+
+	inner := &query.SubqueryPattern{
+		Query: &query.Query{
+			Find:  []query.FindElement{query.FindVariable{Symbol: sym("?v")}},
+			In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?k")}},
+			Where: []query.Clause{scopePattern("?k", "page/next", "?v")},
+		},
+		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Constant{Value: datalog.NewSymbol("%")}, query.Variable{Name: sym("?k")}},
+		Binding: query.RelationBinding{Variables: []query.Symbol{sym("?v")}},
+	}
+	read, passed = w.levelReads(roots, extentRoots, []query.Clause{edge}, symbolSet("?k"), inner)
+	require.Equal(t, []query.Clause{edge, inner}, read, "the inner read is carried after the level's own clauses")
+	require.Equal(t, symbolSet("?k"), passed, "the extent root the inner read is correlated on is passed")
 }
 
 // A branch's read passes the sources, the rule set and the given symbols
