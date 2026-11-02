@@ -3,6 +3,7 @@ package storage
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
@@ -460,7 +461,7 @@ func TestGetSomeBasic(t *testing.T) {
 			}
 
 			// get-some with three fallback options: nickname -> fullname -> email
-			results, err := executor.CollectTuples(db.Query(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/email) ?display]]`))
+			results, err := executor.CollectTuples(db.Query(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/email) [?attr ?display]]]`))
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
@@ -476,8 +477,8 @@ func TestGetSomeBasic(t *testing.T) {
 			idToDisplay := make(map[string]string)
 			for _, tuple := range results {
 				id := tuple[0].(string)
-				// get-some returns a GetSomeResult struct, which contains the value
-				// The executor should extract just the value for the binding
+				// get-some binds the pair [attr value], destructured into
+				// ?attr and ?display
 				display, ok := tuple[1].(string)
 				if !ok {
 					t.Logf("Tuple for id %s has display type %T: %v", id, tuple[1], tuple[1])
@@ -522,7 +523,7 @@ func TestGetSomeNoMatch(t *testing.T) {
 			}
 
 			// get-some should filter out User2 since none of the attrs exist
-			results, err := executor.CollectTuples(db.Query(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/displayname) ?display]]`))
+			results, err := executor.CollectTuples(db.Query(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/displayname) [?attr ?display]]]`))
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
@@ -868,10 +869,12 @@ func TestDatabaseFunctionWithInputParameters(t *testing.T) {
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
 
-			tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
-			tx.Add(alice, datalog.NewKeyword(":user/status"), "active")
+			require.NoError(t, tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice"))
+			require.NoError(t, tx.Add(alice, datalog.NewKeyword(":user/status"), "active"))
+			require.NoError(t, tx.Add(alice, datalog.NewKeyword(":user/fallback"), "idle"))
 
-			tx.Add(bob, datalog.NewKeyword(":user/name"), "Bob")
+			require.NoError(t, tx.Add(bob, datalog.NewKeyword(":user/name"), "Bob"))
+			require.NoError(t, tx.Add(bob, datalog.NewKeyword(":user/fallback"), "away"))
 			// No status
 
 			_, err := tx.Commit()
@@ -879,23 +882,22 @@ func TestDatabaseFunctionWithInputParameters(t *testing.T) {
 				t.Fatalf("Failed to commit: %v", err)
 			}
 
-			// Use input parameter for default value
-			results, err := executor.CollectTuples(db.Query(
+			// get-else's default is a function argument, a variable as well as
+			// a constant: each tuple reads the default its bindings give,
+			// here an input parameter.
+			got, err := executor.CollectTuples(db.Query(
 				`[:find ?name ?status :in $ ?default-status :where [?e :user/name ?name] [(get-else $ ?e :user/status ?default-status) ?status]]`,
 				"pending",
 			))
-			if err != nil {
-				// This might fail because get-else expects a constant default, not a variable
-				// Let's verify this is the expected behavior
-				t.Logf("Query with variable default failed (expected): %v", err)
-				return
-			}
+			require.NoError(t, err)
+			require.ElementsMatch(t, [][]interface{}{{"Alice", "active"}, {"Bob", "pending"}}, got)
 
-			// If it succeeds, check results
-			t.Logf("Query with variable default succeeded (results: %d)", len(results))
-			for _, tuple := range results {
-				t.Logf("  %v", tuple)
-			}
+			// A default a pattern binds per entity answers each entity's own.
+			got, err = executor.CollectTuples(db.Query(
+				`[:find ?name ?status :where [?e :user/name ?name] [?e :user/fallback ?fallback] [(get-else $ ?e :user/status ?fallback) ?status]]`,
+			))
+			require.NoError(t, err)
+			require.ElementsMatch(t, [][]interface{}{{"Alice", "active"}, {"Bob", "away"}}, got)
 		})
 	}
 }

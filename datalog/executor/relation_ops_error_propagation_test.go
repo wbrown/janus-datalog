@@ -103,13 +103,14 @@ func TestFilterWithPredicateAndLookup_PropagatesAfterPartialResults(t *testing.T
 }
 
 // TestEvaluateExpressionWithLookup_PropagatesIteratorError: same shape for
-// the expression-evaluation transform. expr.Function never runs because the
-// loop body never runs; only the pre-loop Binding inspection executes.
+// the expression-evaluation transform, which evaluates as it is pulled, so
+// the failure surfaces when its result is driven. expr.Function never runs
+// because the source fails before yielding a tuple.
 func TestEvaluateExpressionWithLookup_PropagatesIteratorError(t *testing.T) {
 	src := newFailingStream(0, Tuple{int64(1)}, Tuple{int64(2)}, Tuple{int64(3)})
 	expr := &query.Expression{Binding: datalog.NewSymbol("?y")}
-	_, err := evaluateExpressionWithLookup(src, expr, nil, nil)
-	require.ErrorIs(t, err, errInjectedIterator)
+	rel := evaluateExpressionWithLookup(src, expr, nil, nil)
+	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
 }
 
 // TestFilterWithPredicateAndLookup_PropagatesEvalError: a predicate that fails
@@ -132,17 +133,17 @@ func TestFilterWithPredicateAndLookup_PropagatesEvalError(t *testing.T) {
 }
 
 // TestEvaluateExpressionWithLookup_PropagatesEvalError: an expression whose
-// Function returns an error must surface it. The previous behavior was a bare
-// `continue` past the failing tuple — the result looked like the function had
-// "no answer" rather than failing.
+// Function returns an error must surface it when its result is driven. The
+// previous behavior was a bare `continue` past the failing tuple — the result
+// looked like the function had "no answer" rather than failing.
 func TestEvaluateExpressionWithLookup_PropagatesEvalError(t *testing.T) {
 	src := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}})
 	expr := &query.Expression{
 		Function: erroringFunction{},
 		Binding:  datalog.NewSymbol("?y"),
 	}
-	_, err := evaluateExpressionWithLookup(src, expr, nil, nil)
-	require.ErrorIs(t, err, errInjectedEval)
+	rel := evaluateExpressionWithLookup(src, expr, nil, nil)
+	require.ErrorIs(t, driveErr(rel), errInjectedEval)
 }
 
 // TestMaterializedRelation_EvaluateFunction_PropagatesEvalError: same shape as
@@ -159,11 +160,11 @@ func TestMaterializedRelation_EvaluateFunction_PropagatesEvalError(t *testing.T)
 // now stop iteration and surface via Error(), instead of silently skipping.
 func TestFunctionEvaluatorIterator_PropagatesEvalError(t *testing.T) {
 	src := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}}).Iterator()
-	it := NewFunctionEvaluatorIterator(src, testSymbols(), erroringFunction{}, datalog.NewSymbol("?y"))
+	it := NewFunctionEvaluatorIterator(src, testSymbols(), &query.Expression{Function: erroringFunction{}, Binding: datalog.NewSymbol("?y")}, nil, nil)
 	for it.Next() {
 	}
 	require.ErrorIs(t, it.Error(), errInjectedEval)
-	_ = it.Close()
+	require.NoError(t, it.Close())
 }
 
 func TestUniqueCombinationExtractionPropagatesIteratorAndCloseErrors(t *testing.T) {

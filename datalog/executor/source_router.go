@@ -71,9 +71,7 @@ func (sr *SourceRouter) MatchWithConstraints(q *query.Query, bindings Relations,
 	return source.Match(q, bindings)
 }
 
-// LookupAttribute implements EntityLookupMatcher. Delegates to the default
-// source ($) for entity attribute lookups used by database functions
-// (get-else, missing?, get-some).
+// LookupAttribute implements EntityLookupMatcher from the default source ($).
 //
 // A data-answer method: when no default source exists or it cannot look up,
 // "capability absent" is an error — never (nil, false, nil), which reads as
@@ -82,15 +80,27 @@ func (sr *SourceRouter) LookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,
 ) (interface{}, bool, error) {
-	source, ok := sr.sources[datalog.SymDollar]
-	if !ok {
-		return nil, false, fmt.Errorf("entity lookup unavailable: no default source ($) registered")
+	lookup, err := sr.LookupSource(datalog.SymDollar)
+	if err != nil {
+		return nil, false, err
 	}
+	return lookup.LookupAttribute(entity, attr)
+}
 
-	if elm, ok := source.(EntityLookupMatcher); ok {
-		return elm.LookupAttribute(entity, attr)
+// LookupSource implements EntityLookupMatcher with the lookup of the source
+// named, which it gives as its own $, so the get-else, missing? and get-some
+// that name a source read it. A source the router does not hold, or one that
+// cannot look up, is an error naming the source.
+func (sr *SourceRouter) LookupSource(source query.Symbol) (EntityLookupMatcher, error) {
+	named, ok := sr.sources[source]
+	if !ok {
+		return nil, fmt.Errorf("entity lookup unavailable: no source %s registered", source)
 	}
-	return nil, false, fmt.Errorf("entity lookup unavailable: default source %T does not support attribute lookup", source)
+	elm, ok := named.(EntityLookupMatcher)
+	if !ok {
+		return nil, fmt.Errorf("entity lookup unavailable: source %s (%T) does not support attribute lookup", source, named)
+	}
+	return elm.LookupSource(datalog.SymDollar)
 }
 
 // CanFuseAttributeFetch implements AttributeFetchFusable by asking the source
@@ -107,19 +117,6 @@ func (sr *SourceRouter) CanFuseAttributeFetch(source query.Symbol, attr datalog.
 		return f.CanFuseAttributeFetch(source, attr)
 	}
 	return false
-}
-
-// TypeDefault implements query.TypedDefaulter. Delegates to the default
-// source ($) for type-converting default values in get-else.
-func (sr *SourceRouter) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {
-	source, ok := sr.sources[datalog.SymDollar]
-	if !ok {
-		return defaultVal
-	}
-	if td, ok := source.(query.TypedDefaulter); ok {
-		return td.TypeDefault(attr, defaultVal)
-	}
-	return defaultVal
 }
 
 // RefusesUnknownAttributes implements AttributeVocabulary by asking the

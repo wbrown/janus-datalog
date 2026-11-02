@@ -4,7 +4,10 @@
 
 The `executor.Iterator` interface has a `Close() error` method that releases underlying resources. When the iterator chain is backed by a `BadgerIterator`, `Close()` calls `it.Close()` + `txn.Discard()` on the BadgerDB transaction. Failure to call `Close()` leaves the transaction's skiplist ref count elevated, preventing WAL file cleanup during `db.Close()`.
 
-The leak that raised this proposal is fixed. Two executor functions, `filterWithPredicateAndLookup` and `evaluateExpressionWithLookup` (`datalog/executor/relation_ops.go`), called `rel.Iterator()` and never closed it, holding a WAL file per query. Each now closes its iterator in a deferred closure that runs on a panic as well and keeps the Close error. The record is `BUG_ITERATOR_LEAK_BUILTIN_EVALUATION.md` under `docs/bugs/resolved`.
+The leak that raised this proposal is fixed. Two executor functions, `filterWithPredicateAndLookup` and `evaluateExpressionWithLookup` (`datalog/executor/relation_ops.go`), called `rel.Iterator()` and never closed it, holding a WAL file per query. The record is `BUG_ITERATOR_LEAK_BUILTIN_EVALUATION.md` under `docs/bugs/resolved`.
+- `filterWithPredicateAndLookup` closes its iterator in a deferred closure that runs on a panic as well and keeps the Close error.
+- `evaluateExpressionWithLookup` answers a stream over its input's iterator, which the stream's consumer closes through the stream's `Close`.
+- An input no consumer pulls is closed with the query's read session. `queryUnderPlannerOptions` (`convenience.go`) opens one session per query and binds it to the result through `sessionBoundRelation`, which closes it when the result's iterator is exhausted or closed; a path that bypasses `Iterator()` leaves it to the session's finalizer. The session's `Close` closes every iterator still open (`badgerReadSession.Close`).
 
 The pattern stays fragile. Every consumer of `Relation.Iterator()` must remember to close, and nothing in the type system or runtime enforces it. Some consumers rely on wrapper iterators propagating `Close()` down the chain. The pattern invites the same regression again.
 

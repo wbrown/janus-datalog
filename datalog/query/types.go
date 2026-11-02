@@ -337,12 +337,13 @@ func (p DataPattern) GetV() PatternElement {
 	return Blank{}
 }
 
-// GetT returns the transaction/time element if it exists
+// GetT returns the transaction element; a position the pattern omits is
+// unbound, so it reads as a blank.
 func (p DataPattern) GetT() PatternElement {
 	if len(p.Elements) > 3 {
 		return p.Elements[3]
 	}
-	return nil
+	return Blank{}
 }
 
 // Symbols returns the symbols (variables) bound by this pattern

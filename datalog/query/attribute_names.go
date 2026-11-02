@@ -92,7 +92,7 @@ func (r *Rosters) addQuery(q *Query) {
 
 // addClauses records what a query's :where or a rule's body names: a
 // pattern's constant attribute on its source, nil standing for $, and a
-// database function's attributes on $, descending through each header form's
+// database function's attributes on the source it reads, descending through each header form's
 // branches and bodies and into each subquery's body, whose clauses are read
 // under the sources the call passes (RenameSources, CallSources), since
 // WalkClauses leaves a subquery's body to its visitors. A headerless form is
@@ -126,18 +126,19 @@ func (r *Rosters) addClauses(clauses []Clause) {
 }
 
 // addDatabaseFunction records the attributes a database function reads, on
-// the default source. The implementers are enumerated completely, so a new
+// the source it reads. The implementers are enumerated completely, so a new
 // one panics here instead of escaping the roster.
 func (r *Rosters) addDatabaseFunction(f DatabaseFunction) {
+	source := f.ReadsFrom()
 	switch f := f.(type) {
 	case *GetElseFunction:
-		r.add(datalog.SymDollar, f.Attr)
+		r.add(source, f.Attr)
 	case *GetSomeFunction:
 		for _, attr := range f.Attrs {
-			r.add(datalog.SymDollar, attr)
+			r.add(source, attr)
 		}
 	case *MissingFunction:
-		r.add(datalog.SymDollar, f.Attr)
+		r.add(source, f.Attr)
 	default:
 		panic(fmt.Sprintf("BUG: unknown database function type %T in Rosters", f))
 	}

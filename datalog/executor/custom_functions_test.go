@@ -79,9 +79,12 @@ func TestCustomFunctionQueryEndToEnd(t *testing.T) {
 				if err != nil {
 					t.Fatalf("execute: %v", err)
 				}
+				tuples, err := CollectTuples(result, nil)
+				if err != nil {
+					t.Fatalf("collect: %v", err)
+				}
 				halves := make(map[string]float64)
-				for i := 0; i < result.Size(); i++ {
-					tuple := result.Get(i)
+				for _, tuple := range tuples {
 					halves[tuple[0].(string)] = tuple[1].(float64)
 				}
 				if halves["Laptop"] != 600.0 {

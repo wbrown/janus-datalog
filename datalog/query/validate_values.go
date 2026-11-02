@@ -131,7 +131,7 @@ func validateDatabaseFunctionConstants(fn DatabaseFunction) error {
 		if err := validateTermConstants(f.Entity); err != nil {
 			return err
 		}
-		if err := datalog.ValidateValue(f.Default); err != nil {
+		if err := validateTermConstants(f.Default); err != nil {
 			return fmt.Errorf("get-else default of %s: %w", f.Attr, err)
 		}
 		return nil

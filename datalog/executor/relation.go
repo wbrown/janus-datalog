@@ -1477,10 +1477,9 @@ func (r *StreamingRelation) FilterWithPredicate(pred query.Predicate) Relation {
 // Like filtering, this is a pure streaming transform: always a composed
 // stream, never a buffer.
 func (r *StreamingRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
-	evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, fn, outputSymbol)
-	newSymbols := append(r.symbols, outputSymbol)
+	evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, &query.Expression{Function: fn, Binding: outputSymbol}, nil, nil)
 	return NewStreamingRelationWithProperties(
-		newSymbols,
+		evalIter.Symbols(),
 		evalIter,
 		r.options,
 		r.properties.addSymbol(outputSymbol),

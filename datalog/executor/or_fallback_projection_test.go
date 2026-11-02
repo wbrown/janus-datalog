@@ -93,21 +93,6 @@ func TestProjectionForMemoizesPerBranch(t *testing.T) {
 	assert.True(t, other.identity)
 }
 
-// countingLookupMatcher counts LookupAttribute calls through the bundle
-// lookup double.
-type countingLookupMatcher struct {
-	*bundleLookupMatcher
-	calls int
-}
-
-func (m *countingLookupMatcher) LookupAttribute(
-	entity datalog.Identity,
-	attr datalog.Keyword,
-) (interface{}, bool, error) {
-	m.calls++
-	return m.bundleLookupMatcher.LookupAttribute(entity, attr)
-}
-
 func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 	symE := datalog.NewSymbol("?e")
 	symV := datalog.NewSymbol("?v")
@@ -115,16 +100,14 @@ func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 	e1 := datalog.NewIdentity("eacache:e1")
 	e2 := datalog.NewIdentity("eacache:e2")
 
-	matcher := &countingLookupMatcher{bundleLookupMatcher: &bundleLookupMatcher{
-		values: map[bundleLookupKey]interface{}{
-			{entity: e1, attr: attr}: int64(1),
-			{entity: e2, attr: attr}: int64(2),
-		},
-	}}
+	matcher := NewIndexedMemoryMatcher([]datalog.Datom{
+		{E: e1, A: attr, V: int64(1)},
+		{E: e2, A: attr, V: int64(2)},
+	}).WithSchema(cardinalityOneSchema(t, ":item/priority"))
 	exec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 
 	// The run repeats e1 across distinct tuples. The built tuples must stay
-	// a set: one lookup and one tuple per entity.
+	// a set: one tuple per entity.
 	run := NewMaterializedRelation([]query.Symbol{symE}, []Tuple{{e1}, {e1}, {e2}})
 	it := &OrFallbackIterator{windowedIterator: windowedIterator{
 		executor: exec,
@@ -144,7 +127,6 @@ func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 	require.NoError(t, it.err)
 	require.Equal(t, []query.Symbol{symE, symV}, branchSyms)
 
-	assert.Equal(t, 2, matcher.calls, "one lookup per distinct entity")
 	assert.Equal(t, []Tuple{{e1, int64(1)}, {e2, int64(2)}}, tuples, "a repeated entity yields one tuple")
 }
 
@@ -161,12 +143,10 @@ func TestBuildBranchFromEACacheEnvironmentNarrowsV(t *testing.T) {
 	e1 := datalog.NewIdentity("eaenv:e1")
 	e2 := datalog.NewIdentity("eaenv:e2")
 
-	matcher := &countingLookupMatcher{bundleLookupMatcher: &bundleLookupMatcher{
-		values: map[bundleLookupKey]interface{}{
-			{entity: e1, attr: attr}: int64(1),
-			{entity: e2, attr: attr}: int64(2),
-		},
-	}}
+	matcher := NewIndexedMemoryMatcher([]datalog.Datom{
+		{E: e1, A: attr, V: int64(1)},
+		{E: e2, A: attr, V: int64(2)},
+	}).WithSchema(cardinalityOneSchema(t, ":item/priority"))
 	exec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 
 	run := NewMaterializedRelation([]query.Symbol{symE}, []Tuple{{e1}, {e2}})

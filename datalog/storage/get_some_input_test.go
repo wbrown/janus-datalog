@@ -13,11 +13,11 @@ import (
 //
 // The query:
 //
-//	[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) ?id]]
+//	[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) [?attr ?id]]]
 //
 // The scalar input ?e only appears in the get-some expression, not in any
 // data pattern. This should work: get-some looks up attributes on the input
-// entity and binds the first found value to ?id.
+// entity and binds the first attribute found to ?attr and its value to ?id.
 func TestGetSome_WithScalarInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -37,7 +37,7 @@ func TestGetSome_WithScalarInput(t *testing.T) {
 
 			// Query: get-some should return :entity/code value since entity has it
 			results, err := executor.CollectTuples(db.Query(
-				`[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) ?id]]`,
+				`[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) [?attr ?id]]]`,
 				entity,
 			))
 			if err != nil {
@@ -62,7 +62,7 @@ func TestGetSome_WithScalarInput(t *testing.T) {
 			}
 
 			results2, err := executor.CollectTuples(db.Query(
-				`[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) ?id]]`,
+				`[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) [?attr ?id]]]`,
 				entity2,
 			))
 			if err != nil {
@@ -100,7 +100,7 @@ func TestGetSome_WithScalarInput_NoMatch(t *testing.T) {
 
 			// Query: get-some should return empty (entity has neither requested attr)
 			results, err := executor.CollectTuples(db.Query(
-				`[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) ?id]]`,
+				`[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) [?attr ?id]]]`,
 				entity,
 			))
 			if err != nil {
@@ -153,7 +153,7 @@ func TestGetSome_InBoundEntityWithGroups_AllMissing(t *testing.T) {
 			_, bare := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
-				`[:find ?k ?v :in $ ?e :where [?e :entity/kind ?k] [(get-some $ ?e :entity/code :entity/name) ?v]]`,
+				`[:find ?k ?v :in $ ?e :where [?e :entity/kind ?k] [(get-some $ ?e :entity/code :entity/name) [?attr ?v]]]`,
 				bare,
 			))
 			if err != nil {
@@ -176,7 +176,7 @@ func TestGetSome_InBoundEntityWithGroups_AttrPresent(t *testing.T) {
 			named, _ := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
-				`[:find ?k ?v :in $ ?e :where [?e :entity/kind ?k] [(get-some $ ?e :entity/code :entity/name) ?v]]`,
+				`[:find ?k ?v :in $ ?e :where [?e :entity/kind ?k] [(get-some $ ?e :entity/code :entity/name) [?attr ?v]]]`,
 				named,
 			))
 			if err != nil {
@@ -204,7 +204,7 @@ func TestGetSome_RelationInputEntities_MixedFound(t *testing.T) {
 			named, bare := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?v :in $ [[?e] ...] :where [?e :entity/kind "thing"] [(get-some $ ?e :entity/code :entity/name) ?v]]`,
+				`[:find ?e ?v :in $ [[?e] ...] :where [?e :entity/kind "thing"] [(get-some $ ?e :entity/code :entity/name) [?attr ?v]]]`,
 				[][]interface{}{{named}, {bare}},
 			))
 			if err != nil {
@@ -238,7 +238,7 @@ func TestGetSome_LiteralEntity(t *testing.T) {
 
 			t.Run("attr-present", func(t *testing.T) {
 				results, err := executor.CollectTuples(db.Query(
-					`[:find ?v :where [(get-some $ #id "entity:named" :entity/code :entity/name) ?v]]`,
+					`[:find ?v :where [(get-some $ #id "entity:named" :entity/code :entity/name) [?attr ?v]]]`,
 				))
 				if err != nil {
 					t.Fatalf("Query failed: %v", err)
@@ -250,7 +250,7 @@ func TestGetSome_LiteralEntity(t *testing.T) {
 
 			t.Run("all-missing", func(t *testing.T) {
 				results, err := executor.CollectTuples(db.Query(
-					`[:find ?v :where [(get-some $ #id "entity:bare" :entity/code :entity/name) ?v]]`,
+					`[:find ?v :where [(get-some $ #id "entity:bare" :entity/code :entity/name) [?attr ?v]]]`,
 				))
 				if err != nil {
 					t.Fatalf("Query failed: %v", err)
@@ -274,7 +274,7 @@ func TestGetSome_CollectionInputEntities_MixedFound(t *testing.T) {
 			named, bare := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?v :in $ [?e ...] :where [?e :entity/kind "thing"] [(get-some $ ?e :entity/code :entity/name) ?v]]`,
+				`[:find ?e ?v :in $ [?e ...] :where [?e :entity/kind "thing"] [(get-some $ ?e :entity/code :entity/name) [?attr ?v]]]`,
 				[]interface{}{named, bare},
 			))
 			if err != nil {

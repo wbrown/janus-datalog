@@ -70,7 +70,7 @@ func TestDefaultSourceAttributes(t *testing.T) {
 			&Expression{Function: GroundFunction{Value: int64(1)}, Binding: datalog.NewSymbol("?g")},
 			&Comparison{Op: datalog.SymLT, Left: ConstantTerm{Value: int64(1)}, Right: ConstantTerm{Value: int64(2)}},
 			&Expression{
-				Function: &GetElseFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/getelse"), Default: "none"},
+				Function: &GetElseFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/getelse"), Default: ConstantTerm{Value: "none"}},
 				Binding:  datalog.NewSymbol("?ge"),
 			},
 			&Expression{
@@ -208,7 +208,7 @@ func TestSourceAttributes(t *testing.T) {
 				Binding: ScalarBinding{Variable: datalog.NewSymbol("?s")},
 			},
 			&Expression{
-				Function: &GetElseFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/getelse"), Default: "none"},
+				Function: &GetElseFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/getelse"), Default: ConstantTerm{Value: "none"}},
 				Binding:  datalog.NewSymbol("?ge"),
 			},
 		},

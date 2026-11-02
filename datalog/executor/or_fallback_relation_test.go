@@ -465,7 +465,7 @@ func TestBuildFromCacheIsTheFallbacksBuildOfAPatternBranch(t *testing.T) {
 	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
 	attr := datalog.NewKeyword(":item/priority")
 	e1 := datalog.NewIdentity("fromcache:e1")
-	matcher := &bundleLookupMatcher{values: map[bundleLookupKey]interface{}{{entity: e1, attr: attr}: int64(4)}}
+	matcher := NewIndexedMemoryMatcher([]datalog.Datom{{E: e1, A: attr, V: int64(4)}}).WithSchema(cardinalityOneSchema(t, ":item/priority"))
 	var events []annotations.Event
 	opts := ExecutorOptions{Handler: func(e annotations.Event) { events = append(events, e) }}
 	it := &OrFallbackIterator{

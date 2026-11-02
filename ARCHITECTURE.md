@@ -373,7 +373,9 @@ custom sources may ignore them and return no ordering guarantee.
 **Extended variants**:
 - `PredicateAwareMatcher` adds `MatchWithConstraints()` — predicate pushdown into storage
 - `EntityLookupMatcher` adds error-returning `LookupAttribute()` — single-value
-  lookups distinguish absence from storage/decode failure
+  lookups distinguish absence from storage/decode failure — and `LookupSource()`,
+  the lookup of the source a `get-else`, `missing?` or `get-some` names; a source
+  the matcher does not hold, or one without the capability, is an error naming it
 
 ### Relation — Tuple Set Abstraction
 

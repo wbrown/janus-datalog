@@ -8,31 +8,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-type bundleLookupKey struct {
-	entity datalog.Identity
-	attr   datalog.Keyword
-}
-
-type bundleLookupMatcher struct {
-	values map[bundleLookupKey]interface{}
-}
-
-func (m *bundleLookupMatcher) Match(*query.Query, Relations) (Relation, error) {
-	return nil, nil
-}
-
-func (m *bundleLookupMatcher) LookupAttribute(
-	entity datalog.Identity,
-	attr datalog.Keyword,
-) (interface{}, bool, error) {
-	value, ok := m.values[bundleLookupKey{entity: entity, attr: attr}]
-	return value, ok, nil
-}
-
-func (m *bundleLookupMatcher) CanFuseAttributeFetch(query.Symbol, datalog.Keyword) bool {
-	return true
-}
-
 type iteratorCountingRelation struct {
 	Relation
 	iteratorCalls int
@@ -53,12 +28,12 @@ func TestAttributeFetchBundleTraversesInputOnce(t *testing.T) {
 	e1 := datalog.NewIdentity("bundle:e1")
 	e2 := datalog.NewIdentity("bundle:e2")
 
-	matcher := &bundleLookupMatcher{values: map[bundleLookupKey]interface{}{
-		{entity: e1, attr: codeAttr}: "R1",
-		{entity: e1, attr: nameAttr}: "N1",
-		{entity: e2, attr: codeAttr}: "R2",
-		{entity: e2, attr: nameAttr}: "N2",
-	}}
+	matcher := NewIndexedMemoryMatcher([]datalog.Datom{
+		{E: e1, A: codeAttr, V: "R1"},
+		{E: e1, A: nameAttr, V: "N1"},
+		{E: e2, A: codeAttr, V: "R2"},
+		{E: e2, A: nameAttr, V: "N2"},
+	}).WithSchema(cardinalityOneSchema(t, ":place/code", ":place/name"))
 	exec := newQueryExecutor(matcher, nil, ExecutorOptions{EnableAttributeFetchFusion: true})
 
 	inputProperties := RelationProperties{Keys: [][]query.Symbol{{entity}}}

@@ -30,6 +30,7 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 
 			// Test asymmetric
 			t.Run("asymmetric", func(t *testing.T) {
+				seen := make([]bool, size)
 				runtime.GC()
 				runtime.GC() // Double GC to ensure clean baseline
 				var memBefore runtime.MemStats
@@ -57,13 +58,24 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 				}
 
 				result := left.Join(right)
+				symbols := result.Symbols()
+				xi, ni, vi := query.SymbolIndex(symbols, leftSymbols[0]), query.SymbolIndex(symbols, leftSymbols[1]), query.SymbolIndex(symbols, rightSymbols[1])
+				if xi < 0 || ni < 0 || vi < 0 {
+					t.Fatalf("the join carries ?x, ?name and ?value; got %v", symbols)
+				}
 				it := result.Iterator()
 
-				// Consume all and track peak
+				// Consume all and track peak. Each ?x is joined once, with the
+				// name and the value its own tuples carry.
 				count := 0
 				var maxAlloc uint64
 				for it.Next() {
-					_ = it.Tuple()
+					tuple := it.Tuple()
+					x := tuple[xi].(int64)
+					if seen[x] || tuple[ni] != leftTuples[x][1] || tuple[vi] != rightTuples[x][1] {
+						t.Fatalf("tuple %v is not ?x %d joined once with its own name and value", tuple, x)
+					}
+					seen[x] = true
 					count++
 
 					// Sample every 100 tuples
@@ -75,7 +87,12 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 						}
 					}
 				}
-				it.Close()
+				if err := it.Error(); err != nil {
+					t.Fatalf("iterate: %v", err)
+				}
+				if err := it.Close(); err != nil {
+					t.Fatalf("close: %v", err)
+				}
 
 				var memAfter runtime.MemStats
 				runtime.ReadMemStats(&memAfter)
@@ -87,10 +104,14 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 				t.Logf("  Peak increase:  %.2f MB", float64(peakIncrease)/1024/1024)
 				t.Logf("  Final increase: %.2f MB", float64(finalIncrease)/1024/1024)
 				t.Logf("  Results: %d", count)
+				if count != size {
+					t.Fatalf("the join answered %d tuples, want one per ?x, %d", count, size)
+				}
 			})
 
 			// Test symmetric
 			t.Run("symmetric", func(t *testing.T) {
+				seen := make([]bool, size)
 				runtime.GC()
 				runtime.GC() // Double GC to ensure clean baseline
 				var memBefore runtime.MemStats
@@ -118,13 +139,24 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 				}
 
 				result := left.Join(right)
+				symbols := result.Symbols()
+				xi, ni, vi := query.SymbolIndex(symbols, leftSymbols[0]), query.SymbolIndex(symbols, leftSymbols[1]), query.SymbolIndex(symbols, rightSymbols[1])
+				if xi < 0 || ni < 0 || vi < 0 {
+					t.Fatalf("the join carries ?x, ?name and ?value; got %v", symbols)
+				}
 				it := result.Iterator()
 
-				// Consume all and track peak
+				// Consume all and track peak. Each ?x is joined once, with the
+				// name and the value its own tuples carry.
 				count := 0
 				var maxAlloc uint64
 				for it.Next() {
-					_ = it.Tuple()
+					tuple := it.Tuple()
+					x := tuple[xi].(int64)
+					if seen[x] || tuple[ni] != leftTuples[x][1] || tuple[vi] != rightTuples[x][1] {
+						t.Fatalf("tuple %v is not ?x %d joined once with its own name and value", tuple, x)
+					}
+					seen[x] = true
 					count++
 
 					// Sample every 100 tuples
@@ -136,7 +168,12 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 						}
 					}
 				}
-				it.Close()
+				if err := it.Error(); err != nil {
+					t.Fatalf("iterate: %v", err)
+				}
+				if err := it.Close(); err != nil {
+					t.Fatalf("close: %v", err)
+				}
 
 				var memAfter runtime.MemStats
 				runtime.ReadMemStats(&memAfter)
@@ -148,6 +185,9 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 				t.Logf("  Peak increase:  %.2f MB", float64(peakIncrease)/1024/1024)
 				t.Logf("  Final increase: %.2f MB", float64(finalIncrease)/1024/1024)
 				t.Logf("  Results: %d", count)
+				if count != size {
+					t.Fatalf("the join answered %d tuples, want one per ?x, %d", count, size)
+				}
 			})
 		})
 	}

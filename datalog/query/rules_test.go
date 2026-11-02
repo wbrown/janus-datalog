@@ -485,7 +485,7 @@ func TestRuleSetDefaultSourceAttributes(t *testing.T) {
 				Function: &GetElseFunction{
 					Entity:  VariableTerm{Symbol: sym("?c")},
 					Attr:    datalog.NewKeyword(":page/label"),
-					Default: "none",
+					Default: ConstantTerm{Value: "none"},
 				},
 				Binding: sym("?l"),
 			}),
@@ -648,7 +648,7 @@ func TestNewRuleSet_RefusesAnUnboundInputUnderNotAndOrDefault(t *testing.T) {
 	}
 	lookup := func(w, v string) *Expression {
 		return &Expression{
-			Function: &GetElseFunction{Entity: VariableTerm{Symbol: sym(w)}, Attr: datalog.NewKeyword(":page/kind"), Default: "none"},
+			Function: &GetElseFunction{Entity: VariableTerm{Symbol: sym(w)}, Attr: datalog.NewKeyword(":page/kind"), Default: ConstantTerm{Value: "none"}},
 			Binding:  sym(v),
 		}
 	}

@@ -21,19 +21,16 @@ func TestProfileBinaryDecoding(t *testing.T) {
 }
 
 func profileQueryExecution(t *testing.T, profileName string, datasetSize int) {
-	// Create temp database
-	dir, err := os.MkdirTemp("", "profile-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
 	encoder := &BinaryKeyEncoder{}
-	store, err := NewBadgerStore(dir, encoder)
+	store, err := NewBadgerStore(t.TempDir(), encoder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close the store: %v", err)
+		}
+	}()
 
 	// Insert test data with multiple attributes to exercise different access patterns
 	t.Logf("Inserting %d datoms...", datasetSize)
@@ -58,7 +55,11 @@ func profileQueryExecution(t *testing.T, profileName string, datasetSize int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close %s: %v", profileName, err)
+		}
+	}()
 
 	t.Logf("Starting CPU profile: %s", profileName)
 	if err := pprof.StartCPUProfile(f); err != nil {
@@ -68,7 +69,13 @@ func profileQueryExecution(t *testing.T, profileName string, datasetSize int) {
 
 	// Run queries to stress the decoding path
 	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{datoms[0].A}}
+	written := make(map[datalog.Identity]interface{}, datasetSize)
+	for _, d := range datoms {
+		written[d.E] = d.V
+	}
 
+	// Every scan reads every datom written; the first also checks each
+	// decoded value against the one written for its entity.
 	totalScanned := 0
 	for i := 0; i < 100; i++ {
 		it, err := store.Scan(bound)
@@ -82,11 +89,20 @@ func profileQueryExecution(t *testing.T, profileName string, datasetSize int) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Force materialization
-			_ = d.V
+			if i == 0 && d.V != written[d.E] {
+				t.Fatalf("entity %v decoded %v, written %v", d.E, d.V, written[d.E])
+			}
 			count++
 		}
-		it.Close()
+		if err := it.Error(); err != nil {
+			t.Fatal(err)
+		}
+		if err := it.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if count != datasetSize {
+			t.Fatalf("scan %d read %d datoms, want %d", i, count, datasetSize)
+		}
 		totalScanned += count
 	}
 
@@ -110,19 +126,16 @@ func BenchmarkDecodingInPipeline(b *testing.B) {
 
 			for _, tc := range encoders {
 				b.Run(tc.name, func(b *testing.B) {
-					// Create temp database
-					dir, err := os.MkdirTemp("", "bench-*")
-					if err != nil {
-						b.Fatal(err)
-					}
-					defer os.RemoveAll(dir)
-
 					encoder := tc.encoder
-					store, err := NewBadgerStore(dir, encoder)
+					store, err := NewBadgerStore(b.TempDir(), encoder)
 					if err != nil {
 						b.Fatal(err)
 					}
-					defer store.Close()
+					defer func() {
+						if err := store.Close(); err != nil {
+							b.Errorf("close the store: %v", err)
+						}
+					}()
 
 					// Insert test data
 					datoms := make([]datalog.Datom, size)
@@ -152,15 +165,26 @@ func BenchmarkDecodingInPipeline(b *testing.B) {
 							b.Fatal(err)
 						}
 
+						count := 0
 						for it.Next() {
 							d, err := it.Datom()
 							if err != nil {
 								b.Fatal(err)
 							}
-							// Force access to decoded value
-							_ = d.V
+							if d.A != attr {
+								b.Fatalf("scan of %v decoded a datom of %v", attr, d.A)
+							}
+							count++
 						}
-						it.Close()
+						if err := it.Error(); err != nil {
+							b.Fatal(err)
+						}
+						if err := it.Close(); err != nil {
+							b.Fatal(err)
+						}
+						if count != size {
+							b.Fatalf("scan read %d datoms, want %d", count, size)
+						}
 					}
 				})
 			}

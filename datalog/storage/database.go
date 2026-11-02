@@ -712,10 +712,26 @@ func (d *Database) UnknownAttributes(_ query.Symbol, attrs []datalog.Keyword) er
 	return unknownAttributes(d.Schema(), attrs)
 }
 
+// LookupAttribute implements executor.EntityLookupMatcher for a database
+// passed as a named source, answering through its matcher.
+func (d *Database) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool, error) {
+	return d.Matcher().(executor.EntityLookupMatcher).LookupAttribute(entity, attr)
+}
+
+// LookupSource implements executor.EntityLookupMatcher for a database passed
+// as a named source: it is one source, so its matcher is the lookup of the
+// source under any name, and get-else, missing? and get-some on that source
+// read it, a get-else default typed by the schema it runs with.
+func (d *Database) LookupSource(source query.Symbol) (executor.EntityLookupMatcher, error) {
+	return d.Matcher().(executor.EntityLookupMatcher).LookupSource(source)
+}
+
 // Compile-time verification that Database implements PatternMatcher and
-// answers the attribute-vocabulary question as a named source.
+// answers the attribute-vocabulary and entity-lookup questions as a named
+// source.
 var _ executor.PatternMatcher = (*Database)(nil)
 var _ executor.AttributeVocabulary = (*Database)(nil)
+var _ executor.EntityLookupMatcher = (*Database)(nil)
 
 // AsOf returns a read-only Database handle that queries state as of the given
 // transaction. The returned handle uses CRDT resolution filtered to that point

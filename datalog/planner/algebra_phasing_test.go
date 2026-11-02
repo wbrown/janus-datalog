@@ -3,11 +3,44 @@ package planner
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/algebra"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
+
+// assertPhasingContract asserts what a phasing of clauses owes the executor:
+// every clause runs in exactly one phase, a phase starts with what the phases
+// before it provide, every clause's correlates are bound before it runs, and
+// some phase provides every find symbol.
+func assertPhasingContract(t *testing.T, clauses []query.Clause, findSymbols []query.Symbol, phases []ClausePhase) {
+	t.Helper()
+	var phased []query.Clause
+	bound := map[query.Symbol]bool{}
+	for i, phase := range phases {
+		available := map[query.Symbol]bool{}
+		for _, sym := range phase.Available {
+			available[sym] = true
+		}
+		assert.Equalf(t, bound, available, "phase %d starts with what the phases before it provide", i)
+		for _, clause := range phase.Clauses {
+			scope := query.ScopeOf(clause, nil)
+			for _, sym := range scope.Correlates {
+				assert.Truef(t, bound[sym], "phase %d runs %v before %v is bound", i, clause, sym)
+			}
+			for _, sym := range scope.Provides {
+				bound[sym] = true
+			}
+		}
+		phased = append(phased, phase.Clauses...)
+	}
+	assert.ElementsMatch(t, clauses, phased, "every clause runs in exactly one phase")
+	for _, sym := range findSymbols {
+		assert.Truef(t, bound[sym], "no phase provides the find symbol %v", sym)
+	}
+}
 
 // TestPhaserSymbolExtraction checks what symbols the phaser extracts
 // for the specific query.
@@ -26,16 +59,24 @@ func TestPhaserSymbolExtraction(t *testing.T) {
 	require.NoError(t, err)
 
 	// Compile + decorrelate
-	root, _ := algebra.Compile(prepared, nil)
+	root, err := algebra.Compile(prepared, nil)
+	require.NoError(t, err)
 	opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
-	optimized, _ := opt.Optimize(root)
-	clauses, _ := algebra.Decompile(optimized)
+	optimized, err := opt.Optimize(root)
+	require.NoError(t, err)
+	clauses, err := algebra.Decompile(optimized)
+	require.NoError(t, err)
 
 	t.Logf("Decompiled %d clauses:", len(clauses))
 	for i, c := range clauses {
 		scope := query.ScopeOf(c, nil)
 		t.Logf("  [%d] %T provides=%v correlates=%v", i, c, scope.Provides, scope.Correlates)
 	}
+
+	findSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?count")}
+	phases, err := createPhasesGreedy(clauses, findSymbols, map[query.Symbol]bool{}, query.Bindings{})
+	require.NoError(t, err)
+	assertPhasingContract(t, clauses, findSymbols, phases)
 }
 
 // TestPhaserWithDecorrelatedClauses checks that the phaser can handle
@@ -124,4 +165,5 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 		t.Fatalf("phasing failed: %v", err)
 	}
 	t.Logf("Created %d phases", len(phases))
+	assertPhasingContract(t, clauses, findSymbols, phases)
 }

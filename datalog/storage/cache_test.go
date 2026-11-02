@@ -371,7 +371,10 @@ func TestUpdateMaxVersionConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Should complete without panic or data race
+	// The key's high-water mark is the highest version any call sent.
+	slot, ok := cache.slots.Load(key)
+	require.True(t, ok, "the key has a slot after the updates")
+	assert.Equal(t, datalog.ElementID{Lamport: 99, ReplicaID: 1}, slot.version)
 }
 
 func TestCacheRebuildCardinalityOne(t *testing.T) {

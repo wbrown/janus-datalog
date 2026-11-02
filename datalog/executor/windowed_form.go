@@ -291,12 +291,27 @@ func (it *windowedIterator) buildBranch(branchIdx int, run *MaterializedRelation
 		it.err = err
 		return false
 	}
-	it.reportCacheBuild(branchIdx, branchSyms, len(tuples))
 	cb, built := it.branchCache[branchIdx]
 	if !built {
 		cb = newCachedBranch(branchSyms, it.framing.subject.Symbols(), it.framing.key)
 		it.cache(branchIdx, cb)
+	} else if !symbolsMatch(cb.branchSyms, branchSyms) {
+		// A branch's index is kept across the windows over the symbols its
+		// first build gave it. A later build over other symbols is laid out
+		// over the index's, by symbol, and one lacking a symbol the index
+		// carries is an error.
+		laidOut, err := NewMaterializedRelation(branchSyms, tuples).Project(cb.branchSyms)
+		if err != nil {
+			it.err = fmt.Errorf("branch %d built over %v, its index over %v: %w", branchIdx, branchSyms, cb.branchSyms, err)
+			return false
+		}
+		if tuples, err = collectBranch(laidOut); err != nil {
+			it.err = err
+			return false
+		}
+		branchSyms = cb.branchSyms
 	}
+	it.reportCacheBuild(branchIdx, branchSyms, len(tuples))
 	for _, tuple := range tuples {
 		cb.Add(tuple)
 	}

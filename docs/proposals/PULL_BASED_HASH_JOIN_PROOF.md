@@ -2,7 +2,7 @@
 
 ## Sources
 
-- The code: `datalog/executor/join.go` (`HashJoin`, `HashJoinWithOptions`, `hashJoinIterator`, `combineTuplesIndexed`, `SemiJoin`, `AntiJoin`, `crossProduct`, `emitJoinStrategyAnnotation`), `datalog/executor/join_index.go` (`JoinIndex.Add`, `JoinIndex.Probe`, `JoinIndex.Len`), `datalog/executor/tuple_set.go` (`NewTupleSet`), `datalog/executor/relation.go` (the `Relation` and `Iterator` interfaces, `copyTuple`, `collectTuplesInto`, `ForEach`, `CollectTuples`, `CachingIterator`, `StreamingRelation.Iterator`, `StreamingRelation.Size`, `StreamingRelation.RequiresCopy`, `StreamingRelation.Materialize`, `MaterializedRelation.Join`, `StreamingRelation.Join`, `NewProductRelation`, `ProductRelation.Size`), `datalog/executor/relations.go` (`Relations.Collapse`, `reportJoin`), `datalog/executor/query_executor.go` (`DefaultQueryExecutor.Execute`, `renderConstantFindSymbols`, `existenceVerdict`, `executePattern`, `tryFuseAttributeFetchBundle`, `executeExpression`, `executePredicate`, `executeSubquery`, `findOuterRelation`, `applyFindPulls`, `replaceConsumedGroups`), `datalog/executor/executor.go` (`ExecuteWithRelations`, `ExecuteRealized`, `executeRealizedPlan`, `runPhases`, `declaredTupleCount`, `executePhase`), `datalog/executor/executor_utils.go` (`BindQueryInputs`), `datalog/executor/scope.go` (`requiredRun`, `scopeResult`, `materialized`, `hasTuple`, `executeOrJoinClause`, `executeOrDefaultJoinClause`, `executeNotJoinClause`), `datalog/executor/bound_pattern.go` (`streamsThrough`, `executeBoundPattern`), `datalog/executor/bound_invocation.go` (`executeBoundInvocation`), `datalog/executor/rules.go` (`executeRuleInvocation`, `invocationIterator`, `seedRelation`), `datalog/executor/windowed_form.go` (`newWindowedIterator`), `datalog/executor/window_reader.go` (`windowReader`), `datalog/executor/or_fallback_relation.go` (`OrFallbackRelation`), `datalog/executor/relation_ops.go` (`materializeRelationsForPattern`, `filterWithPredicateAndLookup`, `evaluateExpressionWithLookup`, `unionRelations`), `datalog/executor/theta_join.go` (`thetaJoinPair`), `datalog/executor/buffered_iterator.go` (`BufferedIterator`), `datalog/executor/iterator_composition.go` (`ProjectIterator`, `PredicateFilterIterator`, `FunctionEvaluatorIterator`, `DedupIterator`), `datalog/executor/limit_relation.go` (`LimitRelation.take`), `datalog/executor/aggregation.go` (`StreamingAggregateRelation.fold`), `datalog/executor/phase_boundary.go` (`materializePhaseBoundary`), `datalog/executor/symmetric_hash_join.go` (`ChooseJoinStrategy`), `datalog/storage/convenience.go` (`Database.Query`), `datalog/storage/database.go` (`DefaultPlannerOptions`).
+- The code: `datalog/executor/join.go` (`HashJoin`, `HashJoinWithOptions`, `hashJoinIterator`, `combineTuplesIndexed`, `SemiJoin`, `AntiJoin`, `crossProduct`, `emitJoinStrategyAnnotation`), `datalog/executor/join_index.go` (`JoinIndex.Add`, `JoinIndex.Probe`, `JoinIndex.Len`), `datalog/executor/tuple_set.go` (`NewTupleSet`), `datalog/executor/relation.go` (the `Relation` and `Iterator` interfaces, `copyTuple`, `collectTuplesInto`, `ForEach`, `CollectTuples`, `CachingIterator`, `StreamingRelation.Iterator`, `StreamingRelation.Size`, `StreamingRelation.RequiresCopy`, `StreamingRelation.Materialize`, `MaterializedRelation.Join`, `StreamingRelation.Join`, `NewProductRelation`, `ProductRelation.Size`), `datalog/executor/relations.go` (`Relations.Collapse`, `reportJoin`), `datalog/executor/query_executor.go` (`DefaultQueryExecutor.Execute`, `renderConstantFindSymbols`, `existenceVerdict`, `executePattern`, `tryFuseAttributeFetchBundle`, `executeExpression`, `executePredicate`, `executeSubquery`, `findOuterRelation`, `applyFindPulls`, `replaceConsumedGroups`), `datalog/executor/executor.go` (`ExecuteWithRelations`, `ExecuteRealized`, `executeRealizedPlan`, `runPhases`, `declaredTupleCount`, `executePhase`), `datalog/executor/executor_utils.go` (`BindQueryInputs`), `datalog/executor/scope.go` (`requiredRun`, `scopeResult`, `materialized`, `hasTuple`, `executeOrJoinClause`, `executeOrDefaultJoinClause`, `executeNotJoinClause`), `datalog/executor/bound_pattern.go` (`streamsThrough`, `executeBoundPattern`, `patternJoinIterator`), `datalog/executor/bound_invocation.go` (`executeBoundInvocation`), `datalog/executor/rules.go` (`executeRuleInvocation`, `invocationIterator`, `seedRelation`), `datalog/executor/windowed_form.go` (`newWindowedIterator`), `datalog/executor/window_reader.go` (`windowReader`), `datalog/executor/or_fallback_relation.go` (`OrFallbackRelation`), `datalog/executor/relation_ops.go` (`materializeRelationsForPattern`, `filterWithPredicateAndLookup`, `evaluateExpressionWithLookup`, `unionRelations`), `datalog/executor/theta_join.go` (`thetaJoinPair`, `crossJoinWithExpression`), `datalog/executor/expression_binding.go` (`bindingTuples`, `bindingAlignment.apply`), `datalog/executor/buffered_iterator.go` (`BufferedIterator`), `datalog/executor/iterator_composition.go` (`ProjectIterator`, `PredicateFilterIterator`, `FunctionEvaluatorIterator`, `DedupIterator`), `datalog/executor/limit_relation.go` (`LimitRelation.take`), `datalog/executor/aggregation.go` (`StreamingAggregateRelation.fold`), `datalog/executor/phase_boundary.go` (`materializePhaseBoundary`), `datalog/executor/symmetric_hash_join.go` (`ChooseJoinStrategy`), `datalog/storage/convenience.go` (`Database.Query`), `datalog/storage/database.go` (`DefaultPlannerOptions`).
 - The proof this one stands on: `docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md`. Its §1 defines a set, a key, the join and the combined tuple. Its P2 states the one equality E. Its L2 enumerates each matching pair once in both hash arms.
 - The design record: `docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md`. Its law that `Materialize` guarantees replayability and not eager realization. Its "Materialization That Should Remain" list, with hash build state on it. Its mandatory gates.
 - The scope design: `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md`.
@@ -24,6 +24,13 @@ Every name below is the code's, given a symbol for the proof.
 - The **workspace** is one slice of the result's width the join's iterator owns, fills on each pull, and hands back from `Tuple`.
 - An **empty build** is an index holding no tuple after the build side is drained.
 - A **consumer** of a join result is a function that receives the relation `HashJoinWithOptions` answers, through `HashJoin`, a relation type's `Join` or `HashJoin`, `Relations.Collapse` or `findOuterRelation`.
+- An **evaluation failure** is an error a clause's function raises on a tuple, such as `+` over an operand that is not a number (`docs/reviews/ANTIPATTERN_AUDIT_2026_07.md`: arithmetic operands must be numbers, and a non-numeric operand is an error; `arithmetic_strict_test.go` pins it).
+- The **failure contract**: an evaluation failure fails the query only at an assignment where every other clause holds.
+  - The goal it serves: a query that fails under one optimizer path fails under the other, the two paths observationally equivalent for every query the engine accepts (the Optimizer Mode Matrix header, `datalog/storage/optimizer_modes_test.go`).
+  - A reading that raises the failure wherever a plan evaluates the function depends on which clause binds the function's inputs first, so two plans of one query answer differently, against that goal.
+  - Under the contract, an assignment where some clause does not hold fails no query, whatever another clause raises there. That is the conjunction's reading, commutative and associative over the clauses, so every plan answers alike.
+  - `TestAJoinWithAnEmptySideAnswersEmptyThoughTheOtherSideFails` (storage) pins it.
+- The **pattern join iterator** is `patternJoinIterator`: the windowed join of a subject with a pattern. At its first pull it reads whether the pattern alone has a match, through the matcher and `hasTuple`, and it answers the windowed join's tuples only where the pattern has one.
 
 ## 2. Preconditions
 
@@ -39,7 +46,6 @@ Every name below is the code's, given a symbol for the proof.
     - `LimitRelation.take`
     - `windowReader`, and through it every windowed form
     - `filterWithPredicateAndLookup`
-    - `evaluateExpressionWithLookup`
     - `tryFuseAttributeFetchBundle`
     - `seedRelation`
     - `SemiJoin` and `AntiJoin` on their left
@@ -52,13 +58,14 @@ Every name below is the code's, given a symbol for the proof.
   - Readers that pass the answer through:
     - `invocationIterator` when it yields the source's tuple
     - `PredicateFilterIterator`
-    - `FunctionEvaluatorIterator` when it unifies
+    - `FunctionEvaluatorIterator` when no binding symbol extends the tuple, and through it the stream `evaluateExpressionWithLookup` answers
     - `DedupIterator` when it does not copy
+    - `patternJoinIterator`, the windowed join's answer
   - Readers that keep no source tuple:
     - `unionRelations`
     - `StreamingAggregateRelation.fold`
     - `ProjectIterator`
-    - `FunctionEvaluatorIterator` when it extends
+    - `FunctionEvaluatorIterator` when a binding symbol extends the tuple
     - `invocationIterator` when it projects
     - `thetaJoinPair`'s combined tuple
     - `combineTuplesIndexed`
@@ -80,6 +87,8 @@ Every name below is the code's, given a symbol for the proof.
   - `executeBoundPattern`, `executeBoundInvocation`, `executeNotJoinClause`, `executeSubquery` and the two or-forms with a subject each build their subject through `findOuterRelation`.
   - `findOuterRelation` joins the groups holding a needed symbol by a fold of `HashJoinWithOptions`, with the later group as the build side and the join so far as the probe side.
   - Each hands the subject to `newWindowedIterator`, which opens the subject's iterator once and reads it through `windowReader` into windows, copying each tuple when the subject says copy. It never reads the subject's size.
+  - `newWindowedIterator` takes the subject's iterator and pulls no tuple of it until its own first pull.
+  - `executeBoundPattern` wraps its windowed iterator in the pattern join iterator, and its result is the stream over that iterator.
   - `SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2 states that every partition of the subject into windows answers the same tuples.
   - §4.4 states that a pattern or invocation over a group reporting no size takes this route, and that a group held in memory binds the pattern through the matcher.
 - **P6 (the empty join).**
@@ -92,6 +101,12 @@ Every name below is the code's, given a symbol for the proof.
   - `Relation` and `Iterator` state the copy answer a caller keeping a tuple reads.
   - `ExecuteRealized` reads the final relation once, through `Sort`, `TopNRelation`, a streaming `Project`, `NewLimitRelation` or `applyFindPulls`, each of which copies what it keeps.
   - `DefaultPlannerOptions` sets `EnableTrueStreaming` true, so a query ending in a scan answers a stream, its final relation answers -1 for its size, and a caller that counts iterates.
+- **P9 (the expression clause).**
+  - `executeExpression` evaluates a clause over the group holding its inputs through `evaluateExpressionWithLookup`. Over several groups it calls `crossJoinWithExpression`, which joins them through `thetaJoinPair` and then calls `evaluateExpressionWithLookup`.
+  - `evaluateExpressionWithLookup` answers a stream over a `FunctionEvaluatorIterator` on its input's iterator, carrying the database function's lookup and the environment's tuple. It pulls nothing before answering.
+  - The iterator evaluates the expression on a source tuple when it pulls that tuple from its source. An evaluation failure stops it, and `Error` answers the failure.
+  - `bindingTuples` answers the tuples a binding reads from a value, each once: one under the scalar and tuple forms, one per distinct element under the collection form, and one per distinct inner vector under the relation form.
+  - The iterator answers each source tuple joined with each such tuple through `bindingAlignment.apply`. `apply` keeps a tuple only where every bound position unifies, answering a fresh tuple when a binding symbol extends the source tuple and the source tuple itself when none does.
 
 ## 3. Theorems
 
@@ -108,6 +123,12 @@ Every name below is the code's, given a symbol for the proof.
 **T6 (the route).** A join result whose build holds a tuple answers -1 for its size, and an empty build's result, the empty relation held (T5), answers 0. A later pattern or invocation sharing the first's symbols takes the windowed route, which reads the join result once and answers the tuples the matcher's route answers, and one sharing the second's takes the held route over the empty relation. A scan failure on the windowed route surfaces when the result is driven, where the matcher's route surfaced it from the call. At the public boundary a query whose final relation is a join result with a build, or a projection of one, answers -1 for its size, as a query ending in a scan does (P8), and a caller that counts iterates; a query whose final relation is an empty build's answers 0.
 
 **T7 (cost).** The per-pair path loses the call to `combineTuplesIndexed` and the allocation it made, and gains no call: the fill is written in `hashJoinIterator.Next`.
+
+**T8 (the expression clause).** An expression clause's result is a set, reports no size, and evaluates nothing at the call. Each source tuple is evaluated when the result is pulled to it, so a source tuple nothing pulls is never evaluated, and an evaluation failure surfaces when the result is driven. A later pattern or invocation sharing the result's symbols takes the windowed route (T6).
+
+**T9 (the windowed pattern's empty side).** When the pattern alone has no match, the windowed route's result answers nothing and pulls nothing of its subject. The route reads the pattern's matches at its first pull, so a failure reading them surfaces when the result is driven, as the route's scan failures do (T6).
+
+**T10 (a failure under an empty side).** When an expression clause's result is the probe side of a join whose build is empty (T5), or the subject of a pattern with no match (T9), its evaluation failures are not raised, and the join answers the empty relation. That is the failure contract's answer: no assignment satisfies the empty side's clause, so none fails the query.
 
 ## 4. Lemmas
 
@@ -143,6 +164,20 @@ By P4 `streamsThrough` reads the size of every group sharing the clause's symbol
 
 `SemiJoin` and `AntiJoin` size their key set from the right side's size answer, and a join result with a build answers -1, an empty build's result 0. `NewTupleSet` sizes the set at its first add for a capacity above zero, so a negative capacity starts the set empty, as `TestTupleSet_WithAnUnknownCapacityStartsEmpty` pins, as a capacity of 0 does (`ONE_TUPLE_TABLE_PROOF.md`). So the set is the set a right side of unknown size, or of no tuple, gets. The semi-join and anti-join read their right side once and their left once as before. ∎
 
+### L9. The expression clause's stream (T8)
+
+By P9 `evaluateExpressionWithLookup` pulls nothing before answering, and the iterator evaluates a source tuple only when it pulls that tuple. So the call evaluates nothing, and a failure is the iterator's error, answered when the result is driven. The result is a stream, so it answers -1 for its size (P4), and a later clause sharing its symbols is routed through the window (L7).
+
+The source is a relation, so it holds each tuple once. Each answered tuple is `apply`'s output over its source tuple and carries that tuple whole at the source's positions, so two source tuples never answer the same tuple. Over one source tuple, `bindingTuples` answers each tuple once (P9). Two distinct such tuples that both unify agree at every bound position and at every position of a symbol written twice, so they differ at an extending position and answer distinct tuples. So the result holds each tuple once. ∎
+
+### L10. The windowed pattern's empty side (T9)
+
+A binding only narrows a pattern, so every match the pattern answers under the subject's bindings is a match of the pattern alone. Where the pattern alone has none, the windowed join is empty. By P5 the route's result is the stream over the pattern join iterator, whose first pull reads the pattern alone's matches through `hasTuple` (P4). Where they hold none, it answers nothing and returns before pulling the windowed iterator, which by P5 pulls no tuple of the subject until its own first pull. A failure from the matcher or from `hasTuple` is held and answered by `Error`, so it surfaces when the result is driven. ∎
+
+### L11. A failure under an empty side (T10)
+
+By L6 a join whose build is empty does not open its probe side, and by L10 a pattern with no match leaves its subject unread. By L9 an expression clause's result evaluates a source tuple only when pulled, so in neither case is the expression evaluated, and no failure is raised. Both answer the empty relation. Under the failure contract, an assignment where the empty side's clause does not hold fails no query, and that clause holds at no assignment, so the empty relation is the query's answer. ∎
+
 ## 5. Tests
 
 The change carries these tests, each pinning the theorem named, mapped to the record's mandatory gates.
@@ -175,6 +210,18 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - The binder: `TestBindQueryInputsAnswersAHeldRelation` (executor, new). The relation `BindQueryInputs` answers for two relation inputs sharing a symbol reports its size and is read twice (L4). The `:in` tests of `bind_query_inputs_streaming_test.go` run unchanged.
 - The key set: `TestTupleSet_WithAnUnknownCapacityStartsEmpty` (executor). `NewTupleSet` with a capacity of -1 answers an empty set that admits a key (L8).
 - The route: `TestAPatternOverAJoinResultTakesTheWindow` (executor, new). A pattern after a join of two groups is answered through the windowed route, the window event reporting the pattern's form, and the answers equal the matcher route's over the same data (T6, L7).
+- The expression clause (T8, L9):
+  - `TestExpressionEvaluatesAsItsResultIsPulled` (executor, new). Executing `(+ ?n 1)` over a string answers the relation over `?n ?m` with no error, and the failure surfaces when the relation is driven.
+  - `TestEvaluateExpressionUnifyPassThroughAnswersItsSourcesCopyAnswer` (executor). The unify pass-through answers a workspace-reusing source's copy answer (P2).
+  - `TestSubquery_ACollectionArgumentNamingAMemberTwiceCountsItOnce` and `TestQueryShapesOnRandomGraphsMatchTheReference` (storage), run unchanged. A collection holding a member twice reads it once.
+  - `TestExecuteExpression`, `TestExecuteEnumerateUnderTheTupleForm`, `TestCustomFunctionQueryEndToEnd`, `TestEvaluateExpressionWithLookup_PropagatesIteratorError` and `TestEvaluateExpressionWithLookup_PropagatesEvalError` (executor) count the tuples they collect and read a failure where the result is driven (P8).
+- The windowed pattern's empty side (T9, L10):
+  - `TestExecuteBoundPatternWithNoMatchLeavesItsSubjectUnread` (executor, new). A pattern with no match answers no tuple, and its subject's iterator is never pulled.
+  - `TestRelationInput_PropagatesMatcherErrorAfterAnEarlierPattern` (executor), run unchanged. The matcher's failure surfaces at the drive, not the call (T6).
+- The failure contract: `TestAJoinWithAnEmptySideAnswersEmptyThoughTheOtherSideFails` (storage, T10, L11).
+  - Four queries joining a failing expression with a side holding no tuple answer the empty relation with no error.
+  - The failing side alone answers its failure.
+  - With a fact on the other side, the queries joining on the expression's output answer the failure, and the queries joining on the entity answer empty.
 
 ## 6. The change the proof licenses
 
@@ -193,10 +240,19 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - `datalog/storage/database.go`: `DefaultPlannerOptions`'s comment on `EnableStreamingJoins` says the option selects nothing in the hash join.
 - Tests: the new assertions and tests of §5. The cases of `TestAJoinOfTwoSetsAnswersEachPairOnce` that assert the materialized arm's probe event mode assert the streaming mode.
 - `docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md`: the completed changes gain this one.
+- `relation_ops.go`, `evaluateExpressionWithLookup`: answers the stream over a `FunctionEvaluatorIterator`, with the properties it answered before and no error result. Its callers, `executeExpression` and `crossJoinWithExpression` (`theta_join.go`), take the relation (T8).
+- `iterator_composition.go`, `FunctionEvaluatorIterator`:
+  - takes the expression, the database function's lookup and the environment
+  - joins each source tuple with each tuple `bindingTuples` reads, through `bindingAlignment.apply`
+  - answers its `Symbols`
+  - serves `StreamingRelation.EvaluateFunction` and `LazySeqRelation.EvaluateFunction`, which build it from a scalar expression
+- `expression_binding.go`, `bindingTuples`: answers each tuple once under the collection and relation forms (T8).
+- `bound_pattern.go`, `executeBoundPattern`: wraps its windowed iterator in `patternJoinIterator` (T9).
 
 ## 7. What the proof does not cover
 
 - A probe side that already carries a recorded failure, a materialized relation whose collection failed or a stream whose cache completed with an error, under an empty build. The join opens nothing, so the failure is not raised here. It surfaces where the relation is next driven, and a relation nothing else drives keeps it unraised. Today the materialized arm drains the probe and raises it. The alternative, opening the probe's iterator and closing it without a pull, raises a materialized relation's recorded failure and records an incomplete materialization on a caching stream.
+- A windowed subject that already carries a recorded failure, under a pattern with no match (T9). The route pulls nothing of the subject, so the failure is not raised there. A recorded failure is a fault of the store, not an evaluation failure, and the failure contract does not decide whether it is raised.
 - The symmetric arm, which `ChooseJoinStrategy` selects under `EnableSymmetricHashJoin`. It builds its tuples fresh and answers `RequiresCopy` false as before.
 - `crossProduct`, reached by `Join` on sides sharing no symbol. It opens its right side once per left tuple and so cannot take a stream as its right side. No consumer in the enumeration hands it a join result as its right side: `Collapse` joins only groups sharing a symbol, and `findOuterRelation` joins under the common symbols, empty or not, through the hash join.
 - The cost of the windowed route against the matcher's route for a pattern after a join, which this proof does not bound.

@@ -330,9 +330,7 @@ func (m *PatternMatcher) matchUnboundScan(
 	if elem := pattern.GetV(); elem != nil {
 		v = m.extractValue(elem)
 	}
-	if elem := pattern.GetT(); elem != nil {
-		tx = m.extractValue(elem)
-	}
+	tx = m.extractValue(pattern.GetT())
 
 	// Determine cardinality for CRDT resolution
 	// For cardinality-one with E+A bound, V unbound: return only current value (first result)
@@ -1823,7 +1821,7 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 				pattern.GetV().(query.Variable).Name == sym:
 				tuple[i] = member
-			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+			case pattern.GetT().IsVariable() &&
 				pattern.GetT().(query.Variable).Name == sym:
 				// For cardinality-many, we don't have a single Tx
 				// Use the max ElementID as the "current" transaction
@@ -1929,7 +1927,7 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 			pattern.GetV().(query.Variable).Name == sym:
 			tuple[i] = resolved
-		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+		case pattern.GetT().IsVariable() &&
 			pattern.GetT().(query.Variable).Name == sym:
 			// Use the max ElementID as the "current" transaction
 			tuple[i] = result.MaxElementID
@@ -2061,7 +2059,7 @@ func (m *PatternMatcher) matchVectorWithBindings(
 			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 				pattern.GetV().(query.Variable).Name == sym:
 				tuple[i] = resolved
-			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+			case pattern.GetT().IsVariable() &&
 				pattern.GetT().(query.Variable).Name == sym:
 				tuple[i] = result.MaxElementID
 			default:
@@ -2165,7 +2163,7 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 			pattern.GetV().(query.Variable).Name == sym:
 			tuple[i] = v
-		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+		case pattern.GetT().IsVariable() &&
 			pattern.GetT().(query.Variable).Name == sym:
 			// For membership queries, we don't have a specific Tx
 			tuple[i] = datalog.ElementID{}
@@ -2224,7 +2222,7 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 				case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
 					it.pattern.GetV().(query.Variable).Name == sym:
 					tuple[i] = member
-				case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
+				case it.pattern.GetT().IsVariable() &&
 					it.pattern.GetT().(query.Variable).Name == sym:
 					tuple[i] = it.currentMaxElementID
 				}
@@ -2467,7 +2465,7 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 			case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
 				it.pattern.GetV().(query.Variable).Name == sym:
 				tuple[i] = resolved
-			case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
+			case it.pattern.GetT().IsVariable() &&
 				it.pattern.GetT().(query.Variable).Name == sym:
 				tuple[i] = result.MaxElementID
 			}

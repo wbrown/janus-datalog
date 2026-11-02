@@ -2,6 +2,7 @@ package algebra
 
 import (
 	"github.com/wbrown/ebnf/parse"
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -117,6 +118,15 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		return rebuildWithChildren(node, children)
 	}
 
+	// The default branch reads the default's variables, so the child relation
+	// provides each, as it provides the entity.
+	for _, sym := range ge.Default.RequiredSymbols() {
+		if !query.ContainsSymbol(childNode.Symbols(), sym) {
+			decline("default variable is not provided by the child relation")
+			return rebuildWithChildren(node, children)
+		}
+	}
+
 	// A scope's required run is the scope's input, as :in is a query's, so
 	// an entity it alone provides is an input parameter too. The default
 	// branch the rewrite's own join decompiles to runs as a scope over the
@@ -126,8 +136,14 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		return rebuildWithChildren(node, children)
 	}
 
-	// Build: Scan([?entity :attr ?result])
+	// Build: Scan([?entity :attr ?result]) on the source the get-else reads, a
+	// $ source leaving the pattern's Source nil, the pattern's spelling of $.
+	var scanSource query.Symbol
+	if source := ge.ReadsFrom(); source != datalog.SymDollar {
+		scanSource = source
+	}
 	scanPattern := &query.DataPattern{
+		Source: scanSource,
 		Elements: []query.PatternElement{
 			query.Variable{Name: entityVar.Symbol},
 			query.Constant{Value: ge.Attr},
@@ -156,19 +172,20 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		})
 	}
 
-	// Build: LeftOuterJoin(on=[?entity], default=[ge.Default], attr=ge.Attr)
-	// The DefaultAttr enables the decompiler to emit a get-else expression
-	// in the default branch instead of plain ground, preserving schema type
-	// information for vector defaults (e.g., []string vs []interface{}).
-	defaultAttr := ge.Attr
+	// Build: LeftOuterJoin(on=[?entity], default=[?result], get-else=ge)
+	// The DefaultGetElse is the get-else the decompiler emits in the default
+	// branch instead of plain ground. It reads the default from each tuple's
+	// bindings and types it by the schema of the source it reads (e.g.,
+	// []string vs []interface{} for a vector default); the Defaults entry
+	// names the symbol it binds.
 	joinNode := &Node{
 		Op: RuleJoin,
 		Data: &Join{
-			Kind:        LeftOuterJoin,
-			JoinSymbols: []query.Symbol{entityVar.Symbol},
-			Output:      mergeSymbols(childNode.Symbols(), []query.Symbol{bindingSym}),
-			Defaults:    []Default{{Symbol: bindingSym, Value: ge.Default}},
-			DefaultAttr: &defaultAttr,
+			Kind:           LeftOuterJoin,
+			JoinSymbols:    []query.Symbol{entityVar.Symbol},
+			Output:         mergeSymbols(childNode.Symbols(), []query.Symbol{bindingSym}),
+			Defaults:       []Default{{Symbol: bindingSym}},
+			DefaultGetElse: ge,
 		},
 		Children: []*Node{childNode, scanNode},
 	}

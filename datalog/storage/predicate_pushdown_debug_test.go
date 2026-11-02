@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -19,27 +21,28 @@ func TestPredicatePushdownDebug(t *testing.T) {
 			tx := db.NewTransaction()
 
 			symbolEntity := datalog.NewIdentity("TEST")
-			tx.Add(symbolEntity, datalog.NewKeyword(":symbol/ticker"), "TEST")
+			require.NoError(t, tx.Add(symbolEntity, datalog.NewKeyword(":symbol/ticker"), "TEST"))
 
 			priceSymbol := datalog.NewKeyword(":price/symbol")
 			priceTime := datalog.NewKeyword(":price/time")
 
-			loc, _ := time.LoadLocation("America/New_York")
+			loc, err := time.LoadLocation("America/New_York")
+			require.NoError(t, err)
 
 			// Day 1: 10 bars
 			for i := 0; i < 10; i++ {
 				barEntity := datalog.NewIdentity(fmt.Sprintf("bar-1-%d", i))
 				barTime := time.Date(2025, 6, 1, 10+i, 0, 0, 0, loc)
-				tx.Add(barEntity, priceSymbol, symbolEntity)
-				tx.Add(barEntity, priceTime, barTime)
+				require.NoError(t, tx.Add(barEntity, priceSymbol, symbolEntity))
+				require.NoError(t, tx.Add(barEntity, priceTime, barTime))
 			}
 
 			// Day 2: 10 bars
 			for i := 0; i < 10; i++ {
 				barEntity := datalog.NewIdentity(fmt.Sprintf("bar-2-%d", i))
 				barTime := time.Date(2025, 6, 2, 10+i, 0, 0, 0, loc)
-				tx.Add(barEntity, priceSymbol, symbolEntity)
-				tx.Add(barEntity, priceTime, barTime)
+				require.NoError(t, tx.Add(barEntity, priceSymbol, symbolEntity))
+				require.NoError(t, tx.Add(barEntity, priceTime, barTime))
 			}
 
 			if _, err := tx.Commit(); err != nil {
@@ -79,7 +82,24 @@ func TestPredicatePushdownDebug(t *testing.T) {
 			for it.Next() {
 				symbolCount++
 			}
-			t.Logf("Symbol pattern matched %d bars", symbolCount)
+			require.NoError(t, it.Error())
+			require.NoError(t, it.Close())
+			require.Equal(t, 20, symbolCount, "the symbol pattern matches every bar")
+
+			// countDays answers how many of a relation's tuples fall on each
+			// day of ?t.
+			countDays := func(t *testing.T, rel executor.Relation) map[int]int {
+				ti := query.SymbolIndex(rel.Symbols(), datalog.NewSymbol("?t"))
+				require.GreaterOrEqual(t, ti, 0, "the relation carries ?t; got %v", rel.Symbols())
+				days := map[int]int{}
+				it := rel.Iterator()
+				for it.Next() {
+					days[it.Tuple()[ti].(time.Time).Day()]++
+				}
+				require.NoError(t, it.Error())
+				require.NoError(t, it.Close())
+				return days
+			}
 
 			// Test without constraint
 			t.Run("WithoutConstraint", func(t *testing.T) {
@@ -90,14 +110,8 @@ func TestPredicatePushdownDebug(t *testing.T) {
 					t.Fatalf("Failed to match time pattern: %v", err)
 				}
 
-				count := 0
-				it := timeRel.Iterator()
-				for it.Next() {
-					count++
-				}
-
-				elapsed := time.Since(start)
-				t.Logf("Without constraint: %d results in %v", count, elapsed)
+				assert.Equal(t, map[int]int{1: 10, 2: 10}, countDays(t, timeRel), "ten bars on each day")
+				t.Logf("Without constraint: %v", time.Since(start))
 			})
 
 			// Test with constraint
@@ -125,14 +139,8 @@ func TestPredicatePushdownDebug(t *testing.T) {
 					t.Fatalf("Failed to match with constraint: %v", err)
 				}
 
-				count := 0
-				it := timeRel.Iterator()
-				for it.Next() {
-					count++
-				}
-
-				elapsed := time.Since(start)
-				t.Logf("With constraint: %d results in %v", count, elapsed)
+				assert.Equal(t, map[int]int{1: 10}, countDays(t, timeRel), "the day-1 bars alone")
+				t.Logf("With constraint: %v", time.Since(start))
 			})
 
 			// Test the actual constraint evaluation
@@ -159,9 +167,8 @@ func TestPredicatePushdownDebug(t *testing.T) {
 					V: testTime2,
 				}
 
-				t.Logf("Constraint evaluation:")
-				t.Logf("  Day 1 datom: %v -> %v", testTime1.Day(), constraint.Evaluate(datom1))
-				t.Logf("  Day 2 datom: %v -> %v", testTime2.Day(), constraint.Evaluate(datom2))
+				assert.True(t, constraint.Evaluate(datom1), "a day-1 time satisfies day = 1")
+				assert.False(t, constraint.Evaluate(datom2), "a day-2 time does not satisfy day = 1")
 			})
 		})
 	}

@@ -244,16 +244,22 @@ Handle missing attributes gracefully with database functions:
  :where [?user :user/name ?name]
         [(missing? $ ?user :user/email)]]
 
+; Return nickname if exists, otherwise each user's own fallback
+[:find ?name ?display
+ :where [?user :user/name ?name]
+        [?user :user/fallback ?fallback]
+        [(get-else $ ?user :user/nickname ?fallback) ?display]]
+
 ; Use first available: nickname → fullname → email
-[:find ?id ?display
+[:find ?id ?attr ?display
  :where [?user :user/id ?id]
-        [(get-some $ ?user :user/nickname :user/fullname :user/email) ?display]]
+        [(get-some $ ?user :user/nickname :user/fullname :user/email) [?attr ?display]]]
 ```
 
-The `$` is the database reference. These functions look up attributes at query time:
+The first argument is the source the function reads: `$`, or a named source such as `$build`. These functions look up attributes at query time:
 - `get-else` – returns attribute value or default
 - `missing?` – filters to entities lacking an attribute (or binds boolean)
-- `get-some` – returns first existing attribute from a list
+- `get-some` – binds the first listed attribute the entity carries and its value, `[?attr ?value]`; an entity carrying none of them is dropped
 
 ### Aggregations
 

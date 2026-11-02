@@ -77,9 +77,13 @@ func TestValidateValueSymbol(t *testing.T) {
 
 func TestValidateValueEmptyType(t *testing.T) {
 	// A nil value type is a definition that declared none: no constraint.
+	// Each value is refused under a declared type it does not have.
 	assert.NoError(t, ValidateValue("anything", nil))
+	assert.Error(t, ValidateValue("anything", TypeLong))
 	assert.NoError(t, ValidateValue(123, nil))
+	assert.Error(t, ValidateValue(123, TypeString))
 	assert.NoError(t, ValidateValue(nil, nil))
+	assert.Error(t, ValidateValue(nil, TypeString))
 }
 
 func TestValidateDatom(t *testing.T) {
@@ -109,15 +113,23 @@ func TestValidateDatom(t *testing.T) {
 }
 
 func TestValidateDatomNilSchema(t *testing.T) {
-	// nil schema should allow everything
+	// nil schema should allow everything, which a schema declaring the
+	// attribute's type refuses.
+	declared, err := NewBuilder().Attribute(":any/attr").Type(TypeLong).Add().Build()
+	require.NoError(t, err)
 	assert.NoError(t, ValidateDatom(nil, kw(":any/attr"), "any value"))
+	assert.Error(t, ValidateDatom(declared, kw(":any/attr"), "any value"))
 	assert.NoError(t, ValidateDatom(nil, kw(":any/attr"), 123))
 }
 
 func TestValidateDatomEmptySchema(t *testing.T) {
 	schema := NewSchema()
-	// Empty schema should allow everything
+	// Empty schema should allow everything, which a schema declaring the
+	// attribute's type refuses.
+	declared, err := NewBuilder().Attribute(":any/attr").Type(TypeLong).Add().Build()
+	require.NoError(t, err)
 	assert.NoError(t, ValidateDatom(schema, kw(":any/attr"), "any value"))
+	assert.Error(t, ValidateDatom(declared, kw(":any/attr"), "any value"))
 }
 
 func TestValidateValueErrorMessage(t *testing.T) {

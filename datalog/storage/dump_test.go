@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 )
@@ -124,8 +125,12 @@ func TestOrdinaryPathSurvivesClose(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 
-			_, err = os.Stat(dir)
+			info, err := os.Stat(dir)
 			require.NoError(t, err)
+			assert.True(t, info.IsDir(), "%s is a directory after Close", dir)
+			entries, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			assert.NotEmpty(t, entries, "%s holds the store's files after Close", dir)
 		})
 	}
 }

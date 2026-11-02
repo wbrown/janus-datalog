@@ -91,4 +91,5 @@ func TestOrSubqueryPlannerPhases(t *testing.T) {
 			t.Logf("    Clause %d: %T - %s", j, clause, clause.String())
 		}
 	}
+	assertPlanContract(t, realized)
 }

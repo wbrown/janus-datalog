@@ -202,37 +202,13 @@ func elementToTerm(elem query.PatternElement) query.Term {
 	}
 }
 
-// parseMissingAttrPredicate parses (missing? $ ?entity :attribute) as a predicate
-// This is used when missing? is used as a filter without a binding
+// parseMissingAttrPredicate parses (missing? $src ?entity :attribute) as a predicate without a binding.
 func parseMissingAttrPredicate(args []query.PatternElement) (query.Predicate, error) {
-	// Syntax: (missing? $ ?e :attr)
-	if len(args) != 3 {
-		return nil, fmt.Errorf("missing? requires exactly 3 arguments ($ entity attr), got %d", len(args))
-	}
-
-	// Validate database reference ($)
-	if err := validateDatabaseRef(args[0]); err != nil {
-		return nil, fmt.Errorf("missing?: %w", err)
-	}
-
-	// Parse entity (can be variable or constant)
-	entity := elementToTerm(args[1])
-
-	// Parse attribute (must be a keyword)
-	attr, err := extractKeyword(args[2])
+	missingFn, err := parseMissingAttr(args)
 	if err != nil {
-		return nil, fmt.Errorf("missing?: attribute must be a keyword: %w", err)
+		return nil, err
 	}
-
-	// Create a MissingFunction and wrap it in a DatabaseFunctionPredicate
-	missingFn := &query.MissingFunction{
-		Entity: entity,
-		Attr:   attr,
-	}
-
-	return &query.DatabaseFunctionPredicate{
-		Function: missingFn,
-	}, nil
+	return &query.DatabaseFunctionPredicate{Function: missingFn}, nil
 }
 
 // parseTxBetweenPredicate parses [(tx-between ?tx 1000 2000)]

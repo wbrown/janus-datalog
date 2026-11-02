@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -147,12 +148,10 @@ func TestOrFallbackSurfacesTheSubjectsErrorsUnderTheEAArm(t *testing.T) {
 	valueSymbol := datalog.NewSymbol("?value")
 	attr := datalog.NewKeyword(":item/value")
 	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
-	values := map[bundleLookupKey]interface{}{}
 	var datoms []datalog.Datom
 	subject := make([]Tuple, 0, subjectSize)
 	for i := 0; i < subjectSize; i++ {
 		entity := datalog.NewIdentity(fmt.Sprintf("ea-cache-outer-error:item%d", i))
-		values[bundleLookupKey{entity: entity, attr: attr}] = int64(i)
 		datoms = append(datoms, datalog.Datom{E: entity, A: attr, V: int64(i), Tx: tx})
 		subject = append(subject, Tuple{entity})
 	}
@@ -185,8 +184,17 @@ func TestOrFallbackSurfacesTheSubjectsErrorsUnderTheEAArm(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			matcher := &prefetchingMatcher{PatternMatcher: NewMemoryPatternMatcher(datoms), values: values}
-			options := ExecutorOptions{EnableEntityPrefetch: true, ScopeWindowCap: 128}
+			var triggers, lookups int
+			handler := func(e annotations.Event) {
+				switch e.Name {
+				case annotations.PrefetchTrigger:
+					triggers++
+				case annotations.StorageResolveComplete:
+					lookups++
+				}
+			}
+			matcher := NewIndexedMemoryMatcher(datoms).WithSchema(cardinalityOneSchema(t, ":item/value")).WithOptions(ExecutorOptions{Handler: handler})
+			options := ExecutorOptions{EnableEntityPrefetch: true, ScopeWindowCap: 128, Handler: handler}
 			relation, err := NewOrFallbackRelation(
 				newQueryExecutor(matcher, nil, options),
 				NewContext(),
@@ -206,8 +214,8 @@ func TestOrFallbackSurfacesTheSubjectsErrorsUnderTheEAArm(t *testing.T) {
 				err = closeErr
 			}
 			require.EqualError(t, err, testCase.expected.Error())
-			require.NotEmpty(t, matcher.prefetched, "the trigger ran before the failure, so the arm served the branch")
-			require.Equal(t, testCase.lookups, matcher.lookups, "the arm built every window after the trigger from the cache")
+			require.NotZero(t, triggers, "the trigger ran before the failure, so the arm served the branch")
+			require.Equal(t, testCase.lookups, lookups, "the arm built every window after the trigger from the cache")
 		})
 	}
 }

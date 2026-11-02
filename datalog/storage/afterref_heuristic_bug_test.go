@@ -310,8 +310,9 @@ func TestAfterRefHeuristicBug_NonRefValues(t *testing.T) {
 			}
 			for _, idx := range Indices {
 				key := encoder.EncodeKey(idx, datom)
-				_, err := DatomFromKey(idx, key, encoder, nil)
-				assert.NoError(t, err, "non-reference value should always decode in %v", idx)
+				decoded, err := DatomFromKey(idx, key, encoder, nil)
+				require.NoError(t, err, "non-reference value should always decode in %v", idx)
+				assert.Equal(t, *datom, decoded, "the key decodes to the datom it encodes in %v", idx)
 			}
 		})
 	}

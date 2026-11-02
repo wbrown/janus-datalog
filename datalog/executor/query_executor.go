@@ -850,12 +850,11 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 		var result interface{}
 		var err error
 		if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
-			if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
-				lookup := entityLookupAdapter{lookupMatcher}
-				result, err = dbFunc.EvalWithLookup(make(map[query.Symbol]interface{}), lookup)
-			} else {
-				return nil, fmt.Errorf("expression requires database lookup but matcher doesn't support it")
+			lookup, lookupErr := e.entityLookup(dbFunc)
+			if lookupErr != nil {
+				return nil, lookupErr
 			}
+			result, err = dbFunc.EvalWithLookup(make(map[query.Symbol]interface{}), lookup)
 		} else {
 			result, err = expr.Function.Eval(make(map[query.Symbol]interface{}))
 		}
@@ -922,12 +921,11 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 			var result interface{}
 			var err error
 			if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
-				if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
-					lookup := entityLookupAdapter{lookupMatcher}
-					result, err = dbFunc.EvalWithLookup(evalBindings, lookup)
-				} else {
-					return nil, fmt.Errorf("expression requires database lookup but matcher doesn't support it")
+				lookup, lookupErr := e.entityLookup(dbFunc)
+				if lookupErr != nil {
+					return nil, lookupErr
 				}
+				result, err = dbFunc.EvalWithLookup(evalBindings, lookup)
 			} else {
 				result, err = expr.Function.Eval(evalBindings)
 			}
@@ -1007,12 +1005,11 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 			var result interface{}
 			var err error
 			if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
-				if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
-					lookup := entityLookupAdapter{lookupMatcher}
-					result, err = dbFunc.EvalWithLookup(evalBindings, lookup)
-				} else {
-					return nil, fmt.Errorf("expression requires database lookup but matcher doesn't support it")
+				lookup, lookupErr := e.entityLookup(dbFunc)
+				if lookupErr != nil {
+					return nil, lookupErr
 				}
+				result, err = dbFunc.EvalWithLookup(evalBindings, lookup)
 			} else {
 				result, err = expr.Function.Eval(evalBindings)
 			}
@@ -1045,17 +1042,20 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 		return groups, nil
 	}
 
-	// Check if this expression might need database access (database functions)
+	// A database function evaluates through the lookup for the source it names.
 	var lookup query.EntityLookup
-	if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
-		lookup = entityLookupAdapter{lookupMatcher}
+	if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
+		var lookupErr error
+		if lookup, lookupErr = e.entityLookup(dbFunc); lookupErr != nil {
+			return nil, lookupErr
+		}
 	}
 
 	var result Relation
 	var err error
 	if len(relevantRels) == 1 {
 		// Single relation — evaluate directly, no join needed
-		result, err = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, env)
+		result = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, env)
 	} else {
 		// Multiple disjoint relations — cross-join with expression evaluation
 		// Uses BufferedIterator for inner re-iteration instead of Product()
@@ -1069,23 +1069,19 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 	return append([]Relation{result}, otherRels...), nil
 }
 
-// entityLookupAdapter adapts EntityLookupMatcher to query.EntityLookup
-type entityLookupAdapter struct {
-	matcher EntityLookupMatcher
-}
-
-func (a entityLookupAdapter) LookupAttribute(
-	entity datalog.Identity,
-	attr datalog.Keyword,
-) (interface{}, bool, error) {
-	return a.matcher.LookupAttribute(entity, attr)
-}
-
-func (a entityLookupAdapter) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {
-	if td, ok := a.matcher.(query.TypedDefaulter); ok {
-		return td.TypeDefault(attr, defaultVal)
+// entityLookup is the lookup f evaluates through: the lookup of the source f
+// names, which the matcher gives. A matcher that cannot look up, and a source
+// it cannot give, are errors.
+func (e *DefaultQueryExecutor) entityLookup(f query.DatabaseFunction) (query.EntityLookup, error) {
+	matcher, ok := e.matcher.(EntityLookupMatcher)
+	if !ok {
+		return nil, fmt.Errorf("%s requires database lookup but matcher %T doesn't support it", f, e.matcher)
 	}
-	return defaultVal
+	source, err := matcher.LookupSource(f.ReadsFrom())
+	if err != nil {
+		return nil, err
+	}
+	return source, nil
 }
 
 // executePredicate filters relations using a predicate
@@ -1141,8 +1137,11 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 		// environment (a symbol-free predicate), the zero-symbol unit is the
 		// subject: one evaluation with no bindings, the same verdict shape.
 		var lookup query.EntityLookup
-		if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
-			lookup = entityLookupAdapter{lookupMatcher}
+		if dbPred, ok := pred.(*query.DatabaseFunctionPredicate); ok {
+			var lookupErr error
+			if lookup, lookupErr = e.entityLookup(dbPred.Function); lookupErr != nil {
+				return nil, lookupErr
+			}
 		}
 		subject := env
 		if subject == nil {
@@ -1179,10 +1178,14 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 		return groups, nil
 	}
 
-	// Check if this predicate might need database access (DatabaseFunctionPredicate)
+	// A database-function predicate evaluates through the lookup for the
+	// source its function names.
 	var lookup query.EntityLookup
-	if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
-		lookup = entityLookupAdapter{lookupMatcher}
+	if dbPred, ok := pred.(*query.DatabaseFunctionPredicate); ok {
+		var lookupErr error
+		if lookup, lookupErr = e.entityLookup(dbPred.Function); lookupErr != nil {
+			return nil, lookupErr
+		}
 	}
 
 	var result Relation

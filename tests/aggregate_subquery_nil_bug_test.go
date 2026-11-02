@@ -11,17 +11,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// collectTuples collects all tuples from a relation by iterating
-func collectTuples(r executor.Relation) []executor.Tuple {
-	var tuples []executor.Tuple
-	it := r.Iterator()
-	for it.Next() {
-		tuples = append(tuples, it.Tuple())
-	}
-	it.Close()
-	return tuples
-}
-
 // TestMultipleAggregateSubqueriesNilBug reproduces the critical bug where
 // multiple aggregate subqueries return nil values except for the last one.
 // The reproduction needs storage-backed resolution rather than an in-memory
@@ -62,14 +51,23 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		barID := datalog.NewIdentity(fmt.Sprintf("bar:%d", i))
 		barTime := baseTime.Add(time.Duration(bar.minute-570) * time.Minute)
 
-		tx.Add(barID, datalog.NewKeyword(":price/symbol"), symbol)
-		tx.Add(barID, datalog.NewKeyword(":price/time"), barTime)
-		tx.Add(barID, datalog.NewKeyword(":price/minute-of-day"), bar.minute)
-		tx.Add(barID, datalog.NewKeyword(":price/open"), bar.open)
-		tx.Add(barID, datalog.NewKeyword(":price/high"), bar.high)
-		tx.Add(barID, datalog.NewKeyword(":price/low"), bar.low)
-		tx.Add(barID, datalog.NewKeyword(":price/close"), bar.close)
-		tx.Add(barID, datalog.NewKeyword(":price/volume"), bar.volume)
+		for _, fact := range []struct {
+			attr  string
+			value interface{}
+		}{
+			{":price/symbol", symbol},
+			{":price/time", barTime},
+			{":price/minute-of-day", bar.minute},
+			{":price/open", bar.open},
+			{":price/high", bar.high},
+			{":price/low", bar.low},
+			{":price/close", bar.close},
+			{":price/volume", bar.volume},
+		} {
+			if err := tx.Add(barID, datalog.NewKeyword(fact.attr), fact.value); err != nil {
+				t.Fatalf("Failed to add %s: %v", fact.attr, err)
+			}
+		}
 	}
 
 	if _, err := tx.Commit(); err != nil {
@@ -83,11 +81,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse verify query: %v", verifyErr)
 	}
 	verifyExec := db.NewExecutor()
-	vresult, verifyErr := verifyExec.Execute(vq)
+	vtuples, verifyErr := executor.CollectTuples(verifyExec.Execute(vq))
 	if verifyErr != nil {
 		t.Fatalf("Failed to execute verify query: %v", verifyErr)
 	}
-	vtuples := collectTuples(vresult)
 	t.Logf("Verify query found %d bars with :price/symbol", len(vtuples))
 	if len(vtuples) != 5 {
 		t.Fatalf("Expected 5 bars with :price/symbol, got %d", len(vtuples))
@@ -100,11 +97,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse symbol query: %v", symbolErr)
 	}
 	symbolExec := db.NewExecutor()
-	sresult, symbolErr := symbolExec.Execute(sq)
+	stuples, symbolErr := executor.CollectTuples(symbolExec.Execute(sq))
 	if symbolErr != nil {
 		t.Fatalf("Failed to execute symbol query: %v", symbolErr)
 	}
-	stuples := collectTuples(sresult)
 	t.Logf("Symbol query found %d results", len(stuples))
 	if len(stuples) != 5 {
 		t.Fatalf("Expected 5 results from symbol query, got %d", len(stuples))
@@ -117,11 +113,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse morning query: %v", morningErr)
 	}
 	morningExec := db.NewExecutor()
-	mresult, morningErr := morningExec.Execute(mq)
+	mtuples, morningErr := executor.CollectTuples(morningExec.Execute(mq))
 	if morningErr != nil {
 		t.Fatalf("Failed to execute morning query: %v", morningErr)
 	}
-	mtuples := collectTuples(mresult)
 	t.Logf("Morning query found %d results", len(mtuples))
 	if len(mtuples) != 5 {
 		t.Fatalf("Expected 5 results from morning query, got %d", len(mtuples))
@@ -134,15 +129,13 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse check minute query: %v", checkErr)
 	}
 	checkExec := db.NewExecutor()
-	checkResult, checkErr := checkExec.Execute(cmq)
+	checkTuples, checkErr := executor.CollectTuples(checkExec.Execute(cmq))
 	if checkErr != nil {
 		t.Fatalf("Failed to execute check minute query: %v", checkErr)
 	}
-	checkTuples := collectTuples(checkResult)
 	t.Logf("Check minute query found %d results", len(checkTuples))
-	for i, tuple := range checkTuples {
+	for _, tuple := range checkTuples {
 		t.Logf("  Bar %v has minute-of-day %v (type %T)", tuple[0], tuple[1], tuple[1])
-		_ = i
 	}
 
 	// Check each bar's attributes separately
@@ -152,11 +145,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse check high query: %v", chErr)
 	}
 	chExec := db.NewExecutor()
-	chResult, chErr := chExec.Execute(chq)
+	chTuples, chErr := executor.CollectTuples(chExec.Execute(chq))
 	if chErr != nil {
 		t.Fatalf("Failed to execute check high query: %v", chErr)
 	}
-	chTuples := collectTuples(chResult)
 	t.Logf("Check high query found %d results", len(chTuples))
 
 	checkLowQuery := `[:find ?bar ?l :where [?bar :price/low ?l]]`
@@ -165,11 +157,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse check low query: %v", clErr)
 	}
 	clExec := db.NewExecutor()
-	clResult, clErr := clExec.Execute(clq)
+	clTuples, clErr := executor.CollectTuples(clExec.Execute(clq))
 	if clErr != nil {
 		t.Fatalf("Failed to execute check low query: %v", clErr)
 	}
-	clTuples := collectTuples(clResult)
 	t.Logf("Check low query found %d results", len(clTuples))
 	for i, tuple := range clTuples {
 		t.Logf("  Low bar %d: %v -> %v", i, tuple[0], tuple[1])
@@ -182,11 +173,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse simple bound query: %v", sbErr)
 	}
 	sbExec := db.NewExecutor()
-	sbResult, sbErr := sbExec.Execute(sbq)
+	sbTuples, sbErr := executor.CollectTuples(sbExec.Execute(sbq))
 	if sbErr != nil {
 		t.Fatalf("Failed to execute simple bound query: %v", sbErr)
 	}
-	sbTuples := collectTuples(sbResult)
 	t.Logf("Simple bound query found %d results", len(sbTuples))
 	if len(sbTuples) != 1 {
 		t.Fatalf("Expected 1 result from simple bound query, got %d", len(sbTuples))
@@ -199,11 +189,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse bar join query: %v", bjErr)
 	}
 	bjExec := db.NewExecutor()
-	bjResult, bjErr := bjExec.Execute(bjq)
+	bjTuples, bjErr := executor.CollectTuples(bjExec.Execute(bjq))
 	if bjErr != nil {
 		t.Fatalf("Failed to execute bar join query: %v", bjErr)
 	}
-	bjTuples := collectTuples(bjResult)
 	t.Logf("Bar join query found %d results", len(bjTuples))
 	if len(bjTuples) != 5 {
 		for i, tuple := range bjTuples {
@@ -219,11 +208,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse bar-minute query: %v", bmErr)
 	}
 	bmExec := db.NewExecutor()
-	bmResult, bmErr := bmExec.Execute(bmq)
+	bmTuples, bmErr := executor.CollectTuples(bmExec.Execute(bmq))
 	if bmErr != nil {
 		t.Fatalf("Failed to execute bar-minute query: %v", bmErr)
 	}
-	bmTuples := collectTuples(bmResult)
 	t.Logf("Bar-minute query found %d results", len(bmTuples))
 	if len(bmTuples) != 1 {
 		t.Fatalf("Expected 1 result from bar-minute query, got %d", len(bmTuples))
@@ -239,11 +227,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 		t.Fatalf("Failed to parse minute query: %v", minuteErr)
 	}
 	minuteExec := db.NewExecutor()
-	minresult, minuteErr := minuteExec.Execute(minq)
+	minTuples, minuteErr := executor.CollectTuples(minuteExec.Execute(minq))
 	if minuteErr != nil {
 		t.Fatalf("Failed to execute minute query: %v", minuteErr)
 	}
-	minTuples := collectTuples(minresult)
 	t.Logf("Minute query found %d results", len(minTuples))
 	if len(minTuples) != 1 {
 		t.Fatalf("Expected 1 result from minute query, got %d", len(minTuples))
@@ -264,12 +251,10 @@ func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 	}
 
 	exec := db.NewExecutor()
-	result, execErr := exec.Execute(q)
+	resultTuples, execErr := executor.CollectTuples(exec.Execute(q))
 	if execErr != nil {
 		t.Fatalf("Failed to execute main query: %v", execErr)
 	}
-
-	resultTuples := collectTuples(result)
 	t.Logf("Main query result: %d tuples", len(resultTuples))
 
 	if len(resultTuples) != 1 {

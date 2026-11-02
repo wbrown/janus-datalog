@@ -92,7 +92,7 @@ func TestInsertJoinProjectsAcceptsExpressionOnlyRoot(t *testing.T) {
 				Function: &query.GetElseFunction{
 					Entity:  query.VariableTerm{Symbol: entity},
 					Attr:    datalog.NewKeyword(":item/value"),
-					Default: int64(0),
+					Default: query.ConstantTerm{Value: int64(0)},
 				},
 				Binding: value,
 			},

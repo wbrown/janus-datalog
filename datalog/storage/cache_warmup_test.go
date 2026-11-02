@@ -144,8 +144,31 @@ func TestWarmCacheEmptyAttribute(t *testing.T) {
 			// Don't add any data - attribute is empty
 
 			// Warm cache should not error on empty attribute
-			err = db.WarmCache([]datalog.Keyword{datalog.NewKeyword(":person/name")})
+			name := datalog.NewKeyword(":person/name")
+			require.NoError(t, db.WarmCache([]datalog.Keyword{name}))
+
+			// The entries warming resolved for the attribute: none while no
+			// entity holds it, and one once an entity does.
+			var nameAttr Attribute
+			copy(nameAttr[:], name.String())
+			warmed := func() int {
+				n := 0
+				db.Cache().slots.Range(func(key CacheKey, slot cacheSlot) bool {
+					if key.A == nameAttr && slot.entry != nil {
+						n++
+					}
+					return true
+				})
+				return n
+			}
+			assert.Equal(t, 0, warmed(), "warming an attribute no entity holds caches nothing")
+
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(datalog.NewIdentity("person1"), name, "Alice"))
+			_, err = tx.Commit()
 			require.NoError(t, err)
+			require.NoError(t, db.WarmCache([]datalog.Keyword{name}))
+			assert.Equal(t, 1, warmed(), "warming caches the one entity that holds the attribute")
 		})
 	}
 }

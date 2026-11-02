@@ -86,6 +86,15 @@ Each stage lands red-first-pinned, both matrix modes, full gate green before the
 4. **`Union`** + or-union executor fold conversion (re-scoped first).
 5. **γ collector routing** (`Options().Collector`), retiring the context parameter from the aggregation entry the engine uses.
 
+## State
+
+- Stage 2, the streaming extend body:
+  - `FunctionEvaluatorIterator` takes the expression, the database function's lookup and the environment relation. It joins each source tuple with each tuple `bindingTuples` reads, through `bindingAlignment.apply`.
+  - Its evaluation failure is its deferred error, answered when the stream is driven (`docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md` T8).
+  - `evaluateExpressionWithLookup` answers the stream over it. `StreamingRelation.EvaluateFunction` and `LazySeqRelation.EvaluateFunction` build it from a scalar expression.
+  - Tests: `TestExpressionEvaluatesAsItsResultIsPulled`, `TestFunctionEvaluatorIterator`, `TestFunctionEvaluatorIterator_UnifiesExistingSymbol`, `TestFunctionEvaluatorIterator_UnifiesFilters`, `TestFunctionEvaluatorIterator_PropagatesEvalError`.
+- The iterator takes the lookup and the environment as parameters. Under the clause closure it takes the closed expression in their place.
+
 ## Sub-decisions
 
 1. **Open**: `Union` error shape — `(Relation, error)` per the `Project` precedent (proposed), vs panic-on-mismatch as an invariant violation.

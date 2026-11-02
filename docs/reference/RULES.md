@@ -408,11 +408,9 @@ Four more shapes are refused as plain errors naming the rule:
   its own stratum (shortest paths, counts over closures). A body aggregates
   over a completed stratum through a subquery, as a query does.
 - **A source on an invocation**: an invocation holds its name and its
-  arguments and no source, and `get-else`, `get-some` and `missing?` read
-  `$`. Datomic's source prefix on a rule expression and source argument on a
-  database function are refused;
-  `BUG_SOURCE_ON_A_DATABASE_FUNCTION_OR_INVOCATION_REFUSED.md` records the
-  gap.
+  arguments and no source, so Datomic's source prefix on a rule expression is
+  refused. `BUG_SOURCE_ON_A_DATABASE_FUNCTION_OR_INVOCATION_REFUSED.md`
+  records the gap.
 
 ## Measurement
 

@@ -655,6 +655,12 @@ func (m *PatternMatcher) CanFuseAttributeFetch(_ query.Symbol, attr datalog.Keyw
 	return def != nil && def.Cardinality == schema.CardinalityOne
 }
 
+// LookupSource implements executor.EntityLookupMatcher: the matcher is one
+// source, so it is the lookup of the source under any name.
+func (m *PatternMatcher) LookupSource(_ query.Symbol) (executor.EntityLookupMatcher, error) {
+	return m, nil
+}
+
 func (m *PatternMatcher) LookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,
@@ -884,7 +890,8 @@ func typedVector(elements []any, vt datalog.Keyword) any {
 
 // TypeDefault converts a default value to match the attribute's schema type.
 // For vector attributes with TypeString, converts []interface{} to []string, etc.
-// This implements query.TypedDefaulter.
+// This implements query.TypedDefaulter, which get-else asks of the lookup of
+// the source it reads.
 func (m *PatternMatcher) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {
 	if m.schema == nil {
 		return defaultVal

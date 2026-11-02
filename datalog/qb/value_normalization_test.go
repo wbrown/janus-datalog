@@ -109,7 +109,11 @@ func TestRawConstantsNormalizeToInt64(t *testing.T) {
 		if !ok {
 			t.Fatalf("function is %T, want *query.GetElseFunction", expr.Function)
 		}
-		requireInt64(t, "GetElse default", fn.Default, 0)
+		constant, ok := fn.Default.(query.ConstantTerm)
+		if !ok {
+			t.Fatalf("GetElse default is %T, want query.ConstantTerm", fn.Default)
+		}
+		requireInt64(t, "GetElse default", constant.Value, 0)
 	})
 
 	t.Run("val wrapper", func(t *testing.T) {

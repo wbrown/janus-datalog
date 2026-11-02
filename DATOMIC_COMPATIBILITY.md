@@ -191,6 +191,14 @@ Functions that access the database for attribute lookups:
         [(get-else $ ?e :person/nickname "No Nickname") ?nickname]]
 ```
 
+**get-else - a default from a variable, read per tuple:**
+```clojure
+[:find ?name ?nickname
+ :in $ ?fallback
+ :where [?e :person/name ?name]
+        [(get-else $ ?e :person/nickname ?fallback) ?nickname]]
+```
+
 **missing? - test if attribute is absent (as predicate filter):**
 ```clojure
 [:find ?name
@@ -205,14 +213,14 @@ Functions that access the database for attribute lookups:
         [(missing? $ ?e :user/verified) ?needs_verification]]
 ```
 
-**get-some - first available attribute from fallback list:**
+**get-some - first available attribute from fallback list, and its value:**
 ```clojure
-[:find ?id ?display-name
+[:find ?id ?attr ?display-name
  :where [?e :user/id ?id]
-        [(get-some $ ?e :user/nickname :user/fullname :user/email) ?display-name]]
+        [(get-some $ ?e :user/nickname :user/fullname :user/email) [?attr ?display-name]]]
 ```
 
-These functions require the `$` database reference as their first argument.
+Each function's first argument is the source it reads: `$`, or a named source the query's `:in` declares, as in `(get-else $build ?run :run/failed "")`.
 
 ### 8. NOT/OR Clauses
 

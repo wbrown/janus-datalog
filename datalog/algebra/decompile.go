@@ -213,31 +213,31 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 	}
 
 	var defaultBranch []query.Clause
-	if join.DefaultAttr != nil && len(join.Defaults) == 1 && len(join.JoinSymbols) > 0 {
-		// Get-else rewrite origin: emit get-else in the default branch so
-		// TypedDefaulter can convert the default to the schema type (e.g.,
-		// []interface{} → []string). The default branch only runs for entities
-		// that the Scan didn't match, so get-else returns the typed default.
+	required := join.JoinSymbols
+	if join.DefaultGetElse != nil && len(join.Defaults) == 1 && len(join.JoinSymbols) > 0 {
+		// Get-else rewrite origin: emit the get-else in the default branch so
+		// TypedDefaulter can convert the default to the type the schema of the
+		// source it reads gives (e.g., []interface{} → []string). The default
+		// branch only runs for entities that the Scan didn't match, so get-else
+		// returns the typed default. It reads its default's variables, so the
+		// form requires them beside the join symbols.
 		defaultBranch = []query.Clause{
 			&query.Expression{
-				Function: &query.GetElseFunction{
-					Entity:  query.VariableTerm{Symbol: join.JoinSymbols[0]},
-					Attr:    *join.DefaultAttr,
-					Default: join.Defaults[0].Value,
-				},
-				Binding: join.Defaults[0].Symbol,
+				Function: join.DefaultGetElse,
+				Binding:  join.Defaults[0].Symbol,
 			},
 		}
+		required = mergeSymbols(join.JoinSymbols, join.DefaultGetElse.Default.RequiredSymbols())
 	} else {
 		defaultBranch = groundDefaults(join.Defaults)
 	}
 
-	// Declare the interface: the join symbols are the per-group correlation
-	// keys the outer relation must bind (so the phaser schedules this after
-	// the DataPattern that provides them), and the default symbols are the
-	// outputs every branch binds.
+	// Declare the interface: the required symbols are the per-group
+	// correlation keys the outer relation must bind (so the phaser schedules
+	// this after the DataPattern that provides them), and the default symbols
+	// are the outputs every branch binds.
 	orDefaultJoinClause := &query.OrDefaultJoinClause{
-		RequiredVars: join.JoinSymbols,
+		RequiredVars: required,
 		OutputVars:   defaultSyms,
 		Branches:     [][]query.Clause{rightClauses, defaultBranch},
 	}

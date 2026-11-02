@@ -54,6 +54,19 @@ The default source `$` is the calling database. Use it alongside named sources:
 
 You can omit `$` from `:in` — it's always available. But including it makes the query self-documenting.
 
+### Database Functions on a Named Source
+
+A database function's first argument is the source it reads, as a pattern's prefix is:
+
+```clojure
+[:find ?run ?failed
+ :in $ $build
+ :where [$build ?run :run/name _]
+        [(get-else $build ?run :run/failed "") ?failed]]
+```
+
+`get-else`, `get-some` and `missing?` look the attribute up in the source they name. A source that cannot look an attribute up is an error naming the source.
+
 ### Combining Sources with Scalar/Collection Inputs
 
 Named sources and regular inputs coexist in `:in`:
@@ -90,6 +103,16 @@ qb.PatFrom(users, e, qb.Kw(":user/name"), name)
 ```
 
 Arguments after the source follow the same rules as `Pat()`: `*Var`, `Attr`, `Val`, `Blank()`, or raw Go values.
+
+### GetElseFrom(), MissingFrom(), GetSomeFrom()
+
+Database functions on a named source take the source first:
+
+```go
+build := qb.Source("$build")
+// [(get-else $build ?run :run/failed "") ?failed]
+qb.GetElseFrom(build, run, qb.Kw(":run/failed"), "").As(failed)
+```
 
 ### DB Constant
 
@@ -318,6 +341,8 @@ type PredicateAwareMatcher interface {
 ```
 
 If your source supports predicate pushdown, the `SourceRouter` will call `MatchWithConstraints` instead of `Match` when constraints are available.
+
+A source a database function names implements `EntityLookupMatcher`, which looks one entity's attribute up. The `SourceRouter` gives the function that source's lookup through `LookupSource`, and a source without the capability is an error naming it.
 
 Pass your custom source via `WithSources`:
 

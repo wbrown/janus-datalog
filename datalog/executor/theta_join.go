@@ -147,13 +147,14 @@ outerLoop:
 // avoiding the StreamingRelation.Iterator() panic.
 // env is the query scope's environment relation; see evaluateExpressionWithLookup.
 //
-// Eager: errors are knowable synchronously and return in-band.
+// A cross-join's failure returns in-band; the expression evaluates as its
+// result is pulled, so an evaluation failure surfaces when it is driven.
 func crossJoinWithExpression(relevantRels []Relation, expr *query.Expression, lookup query.EntityLookup, env Relation, opts ExecutorOptions) (Relation, error) {
 	if len(relevantRels) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, opts), nil
 	}
 	if len(relevantRels) == 1 {
-		return evaluateExpressionWithLookup(relevantRels[0], expr, lookup, env)
+		return evaluateExpressionWithLookup(relevantRels[0], expr, lookup, env), nil
 	}
 
 	// Cross-join all relations first (no predicate filter)
@@ -169,5 +170,5 @@ func crossJoinWithExpression(relevantRels []Relation, expr *query.Expression, lo
 	}
 
 	// Evaluate expression on the combined relation
-	return evaluateExpressionWithLookup(joined, expr, lookup, env)
+	return evaluateExpressionWithLookup(joined, expr, lookup, env), nil
 }

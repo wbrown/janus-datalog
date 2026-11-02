@@ -212,20 +212,20 @@ func parseIdentity(args []query.PatternElement) (query.Function, error) {
 // Database Function Parsers
 // =============================================================================
 
-// parseGetElse parses (get-else $ ?entity :attribute default-value)
-// Returns the attribute value if it exists, or the default if missing.
+// parseGetElse parses (get-else $src ?entity :attribute default-value)
+// Returns the attribute value the source holds, or the default if missing.
 func parseGetElse(args []query.PatternElement) (query.Function, error) {
-	// Syntax: (get-else $ ?e :attr default)
-	// args[0] = $ (database reference)
+	// Syntax: (get-else $src ?e :attr default)
+	// args[0] = $src (the source, $ or a named source)
 	// args[1] = ?e (entity variable or constant)
 	// args[2] = :attr (attribute keyword)
-	// args[3] = default (any value)
+	// args[3] = default (a variable or a constant)
 	if len(args) != 4 {
-		return nil, fmt.Errorf("get-else requires exactly 4 arguments ($ entity attr default), got %d", len(args))
+		return nil, fmt.Errorf("get-else requires exactly 4 arguments (source entity attr default), got %d", len(args))
 	}
 
-	// Validate database reference ($)
-	if err := validateDatabaseRef(args[0]); err != nil {
+	source, err := parseFunctionSource(args[0])
+	if err != nil {
 		return nil, fmt.Errorf("get-else: %w", err)
 	}
 
@@ -238,33 +238,41 @@ func parseGetElse(args []query.PatternElement) (query.Function, error) {
 		return nil, fmt.Errorf("get-else: attribute must be a keyword: %w", err)
 	}
 
-	// Parse default value
-	defaultVal, err := extractConstantValue(args[3])
-	if err != nil {
-		return nil, fmt.Errorf("get-else: default must be a constant value: %w", err)
+	// Parse the default: a variable read per tuple, or a constant
+	var defaultTerm query.Term
+	if variable, ok := args[3].(query.Variable); ok {
+		defaultTerm = query.VariableTerm{Symbol: variable.Name}
+	} else {
+		defaultVal, err := extractConstantValue(args[3])
+		if err != nil {
+			return nil, fmt.Errorf("get-else: default must be a variable or a constant: %w", err)
+		}
+		defaultTerm = query.ConstantTerm{Value: defaultVal}
 	}
 
 	return &query.GetElseFunction{
+		Source:  source,
 		Entity:  entity,
 		Attr:    attr,
-		Default: defaultVal,
+		Default: defaultTerm,
 	}, nil
 }
 
-// parseMissingAttr parses (missing? $ ?entity :attribute)
-// Returns true if the entity does NOT have the specified attribute.
+// parseMissingAttr parses (missing? $src ?entity :attribute), as an
+// expression and, wrapped by parseMissingAttrPredicate, as a predicate.
+// Returns true if the entity does NOT have the specified attribute in the source.
 // Note: Named parseMissingAttr to avoid conflict with parseMissing in predicate_parser.go
-func parseMissingAttr(args []query.PatternElement) (query.Function, error) {
-	// Syntax: (missing? $ ?e :attr)
-	// args[0] = $ (database reference)
+func parseMissingAttr(args []query.PatternElement) (*query.MissingFunction, error) {
+	// Syntax: (missing? $src ?e :attr)
+	// args[0] = $src (the source, $ or a named source)
 	// args[1] = ?e (entity variable or constant)
 	// args[2] = :attr (attribute keyword)
 	if len(args) != 3 {
-		return nil, fmt.Errorf("missing? requires exactly 3 arguments ($ entity attr), got %d", len(args))
+		return nil, fmt.Errorf("missing? requires exactly 3 arguments (source entity attr), got %d", len(args))
 	}
 
-	// Validate database reference ($)
-	if err := validateDatabaseRef(args[0]); err != nil {
+	source, err := parseFunctionSource(args[0])
+	if err != nil {
 		return nil, fmt.Errorf("missing?: %w", err)
 	}
 
@@ -278,24 +286,25 @@ func parseMissingAttr(args []query.PatternElement) (query.Function, error) {
 	}
 
 	return &query.MissingFunction{
+		Source: source,
 		Entity: entity,
 		Attr:   attr,
 	}, nil
 }
 
-// parseGetSome parses (get-some $ ?entity :attr1 :attr2 ...)
+// parseGetSome parses (get-some $src ?entity :attr1 :attr2 ...)
 // Returns the first attribute that exists along with its value.
 func parseGetSome(args []query.PatternElement) (query.Function, error) {
-	// Syntax: (get-some $ ?e :attr1 :attr2 :attr3 ...)
-	// args[0] = $ (database reference)
+	// Syntax: (get-some $src ?e :attr1 :attr2 :attr3 ...)
+	// args[0] = $src (the source, $ or a named source)
 	// args[1] = ?e (entity variable or constant)
 	// args[2..] = :attr1, :attr2, ... (attribute keywords)
 	if len(args) < 3 {
-		return nil, fmt.Errorf("get-some requires at least 3 arguments ($ entity attr...), got %d", len(args))
+		return nil, fmt.Errorf("get-some requires at least 3 arguments (source entity attr...), got %d", len(args))
 	}
 
-	// Validate database reference ($)
-	if err := validateDatabaseRef(args[0]); err != nil {
+	source, err := parseFunctionSource(args[0])
+	if err != nil {
 		return nil, fmt.Errorf("get-some: %w", err)
 	}
 
@@ -313,31 +322,22 @@ func parseGetSome(args []query.PatternElement) (query.Function, error) {
 	}
 
 	return &query.GetSomeFunction{
+		Source: source,
 		Entity: entity,
 		Attrs:  attrs,
 	}, nil
 }
 
-// validateDatabaseRef validates that an argument is the database reference ($)
-func validateDatabaseRef(arg query.PatternElement) error {
-	switch a := arg.(type) {
-	case query.Variable:
-		if a.Name == datalog.SymDollar {
-			return nil
+// parseFunctionSource reads a database function's first argument, the source
+// the function reads: $ or a named source, a symbol beginning with $, as a
+// data pattern's source and an :in entry's source are read.
+func parseFunctionSource(arg query.PatternElement) (query.Symbol, error) {
+	if constant, ok := arg.(query.Constant); ok {
+		if sym, ok := constant.Value.(query.Symbol); ok && sym.IsSource() {
+			return sym, nil
 		}
-		return fmt.Errorf("expected database reference ($), got variable %s", a.Name)
-	case query.Constant:
-		// $ is parsed as Constant{Value: Symbol("$")}
-		if sym, ok := a.Value.(query.Symbol); ok && sym == datalog.SymDollar {
-			return nil
-		}
-		if str, ok := a.Value.(string); ok && str == "$" {
-			return nil
-		}
-		return fmt.Errorf("expected database reference ($), got %v", a.Value)
-	default:
-		return fmt.Errorf("expected database reference ($), got %T", arg)
 	}
+	return nil, fmt.Errorf("expected a source ($ or $name) as the first argument, got %v", arg)
 }
 
 // extractKeyword extracts a Keyword from a pattern element

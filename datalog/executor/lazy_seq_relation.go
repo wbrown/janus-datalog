@@ -145,13 +145,10 @@ func (r *LazySeqRelation) FilterWithPredicate(pred query.Predicate) Relation {
 }
 
 func (r *LazySeqRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
-	symbols := append([]query.Symbol(nil), r.symbols...)
-	if SymbolIndex(r, outputSymbol) < 0 {
-		symbols = append(symbols, outputSymbol)
-	}
+	evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, &query.Expression{Function: fn, Binding: outputSymbol}, nil, nil)
 	return r.fromIterator(
-		NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, fn, outputSymbol),
-		symbols,
+		evalIter,
+		evalIter.Symbols(),
 		r.properties.addSymbol(outputSymbol),
 	)
 }

@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -137,7 +139,9 @@ func (m *ScanSharingMatcher) MatchWithConstraints(
 	return m.Match(q, bindings)
 }
 
-// LookupAttribute forwards to inner matcher if it supports entity lookup.
+// LookupAttribute forwards to the inner matcher. When the inner matcher
+// cannot look up, "capability absent" is an error, never (nil, false, nil),
+// which reads as the attribute being absent.
 func (m *ScanSharingMatcher) LookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,
@@ -145,7 +149,17 @@ func (m *ScanSharingMatcher) LookupAttribute(
 	if elm, ok := m.inner.(EntityLookupMatcher); ok {
 		return elm.LookupAttribute(entity, attr)
 	}
-	return nil, false, nil
+	return nil, false, fmt.Errorf("entity lookup unavailable: inner matcher %T does not support attribute lookup", m.inner)
+}
+
+// LookupSource forwards to the inner matcher, so a database function names
+// its source under scan sharing and reads that source's own lookup. An inner
+// matcher that cannot look up is an error.
+func (m *ScanSharingMatcher) LookupSource(source query.Symbol) (EntityLookupMatcher, error) {
+	if elm, ok := m.inner.(EntityLookupMatcher); ok {
+		return elm.LookupSource(source)
+	}
+	return nil, fmt.Errorf("entity lookup unavailable: inner matcher %T does not support attribute lookup", m.inner)
 }
 
 // CanFuseAttributeFetch forwards to inner matcher if it supports fusion, so
@@ -155,17 +169,6 @@ func (m *ScanSharingMatcher) CanFuseAttributeFetch(source query.Symbol, attr dat
 		return f.CanFuseAttributeFetch(source, attr)
 	}
 	return false
-}
-
-// TypeDefault forwards to inner matcher for typed default conversion.
-// This is critical for get-else with vector defaults: without forwarding,
-// the TypedDefaulter type assertion fails and []interface{} is returned
-// instead of []string{}.
-func (m *ScanSharingMatcher) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {
-	if td, ok := m.inner.(query.TypedDefaulter); ok {
-		return td.TypeDefault(attr, defaultVal)
-	}
-	return defaultVal
 }
 
 // PrefetchEntities forwards to inner matcher if it supports prefetch.

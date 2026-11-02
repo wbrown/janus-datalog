@@ -337,7 +337,7 @@ The storage layer connects the query engine to BadgerDB:
 
 ### Multi-Source Query Architecture
 - **One interface**: `PatternMatcher` is the sole interface for all data sources. No separate `DataSource` type.
-- **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source), `EntityLookupMatcher` (delegates to default `$` source for `get-else`, `missing?`, `get-some`) and `AttributeVocabulary` (routes the unknown-attribute question to the source named, which answers for itself; a database passed as a named source refuses a pattern on it as it does as `$`).
+- **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source), `EntityLookupMatcher` (`LookupSource` returns the lookup of the source a `get-else`, `missing?` or `get-some` names, an unknown or lookup-less source being an error naming it) and `AttributeVocabulary` (routes the unknown-attribute question to the source named, which answers for itself; a database passed as a named source refuses a pattern on it as it does as `$`).
 - **Source threading**: Sources are an execution context built once at the top level. `Query()` accepts `WithSources(...)` as a functional option. The `SourceRouter` becomes the executor's `PatternMatcher`, so subqueries inherit access to all sources automatically.
 - **IsSourceSymbol**: Helper `strings.HasPrefix(string(sym), "$")` replacing all hardcoded `sym == "$"` checks.
 - **Adding new source types**: Implement `PatternMatcher`. Optionally implement `PredicateAwareMatcher` for predicate pushdown. Pass via `WithSources`.
@@ -506,6 +506,9 @@ Naming something precisely forces you to think about what it does and where it b
 - Name the file for what the functions do (`relation_ops.go`, `iterator_validation.go`)
 - Name the function for what it does (`getUniqueCombinations`, not `helperGetCombos`)
 - If you can't name it, you don't understand it well enough to write it
+
+### CRITICAL: Generally Do Not Discard a Returned Value With `_`
+**A result is generally not discarded with `_`.** A `_` hides what was dropped. A reader cannot tell a discarded error from a discarded value without opening the callee, and either is lost without a trace. Bind each result: check an error, and use or assert a value the caller is meant to use, such as a relation handed back in place of the one passed in. A `_` stays only for a value the call's contract makes incidental to the caller, beside an error that is bound and checked, as in `_, err = tx.Commit()`. A bare call that drops an error, `it.Close()` as a statement, is the same discard. The tell is `x, _ :=` written before reading the callee's signature. The instance: a test's `strategy, _ := analyzeReuseStrategy(...)` was described as swallowing an error, when its second result was the binding relation the strategy hands back in place of the one passed in.
 
 ### CRITICAL: Use Pure Relational-Algebra Vocabulary
 Describe relation structure with **symbols**, **tuple positions**, **relation

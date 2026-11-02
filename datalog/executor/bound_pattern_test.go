@@ -55,3 +55,30 @@ func TestExecuteBoundPatternStandsInTheConsumedGroupsPlace(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, [][]interface{}{{e1, int64(5)}, {e2, int64(6)}}, tuples)
 }
+
+// A pattern with no match answers the empty relation without reading its
+// subject: the pattern's matches are the join's other side, and a join with
+// an empty side is empty whatever the subject holds
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5).
+func TestExecuteBoundPatternWithNoMatchLeavesItsSubjectUnread(t *testing.T) {
+	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
+	e1 := datalog.NewIdentity("bound:1")
+	datoms := []datalog.Datom{
+		{E: e1, A: datalog.NewKeyword(":t/other"), V: int64(5), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+	}
+	subjectIter := &sliceIterator{tuples: []Tuple{{e1}}, pos: -1}
+	subject := NewStreamingRelation([]query.Symbol{entity}, subjectIter)
+	exec := newQueryExecutor(NewMemoryPatternMatcher(datoms), nil, ExecutorOptions{})
+
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: entity}, query.Constant{Value: datalog.NewKeyword(":t/a")}, query.Variable{Name: value},
+	}}
+	groups, err := exec.executeBoundPattern(NewContext(), pattern, Relations{subject})
+	require.NoError(t, err)
+	require.Len(t, groups, 1, "the result stands in the subject's place")
+	assert.Equal(t, []query.Symbol{entity, value}, groups[0].Symbols())
+	tuples, err := CollectTuples(groups[0], nil)
+	require.NoError(t, err)
+	assert.Empty(t, tuples)
+	assert.Equal(t, -1, subjectIter.pos, "the subject is never pulled")
+}

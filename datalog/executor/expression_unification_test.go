@@ -112,14 +112,15 @@ func TestExpressionOntoBoundVariableUnifies(t *testing.T) {
 	}
 }
 
-// TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource pins the
+// TestEvaluateExpressionUnifyPassThroughAnswersItsSourcesCopyAnswer pins the
 // RequiresCopy discipline on the unify pass-through: when every binding
-// symbol is bound and the tuple survives unification unchanged, the
-// retained tuple must be copied out of a workspace-reusing source — the
-// same boundary rule every other retain-site honors. Without the copy,
+// symbol is bound and the tuple survives unification unchanged, the result
+// answers the source's tuple itself, so its copy answer is the source's, and
+// a consumer retaining a tuple from a workspace-reusing source copies it —
+// the same boundary rule every other retain-site honors. Without the copy,
 // every retained tuple aliases the iterator workspace and reads as the last
 // tuple.
-func TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource(t *testing.T) {
+func TestEvaluateExpressionUnifyPassThroughAnswersItsSourcesCopyAnswer(t *testing.T) {
 	xSym := datalog.NewSymbol("?x")
 	ySym := datalog.NewSymbol("?y")
 	srcSymbols := []query.Symbol{xSym, ySym}
@@ -140,15 +141,15 @@ func TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource(t *testing.T) 
 	}
 	expr := q.Where[2].(*query.Expression)
 
-	result, err := evaluateExpressionWithLookup(src, expr, nil, nil)
-	if err != nil {
-		t.Fatalf("evaluation failed: %v", err)
-	}
+	result := evaluateExpressionWithLookup(src, expr, nil, nil)
 
 	var got []Tuple
 	it := result.Iterator()
+	if !it.RequiresCopy() {
+		t.Fatalf("the pass-through answers the workspace-reusing source's tuple, so its copy answer is true")
+	}
 	for it.Next() {
-		got = append(got, it.Tuple())
+		got = append(got, copyTuple(it.Tuple()))
 	}
 	if err := it.Error(); err != nil {
 		t.Fatalf("iteration failed: %v", err)
@@ -254,10 +255,7 @@ func TestEvaluateExpressionUnifiesBoundBindings(t *testing.T) {
 			}
 
 			rel := NewMaterializedRelation(tc.symbols, tc.tuples)
-			result, err := evaluateExpressionWithLookup(rel, expr, nil, nil)
-			if err != nil {
-				t.Fatalf("evaluation failed: %v", err)
-			}
+			result := evaluateExpressionWithLookup(rel, expr, nil, nil)
 
 			gotSymbols := result.Symbols()
 			if len(gotSymbols) != len(tc.wantSymbols) {

@@ -2206,8 +2206,8 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 
 // TestMissingOnLookupLessMatcherFailsLoudly pins the loud-failure contract
 // for database-function predicates on a matcher without entity lookup.
-// MemoryPatternMatcher implements no LookupAttribute, so [(missing? $ ?e
-// :attr)] cannot be answered here; the required behavior is a loud error.
+// SliceSource implements no LookupAttribute, so [(missing? $ ?e :attr)]
+// cannot be answered here; the required behavior is a loud error.
 // Both execution contexts are pinned independently — they fail through
 // different defects (BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md):
 // bare, the predicate's Eval error is deferred and was laundered by
@@ -2216,18 +2216,11 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 // err=nil). Observability must never change results: both contexts must
 // yield the same loud error.
 func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
-	goalA := datalog.NewIdentity("goal:a")
-	goalB := datalog.NewIdentity("goal:b")
-	nameAttr := datalog.NewKeyword(":entity/name")
-	flagAttr := datalog.NewKeyword(":goal/flag")
-
-	datoms := []datalog.Datom{
-		{E: goalA, A: nameAttr, V: "alpha", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
-		{E: goalB, A: nameAttr, V: "beta", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
-		{E: goalA, A: flagAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
-	}
-
-	matcher := NewMemoryPatternMatcher(datoms)
+	// A slice source gives its item i the entity slice:i.
+	goalB := datalog.NewIdentity("slice:1")
+	matcher := NewSliceSource([]string{"alpha", "beta"}, AttributeSchema[string]{
+		datalog.NewKeyword(":entity/name"): func(name string) any { return name },
+	})
 	goalSym := datalog.NewSymbol("?goal")
 
 	q, err := parser.ParseQuery(`[:find ?name

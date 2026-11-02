@@ -3,9 +3,12 @@ package executor
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // IndexedMemoryMatcher is an optimized in-memory pattern matcher that uses hash indices
@@ -23,6 +26,10 @@ type IndexedMemoryMatcher struct {
 	// ExecutorOptions for configuring relation behavior (protected by optionsMutex)
 	optionsMutex sync.RWMutex
 	options      ExecutorOptions
+
+	// schema gives an attribute the rule a lookup resolves it by; set at
+	// construction, nil for a matcher that looks nothing up.
+	schema *schema.Schema
 }
 
 // eaIndexKey keys the (entity, attribute) index by the interned E and A pointers,
@@ -145,6 +152,13 @@ func (m *IndexedMemoryMatcher) WithOptions(opts ExecutorOptions) *IndexedMemoryM
 	return m
 }
 
+// WithSchema sets the schema whose declarations the matcher's lookups resolve
+// by, before the matcher answers any query, and returns self for chaining.
+func (m *IndexedMemoryMatcher) WithSchema(s *schema.Schema) *IndexedMemoryMatcher {
+	m.schema = s
+	return m
+}
+
 // Match implements PatternMatcher.Match
 func (m *IndexedMemoryMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
 	// Delegate to MatchWithConstraints with no constraints
@@ -240,6 +254,84 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	}
 
 	return NewStreamingRelationWithOptions(symbols, iterator, relOpts), nil
+}
+
+// LookupAttribute implements EntityLookupMatcher: the value of the datom the
+// matcher holds at the entity's attribute with the latest transaction, the
+// rule storage applies to an attribute no schema declares otherwise. An
+// attribute the entity does not hold is absent. Each lookup reports through
+// the matcher's handler as a storage read reports one: the entity, the
+// attribute and the values served.
+func (m *IndexedMemoryMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (value interface{}, found bool, err error) {
+	m.optionsMutex.RLock()
+	handler := m.options.Handler
+	m.optionsMutex.RUnlock()
+	if handler != nil {
+		opened := time.Now()
+		defer func() {
+			served := 0
+			if found {
+				served = 1
+			}
+			handler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data: map[string]interface{}{
+					annotations.KeyEntity:       entity,
+					annotations.KeyAttribute:    attr,
+					annotations.KeyValuesServed: served,
+				},
+			})
+		}()
+	}
+	m.buildIndices()
+	positions := m.eavIndex[eaIndexKey{e: entity, a: attr}]
+	if len(positions) == 0 {
+		return nil, false, nil
+	}
+	latest := m.datoms[positions[0]]
+	for _, pos := range positions[1:] {
+		if latest.Tx.Less(m.datoms[pos].Tx) {
+			latest = m.datoms[pos]
+		}
+	}
+	return latest.V, true, nil
+}
+
+// LookupSource implements EntityLookupMatcher: the matcher is one source, so
+// it is the lookup of the source under any name.
+func (m *IndexedMemoryMatcher) LookupSource(_ query.Symbol) (EntityLookupMatcher, error) {
+	return m, nil
+}
+
+// PrefetchEntities implements EntityPrefetcher: it builds the index the
+// matcher's lookups read, which holds every entity's attributes, so the
+// lookups of the entities that follow read it built.
+func (m *IndexedMemoryMatcher) PrefetchEntities(_ []datalog.Identity) error {
+	m.buildIndices()
+	return nil
+}
+
+// CanFuseAttributeFetch implements AttributeFetchFusable: a fetch of attr
+// fuses into a lookup when the matcher's schema declares attr
+// cardinality-one and no entity holds two datoms at attr, where the lookup
+// answers the one value a match does. The matcher is one source, so the
+// source is not read.
+func (m *IndexedMemoryMatcher) CanFuseAttributeFetch(_ query.Symbol, attr datalog.Keyword) bool {
+	if m.schema == nil {
+		return false
+	}
+	if def := m.schema.GetAttribute(attr); def == nil || def.Cardinality != schema.CardinalityOne {
+		return false
+	}
+	m.buildIndices()
+	for _, pos := range m.attributeIndex[attr] {
+		if len(m.eavIndex[eaIndexKey{e: m.datoms[pos].E, a: attr}]) > 1 {
+			return false
+		}
+	}
+	return true
 }
 
 // matchWithIndex performs indexed pattern matching

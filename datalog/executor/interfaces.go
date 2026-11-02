@@ -33,13 +33,19 @@ type PredicateAwareMatcher interface {
 // to lookup specific entity attributes during expression evaluation.
 type EntityLookupMatcher interface {
 	PatternMatcher
-	// LookupAttribute retrieves the value of an attribute for an entity.
+	// LookupAttribute retrieves the value of an attribute for an entity, from
+	// the default source.
 	// An absent attribute returns (nil, false, nil); storage and decode failures
 	// return a non-nil error and must never masquerade as absence.
 	LookupAttribute(
 		entity datalog.Identity,
 		attr datalog.Keyword,
 	) (value interface{}, found bool, err error)
+	// LookupSource returns the lookup of the source a query names, $ for the
+	// default source: a matcher that is one source returns itself under any
+	// name, and a router returns the lookup of the source named. A source it
+	// does not hold, or one without the capability, is an error naming it.
+	LookupSource(source query.Symbol) (EntityLookupMatcher, error)
 }
 
 // AttributeFetchFusable reports whether a same-entity fetch of attr on a

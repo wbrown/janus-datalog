@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -155,7 +154,10 @@ type Join struct {
 	JoinSymbols []query.Symbol   // Symbols to join on (empty = natural join on shared symbols)
 	Output      []query.Symbol   // Combined output symbols
 	Defaults    []Default        // For LeftOuterJoin: each symbol's value when right side has no match
-	DefaultAttr *datalog.Keyword // For get-else rewrite: the attribute, enabling typed defaults
+	// DefaultGetElse is, for the get-else rewrite, the get-else the default
+	// branch evaluates, so the default is typed by the schema of the source
+	// it reads.
+	DefaultGetElse *query.GetElseFunction
 }
 
 func (j *Join) OutputSymbols() []query.Symbol { return j.Output }

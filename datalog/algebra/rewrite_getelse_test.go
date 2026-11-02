@@ -134,17 +134,17 @@ func TestGetElseScanRewrite_VectorDefaultRewritten(t *testing.T) {
 	joinsAfter := countNodes(optimized, RuleJoin)
 	assert.Greater(t, joinsAfter, 0, "should have LeftOuterJoin from get-else rewrite")
 
-	// Verify the LeftOuterJoin carries the attribute for typed defaults
-	var foundAttr bool
+	// Verify the LeftOuterJoin carries the get-else for typed defaults
+	var foundGetElse bool
 	walkNodes(optimized, func(n *Node) {
 		if n.Op == RuleJoin {
 			j := n.Data.(*Join)
-			if j.Kind == LeftOuterJoin && j.DefaultAttr != nil {
-				foundAttr = true
+			if j.Kind == LeftOuterJoin && j.DefaultGetElse != nil {
+				foundGetElse = true
 			}
 		}
 	})
-	assert.True(t, foundAttr, "LeftOuterJoin should carry DefaultAttr for typed defaults")
+	assert.True(t, foundGetElse, "LeftOuterJoin should carry DefaultGetElse for typed defaults")
 
 	// Decompile and verify the default branch uses get-else (not ground)
 	clauses, err := Decompile(optimized)

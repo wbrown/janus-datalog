@@ -3,7 +3,10 @@ package tests
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
@@ -26,13 +29,14 @@ func testAlgebraMatrixComparisonBindingOr(t *testing.T, db *storage.Database) {
 	nameAttr := datalog.NewKeyword(":scenario/name")
 	taskAttr := datalog.NewKeyword(":scenario/task")
 
-	tx.Add(s1, nameAttr, "Scenario One")
-	tx.Add(s1, taskAttr, t1)
-	tx.Add(s1, taskAttr, t2)
-	tx.Add(s2, nameAttr, "Scenario Two")
-	tx.Add(s2, taskAttr, t3)
-	tx.Add(s3, nameAttr, "Scenario Three")
-	tx.Commit()
+	require.NoError(t, tx.Add(s1, nameAttr, "Scenario One"))
+	require.NoError(t, tx.Add(s1, taskAttr, t1))
+	require.NoError(t, tx.Add(s1, taskAttr, t2))
+	require.NoError(t, tx.Add(s2, nameAttr, "Scenario Two"))
+	require.NoError(t, tx.Add(s2, taskAttr, t3))
+	require.NoError(t, tx.Add(s3, nameAttr, "Scenario Three"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
 
 	queryStr := `[:find ?scenario ?name ?taskCount ?complete
 	              :where [?scenario :scenario/name ?name]
@@ -50,18 +54,20 @@ func testAlgebraMatrixComparisonBindingOr(t *testing.T, db *storage.Database) {
 
 	// The executor carries the database's planner options, which eachBackendAndMode
 	// set from the mode.
-	result, err := db.NewExecutor().Execute(q)
+	tuples, err := executor.CollectTuples(db.NewExecutor().Execute(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
 
-	iter := result.Iterator()
-	var count int
-	for iter.Next() {
-		tuple := iter.Tuple()
-		t.Logf("  %v", tuple)
-		count++
-	}
-	iter.Close()
-	t.Logf("Total: %d tuples", count)
+	// or is the union of its branches: every scenario takes the ground 0, and
+	// a scenario with tasks also takes its count. A scenario with none counts
+	// nothing. :scenario/task is undeclared, so it resolves as cardinality one
+	// and s1's later task supersedes its earlier one.
+	assert.ElementsMatch(t, [][]interface{}{
+		{s1, "Scenario One", int64(1), true},
+		{s1, "Scenario One", int64(0), false},
+		{s2, "Scenario Two", int64(1), true},
+		{s2, "Scenario Two", int64(0), false},
+		{s3, "Scenario Three", int64(0), false},
+	}, tuples)
 }

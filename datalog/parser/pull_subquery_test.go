@@ -3,6 +3,11 @@ package parser
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // TestPullRejectedInSubqueryFind pins the value-domain boundary from
@@ -26,11 +31,19 @@ func TestPullRejectedInSubqueryFind(t *testing.T) {
 	}
 }
 
-// Pull in a top-level find must remain valid.
+// Pull in a top-level find must remain valid, and parses to the pull of the
+// entity variable over its attributes.
 func TestPullAcceptedInTopLevelFind(t *testing.T) {
-	_, err := ParseQuery(`[:find (pull ?task [:task/name]) ?status
+	q, err := ParseQuery(`[:find (pull ?task [:task/name]) ?status
 	                       :where [?task :task/status ?status]]`)
-	if err != nil {
-		t.Fatalf("pull in top-level find must parse: %v", err)
-	}
+	require.NoError(t, err, "pull in top-level find must parse")
+	assert.Equal(t, []query.FindElement{
+		query.FindPull{
+			Variable: datalog.NewSymbol("?task"),
+			Pattern: &query.PullPattern{Specs: []query.PullAttrSpec{
+				&query.PullAttribute{Attr: datalog.NewKeyword(":task/name")},
+			}},
+		},
+		query.FindVariable{Symbol: datalog.NewSymbol("?status")},
+	}, q.Find)
 }

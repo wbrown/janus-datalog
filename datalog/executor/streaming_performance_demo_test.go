@@ -52,6 +52,20 @@ func TestStreamingPerformanceDemo(t *testing.T) {
 			// Memory estimation
 			expectedMemReduction := (1.0 - scenario.filterRatio) * 100
 			fmt.Printf("    Est. Memory Reduction: %.0f%%\n", expectedMemReduction)
+
+			want := expectedPipelineResult(scenario.dataSize, scenario.filterRatio, scenario.operations)
+			for _, opts := range []ExecutorOptions{{}, {EnableTrueStreaming: true}} {
+				symbols, tuples := runPipeline(t, scenario.dataSize, scenario.filterRatio, scenario.operations, opts)
+				id, score := query.SymbolIndex(symbols, datalog.NewSymbol("?id")), query.SymbolIndex(symbols, datalog.NewSymbol("?score"))
+				if len(symbols) != 2 || id < 0 || score < 0 {
+					t.Fatalf("the pipeline projects ?id and ?score; got %v", symbols)
+				}
+				got := make([]Tuple, len(tuples))
+				for i, tuple := range tuples {
+					got[i] = Tuple{tuple[id], tuple[score]}
+				}
+				assert.ElementsMatch(t, want, got, "streaming %v", opts.EnableTrueStreaming)
+			}
 		})
 	}
 
@@ -88,7 +102,8 @@ func measureScenarioWithOpts(t *testing.T, size int, filterRatio float64, ops []
 	return totalNs / int64(iterations)
 }
 
-func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts ExecutorOptions) {
+// runPipeline returns the symbols and tuples of the pipeline's answer.
+func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts ExecutorOptions) ([]query.Symbol, []Tuple) {
 	// Create test data
 	var tuples []Tuple
 	for i := 0; i < size; i++ {
@@ -130,10 +145,11 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 			current = projected
 
 		case "join":
-			// Create a small join relation
+			// The join side holds filterRatio of the ids below size/10, read
+			// per hundred ids so a ratio under a tenth still keeps some.
 			var joinTuples []Tuple
 			for i := 0; i < size/10; i++ {
-				if i%10 < int(filterRatio*10) {
+				if i%100 < int(filterRatio*100) {
 					joinTuples = append(joinTuples, Tuple{i, fmt.Sprintf("city%d", i)})
 				}
 			}
@@ -143,14 +159,46 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 		}
 	}
 
-	// Consume results
 	it := current.Iterator()
-	count := 0
+	var answer []Tuple
 	for it.Next() {
-		count++
-		_ = it.Tuple()
+		tuple := it.Tuple()
+		if it.RequiresCopy() {
+			tuple = append(Tuple(nil), tuple...)
+		}
+		answer = append(answer, tuple)
 	}
-	it.Close()
+	if err := it.Error(); err != nil {
+		t.Fatalf("pipeline %v: %v", ops, err)
+	}
+	if err := it.Close(); err != nil {
+		t.Fatalf("pipeline %v: close: %v", ops, err)
+	}
+	return current.Symbols(), answer
+}
+
+// expectedPipelineResult computes runPipeline's answer in Go over the same
+// fixture: each ?id the filters keep and the join side holds, with its
+// ?score.
+func expectedPipelineResult(size int, filterRatio float64, ops []string) []Tuple {
+	want := []Tuple{}
+	for i := 0; i < size; i++ {
+		kept := true
+		for _, op := range ops {
+			switch op {
+			case "filter", "filter1":
+				kept = kept && int64(i) < int64(float64(size)*filterRatio)
+			case "filter2":
+				kept = kept && i*10 > 100
+			case "join":
+				kept = kept && i < size/10 && i%100 < int(filterRatio*100)
+			}
+		}
+		if kept {
+			want = append(want, Tuple{i, i * 10})
+		}
+	}
+	return want
 }
 
 // nanoTime returns current time in nanoseconds
@@ -219,44 +267,91 @@ func benchmarkScenarioWithOpts(b *testing.B, size int, filterRatio float64, opts
 		Right: query.ConstantTerm{Value: threshold},
 	})
 
-	// Project
-	projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")})
-
-	// Consume
-	it := projected.Iterator()
-	for it.Next() {
-		_ = it.Tuple()
+	projected, err := filtered.Project([]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")})
+	if err != nil {
+		b.Fatalf("project: %v", err)
 	}
-	it.Close()
+	xi := query.SymbolIndex(projected.Symbols(), datalog.NewSymbol("?x"))
+	if xi < 0 {
+		b.Fatalf("the projection carries ?x; got %v", projected.Symbols())
+	}
+
+	// Each tuple's ?x passes the filter, and every ?x below the threshold
+	// comes through.
+	it := projected.Iterator()
+	count := 0
+	for it.Next() {
+		if x := it.Tuple()[xi].(int); int64(x) >= threshold {
+			b.Fatalf("?x %d passed the filter ?x < %d", x, threshold)
+		}
+		count++
+	}
+	if err := it.Error(); err != nil {
+		b.Fatalf("iterate: %v", err)
+	}
+	if err := it.Close(); err != nil {
+		b.Fatalf("close: %v", err)
+	}
+	if int64(count) != threshold {
+		b.Fatalf("%d tuples passed the filter, want %d", count, threshold)
+	}
 }
 
-// TestMemoryCharacteristics demonstrates memory usage patterns
+// TestMemoryCharacteristics runs two filters and a projection over tuples of
+// ten symbols, where tuple i holds i*10+k at ?sk, on a materialized and on a
+// streaming relation, and checks each answer: the filters keep tuples 0
+// through outputSize-1 whole, and the projection keeps every tuple's ?s0 and
+// ?s1.
 func TestMemoryCharacteristics(t *testing.T) {
 	fmt.Println("\n=== MEMORY CHARACTERISTICS ===")
+
+	symbols := make([]query.Symbol, 10)
+	for k := range symbols {
+		symbols[k] = datalog.NewSymbol(fmt.Sprintf("?s%d", k))
+	}
+	// below keeps the tuples whose ?s0 is under limit*10: tuples 0 through
+	// limit-1.
+	below := func(limit int) func(Relation) (Relation, error) {
+		return func(rel Relation) (Relation, error) {
+			return rel.FilterWithPredicate(&query.Comparison{
+				Op:    datalog.SymLT,
+				Left:  query.VariableTerm{Symbol: symbols[0]},
+				Right: query.ConstantTerm{Value: int64(limit * 10)},
+			}), nil
+		}
+	}
 
 	testCases := []struct {
 		name       string
 		inputSize  int
 		outputSize int
 		desc       string
+		operate    func(Relation) (Relation, error)
+		width      int // the answer carries the first width symbols
 	}{
 		{
 			"Aggressive Filter",
 			100000,
 			100,
 			"Filter 100K tuples to 100 (0.1% selectivity)",
+			below(100),
+			10,
 		},
 		{
 			"Moderate Filter",
 			10000,
 			1000,
 			"Filter 10K tuples to 1K (10% selectivity)",
+			below(1000),
+			10,
 		},
 		{
 			"Projection Only",
 			5000,
 			5000,
 			"Project 5K tuples from 10 symbols to 2 symbols",
+			func(rel Relation) (Relation, error) { return rel.Project(symbols[:2]) },
+			2,
 		},
 	}
 
@@ -273,6 +368,58 @@ func TestMemoryCharacteristics(t *testing.T) {
 		fmt.Printf("  Streaming Memory:    ~%d KB\n", streamMemory/1024)
 		fmt.Printf("  Memory Reduction:    %.1f%%\n", reduction)
 		fmt.Println()
+
+		input := make([]Tuple, tc.inputSize)
+		for i := range input {
+			input[i] = make(Tuple, len(symbols))
+			for k := range symbols {
+				input[i][k] = i*10 + k
+			}
+		}
+		want := make([]Tuple, tc.outputSize)
+		for i := range want {
+			want[i] = make(Tuple, tc.width)
+			for k := range want[i] {
+				want[i][k] = i*10 + k
+			}
+		}
+
+		for _, opts := range []ExecutorOptions{{}, {EnableTrueStreaming: true}} {
+			var rel Relation
+			if opts.EnableTrueStreaming {
+				rel = NewStreamingRelationWithOptions(symbols, &sliceIterator{tuples: input, pos: -1}, opts)
+			} else {
+				rel = NewMaterializedRelationWithOptions(symbols, input, opts)
+			}
+			answer, err := tc.operate(rel)
+			if err != nil {
+				t.Fatalf("%s, streaming %v: %v", tc.name, opts.EnableTrueStreaming, err)
+			}
+			if len(answer.Symbols()) != tc.width {
+				t.Fatalf("%s, streaming %v: the answer carries %v; want %v",
+					tc.name, opts.EnableTrueStreaming, answer.Symbols(), symbols[:tc.width])
+			}
+			positions := make([]int, tc.width)
+			for k, sym := range symbols[:tc.width] {
+				positions[k] = query.SymbolIndex(answer.Symbols(), sym)
+				if positions[k] < 0 {
+					t.Fatalf("%s, streaming %v: the answer carries %v; want %v",
+						tc.name, opts.EnableTrueStreaming, answer.Symbols(), symbols[:tc.width])
+				}
+			}
+			tuples, err := CollectTuples(answer, nil)
+			if err != nil {
+				t.Fatalf("%s, streaming %v: %v", tc.name, opts.EnableTrueStreaming, err)
+			}
+			got := make([]Tuple, len(tuples))
+			for i, tuple := range tuples {
+				got[i] = make(Tuple, tc.width)
+				for k, position := range positions {
+					got[i][k] = tuple[position]
+				}
+			}
+			assert.ElementsMatch(t, want, got, "%s, streaming %v", tc.name, opts.EnableTrueStreaming)
+		}
 	}
 
 	fmt.Println("=== END MEMORY ANALYSIS ===")

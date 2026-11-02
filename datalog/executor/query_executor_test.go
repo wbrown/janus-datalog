@@ -198,8 +198,12 @@ func TestExecuteExpression(t *testing.T) {
 		}
 
 		result := groups[0]
-		if result.Size() != 2 {
-			t.Errorf("Expected 2 tuples, got %d", result.Size())
+		tuples, err := CollectTuples(result, nil)
+		if err != nil {
+			t.Fatalf("collect: %v", err)
+		}
+		if len(tuples) != 2 {
+			t.Errorf("Expected 2 tuples, got %d", len(tuples))
 		}
 
 		// Check symbols
@@ -240,8 +244,12 @@ func TestExecuteExpression(t *testing.T) {
 
 		result := groups[0]
 		// Should have 2 * 2 = 4 combinations
-		if result.Size() != 4 {
-			t.Errorf("Expected 4 tuples from Cartesian product, got %d", result.Size())
+		tuples, err := CollectTuples(result, nil)
+		if err != nil {
+			t.Fatalf("collect: %v", err)
+		}
+		if len(tuples) != 4 {
+			t.Errorf("Expected 4 tuples from Cartesian product, got %d", len(tuples))
 		}
 
 		// Check symbols: should have ?x, ?y, ?z
@@ -698,8 +706,10 @@ func TestExecuteEnumerateUnderTheTupleForm(t *testing.T) {
 	t.Run("a vector of another length is the arity error", func(t *testing.T) {
 		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
 		group := NewMaterializedRelation([]query.Symbol{vec}, []Tuple{{[]interface{}{"a", "b", "c"}}})
-		_, err := executor.executeExpression(NewContext(), enumerate, []Relation{group})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "3 values, 2 variables")
+		groups, err := executor.executeExpression(NewContext(), enumerate, []Relation{group})
+		require.NoError(t, err, "the expression evaluates as its result is pulled")
+		require.Len(t, groups, 1)
+		_, err = CollectTuples(groups[0], nil)
+		require.ErrorContains(t, err, "3 values, 2 variables")
 	})
 }

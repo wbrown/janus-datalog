@@ -1,6 +1,6 @@
 # get-some binds the value without its attribute
 
-**Status**: Open.
+**Status**: Resolved, as *The fix* states. `TestGetSome_BindsTheAttributeItFoundWithTheValue` (storage), `TestGetSomeWithTwoAttrs` and `TestIntegration_GetSome` (qb) pin it.
 
 Datomic's `get-some` answers the first attribute the entity carries together with its value. Janus's answers the value alone. Goal 12 of `docs/proposals/NESTED_SCOPES_AS_QUERIES.md` says a form Datomic gives takes Datomic's meaning, so a janus meaning for this form is a gap.
 
