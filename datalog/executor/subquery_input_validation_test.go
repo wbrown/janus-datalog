@@ -23,7 +23,7 @@ func TestSubqueryInputAssemblyRejectsUnresolvedVariable(t *testing.T) {
 		Inputs:  []query.PatternElement{query.Variable{Name: datalog.NewSymbol("?missing")}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{v}},
 	}
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 	_, err := exec.executeSubquery(NewContext(), subq, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "?missing")
@@ -39,7 +39,7 @@ func TestSubqueryInputAssemblyRejectsUnknownElementKind(t *testing.T) {
 		Inputs:  []query.PatternElement{query.Blank{}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{v}},
 	}
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 	_, err := exec.executeSubquery(NewContext(), subq, nil)
 	require.Error(t, err)
 }

@@ -10,8 +10,16 @@ import (
 // getElsePassName names the pass in rewrite records and event data.
 const getElsePassName = "get-else-scan-rewrite"
 
+// MatchAnswersLookup reports whether a match of attr on the source a query
+// names answers, per entity, the one value the source's lookup answers. A
+// source states it through the executor's AttributeFetchFusable, and the
+// planner hands the pass the executing sources' answer.
+type MatchAnswersLookup func(source query.Symbol, attr datalog.Keyword) bool
+
 // GetElseScanRewritePass returns a transform pass that rewrites
-// Map(get-else) nodes into LeftOuterJoin + Scan. Every decision on a
+// Map(get-else) nodes into LeftOuterJoin + Scan where answers says a match
+// on the source the get-else reads answers its lookup's one value per entity
+// (docs/proposals/GET_ELSE_SCAN_REWRITE_PROOF.md). Every decision on a
 // get-else candidate — applied, or declined with the failed precondition —
 // goes to the sink as a typed RewriteRecord and as its annotation-event form
 // (a nil sink records nothing). Map nodes that are not get-else expressions
@@ -19,24 +27,24 @@ const getElsePassName = "get-else-scan-rewrite"
 //
 // Rule 5 (ALGEBRA.md): get-else is a disguised left-outer-join.
 // Replace N per-tuple point lookups with 1 index scan + hash join.
-func GetElseScanRewritePass(sink *RewriteSink) Pass {
+func GetElseScanRewritePass(sink *RewriteSink, answers MatchAnswersLookup) Pass {
 	return Pass{
 		Name: getElsePassName,
 		Transforms: parse.TransformMap{
-			RuleMap: makeGetElseScanRewriteTransform(sink),
+			RuleMap: makeGetElseScanRewriteTransform(sink, answers),
 		},
 	}
 }
 
-func makeGetElseScanRewriteTransform(sink *RewriteSink) parse.TransformFunc {
+func makeGetElseScanRewriteTransform(sink *RewriteSink, answers MatchAnswersLookup) parse.TransformFunc {
 	return func(node *parse.Node, children ...interface{}) interface{} {
-		return getElseScanRewriteTransform(node, sink, children...)
+		return getElseScanRewriteTransform(node, sink, answers, children...)
 	}
 }
 
 // getElseScanRewriteTransform detects Map(get-else) and rewrites to
 // LeftOuterJoin(child, Scan([E A ?result])) with default.
-func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children ...interface{}) interface{} {
+func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, answers MatchAnswersLookup, children ...interface{}) interface{} {
 	if node.TransformedValue == nil {
 		return node
 	}
@@ -133,6 +141,14 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 	// entities the scan did not match, and its get-else is such a candidate.
 	if originatesAtRequiredRunAlone(childNode, entityVar.Symbol) {
 		decline("entity variable is provided by the scope's required run alone")
+		return rebuildWithChildren(node, children)
+	}
+
+	// The scan stands in for the lookup only where a match on the source the
+	// get-else reads answers, per entity, the one value the source's lookup
+	// answers. The source answers for itself.
+	if !answers(ge.ReadsFrom(), ge.Attr) {
+		decline("the source's match does not answer its lookup's one value per entity")
 		return rebuildWithChildren(node, children)
 	}
 

@@ -7,16 +7,39 @@ import "github.com/wbrown/janus-datalog/datalog/query"
 // requirements the physical relation already satisfies.
 //
 // Ordering is the guaranteed tuple order. Keys are candidate symbol sets whose
-// values uniquely identify a tuple. Callers must treat returned properties as
-// immutable, matching the Relation contract itself. Constructors copy external
-// inputs; internal propagation creates new property values.
+// values uniquely identify a tuple. Identities are the symbols whose every
+// value is an identity, as a data pattern's entity position binds them.
+// Evaluates reports that reading the relation evaluates a function on its
+// tuples as they are pulled that can fail on a value (canFailOnAValue): an
+// expression's function or a database-function predicate's over a variable,
+// a predicate function or a transaction range in a filter, or a form's body
+// run per window that holds one. A failure of that evaluation surfaces only
+// when a reader reaches the tuple it fails on, so a reader that stops before
+// the relation's end reads a relation that evaluates to its end
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T11). Callers must treat
+// returned properties as immutable, matching the Relation contract itself.
+// Constructors copy external inputs; internal propagation creates new
+// property values.
 type RelationProperties struct {
-	Ordering []query.OrderByClause
-	Keys     [][]query.Symbol
+	Ordering   []query.OrderByClause
+	Keys       [][]query.Symbol
+	Identities []query.Symbol
+	Evaluates  bool
+}
+
+// AnswerIdentities is the identity symbols of a data pattern's answer: its
+// entity variable, since every datom's entity is an identity and a binding at
+// the entity position is one (the storage matcher's
+// typedPositionBindingCheck). A pattern whose entity is a constant names none.
+func AnswerIdentities(pattern *query.DataPattern) []query.Symbol {
+	if entity, ok := pattern.GetE().(query.Variable); ok {
+		return []query.Symbol{entity.Name}
+	}
+	return nil
 }
 
 func (p RelationProperties) clone() RelationProperties {
-	result := RelationProperties{}
+	result := RelationProperties{Evaluates: p.Evaluates}
 	if len(p.Ordering) > 0 {
 		result.Ordering = append([]query.OrderByClause(nil), p.Ordering...)
 	}
@@ -25,6 +48,9 @@ func (p RelationProperties) clone() RelationProperties {
 		for i, key := range p.Keys {
 			result.Keys[i] = append([]query.Symbol(nil), key...)
 		}
+	}
+	if len(p.Identities) > 0 {
+		result.Identities = append([]query.Symbol(nil), p.Identities...)
 	}
 	return result
 }
@@ -40,7 +66,7 @@ func (p RelationProperties) renameSymbols(subst query.Substitution) RelationProp
 		return symbol
 	}
 
-	result := RelationProperties{}
+	result := RelationProperties{Evaluates: p.Evaluates}
 	for _, clause := range p.Ordering {
 		result.Ordering = append(result.Ordering, query.OrderByClause{
 			Variable:   rename(clause.Variable),
@@ -54,6 +80,9 @@ func (p RelationProperties) renameSymbols(subst query.Substitution) RelationProp
 		}
 		result.Keys = append(result.Keys, renamed)
 	}
+	for _, symbol := range p.Identities {
+		result.Identities = append(result.Identities, rename(symbol))
+	}
 	return result
 }
 
@@ -63,7 +92,7 @@ func (p RelationProperties) project(symbols []query.Symbol) RelationProperties {
 		retained[symbol] = true
 	}
 
-	result := RelationProperties{}
+	result := RelationProperties{Evaluates: p.Evaluates}
 	for _, clause := range p.Ordering {
 		if !retained[clause.Variable] {
 			break
@@ -80,6 +109,11 @@ func (p RelationProperties) project(symbols []query.Symbol) RelationProperties {
 		}
 		if keep {
 			result.Keys = append(result.Keys, append([]query.Symbol(nil), key...))
+		}
+	}
+	for _, symbol := range p.Identities {
+		if retained[symbol] {
+			result.Identities = append(result.Identities, symbol)
 		}
 	}
 	return result
@@ -132,6 +166,13 @@ func (p RelationProperties) addSymbol(symbol query.Symbol) RelationProperties {
 		}
 	}
 	result.Keys = keys
+	var identities []query.Symbol
+	for _, identity := range result.Identities {
+		if identity != symbol {
+			identities = append(identities, identity)
+		}
+	}
+	result.Identities = identities
 	return result
 }
 
@@ -141,7 +182,7 @@ func (p RelationProperties) withoutReboundSymbols(symbols []query.Symbol) Relati
 		rebound[symbol] = true
 	}
 
-	result := RelationProperties{}
+	result := RelationProperties{Evaluates: p.Evaluates}
 	for _, clause := range p.Ordering {
 		if rebound[clause.Variable] {
 			break
@@ -158,6 +199,11 @@ func (p RelationProperties) withoutReboundSymbols(symbols []query.Symbol) Relati
 		}
 		if valid {
 			result.Keys = append(result.Keys, append([]query.Symbol(nil), key...))
+		}
+	}
+	for _, symbol := range p.Identities {
+		if !rebound[symbol] {
+			result.Identities = append(result.Identities, symbol)
 		}
 	}
 	return result
@@ -190,7 +236,8 @@ func deduplicatedProperties(symbols []query.Symbol) RelationProperties {
 // which the form's policy decides, a fallback whose every branch answers at
 // most one, a one-body form whose body does, and a union never, since two
 // branches can answer one subject tuple; and otherwise the result's key is
-// the composite of each subject key and the produced outputs.
+// the composite of each subject key and the produced outputs. The result
+// evaluates as the subject does.
 func orProperties(
 	outer RelationProperties,
 	producedSymbols []query.Symbol,
@@ -246,7 +293,10 @@ func expansionProperties(
 // tuple then meets at most one right tuple, and the right keys stand when a
 // left key does. Each left key with each right key composes a key, since
 // result tuples that agree on both are one left tuple and one right tuple
-// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T3).
+// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T3). Reading the result
+// reads both sides, so it evaluates when either side does. A join keeps each
+// side's values, and a shared symbol's are equal on both sides, so a symbol
+// holding identities on either side holds them in the result.
 func joinProperties(
 	left RelationProperties,
 	right RelationProperties,
@@ -257,7 +307,13 @@ func joinProperties(
 		joinSet[symbol] = true
 	}
 
-	result := RelationProperties{}
+	result := RelationProperties{Evaluates: left.Evaluates || right.Evaluates}
+	result.Identities = append(result.Identities, left.Identities...)
+	for _, symbol := range right.Identities {
+		if !query.ContainsSymbol(result.Identities, symbol) {
+			result.Identities = append(result.Identities, symbol)
+		}
+	}
 	if hasKeyWithin(right.Keys, joinSet) {
 		result.Keys = appendDistinctKeys(result.Keys, left.Keys)
 	}

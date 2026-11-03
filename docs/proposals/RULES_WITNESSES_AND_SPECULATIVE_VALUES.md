@@ -4,7 +4,7 @@
 
 - [../reference/RULES.md](../reference/RULES.md): the rule syntax, rules passed as `%`, semi-naive evaluation, stratification
 - [BRANCHING_AND_SNAPSHOTS.md](BRANCHING_AND_SNAPSHOTS.md): `Fork`, named snapshots, the overlay as a `PatternMatcher` source (its §2 and §9.6)
-- [../reference/MULTI_SOURCE.md](../reference/MULTI_SOURCE.md): named sources, `SourceRouter`, `MemoryPatternMatcher`
+- [../reference/MULTI_SOURCE.md](../reference/MULTI_SOURCE.md): named sources, `SourceRouter`, memory databases
 - [../reference/CRDT_STREAMING_RESOLUTION.md](../reference/CRDT_STREAMING_RESOLUTION.md): resolution as index ordering plus filtering
 - [../reference/PLANNER_OPTIONS.md](../reference/PLANNER_OPTIONS.md): where per-query options live
 - [../INPUT_PARAMETER_SEMANTICS.md](../INPUT_PARAMETER_SEMANTICS.md): `ClauseBlockers`, the error that names a missing symbol

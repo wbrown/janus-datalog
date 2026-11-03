@@ -63,10 +63,11 @@ func (o *Optimizer) Optimize(root *Node) (*Node, error) {
 }
 
 // DefaultPasses returns the standard optimization passes, each reporting its
-// rewrite decisions to the sink (nil records nothing).
-func DefaultPasses(sink *RewriteSink) []Pass {
+// rewrite decisions to the sink (nil records nothing). answers is the
+// sources' answer the get-else scan rewrite reads.
+func DefaultPasses(sink *RewriteSink, answers MatchAnswersLookup) []Pass {
 	return []Pass{
 		DecorrelationPass(sink),
-		GetElseScanRewritePass(sink),
+		GetElseScanRewritePass(sink, answers),
 	}
 }

@@ -150,10 +150,10 @@ type Default struct {
 
 // Join combines two relations. R ⋈ S
 type Join struct {
-	Kind        JoinKind         // Inner or LeftOuter
-	JoinSymbols []query.Symbol   // Symbols to join on (empty = natural join on shared symbols)
-	Output      []query.Symbol   // Combined output symbols
-	Defaults    []Default        // For LeftOuterJoin: each symbol's value when right side has no match
+	Kind        JoinKind       // Inner or LeftOuter
+	JoinSymbols []query.Symbol // Symbols to join on (empty = natural join on shared symbols)
+	Output      []query.Symbol // Combined output symbols
+	Defaults    []Default      // For LeftOuterJoin: each symbol's value when right side has no match
 	// DefaultGetElse is, for the get-else rewrite, the get-else the default
 	// branch evaluates, so the default is typed by the schema of the source
 	// it reads.
@@ -277,7 +277,7 @@ type Aggregate struct {
 	GroupBy   []query.Symbol        // Grouping variables
 	Functions []query.FindAggregate // Aggregate functions (count, sum, etc.)
 	Bindings  []query.Symbol        // Positional output bindings for group keys + aggregate results
-	Output    []query.Symbol        // Derived schema; must equal Bindings
+	Output    []query.Symbol        // Derived schema: each symbol Bindings names, once (aggregateOutputSchema)
 	// In is the decorrelated inner query's :in, the sources and the rule set
 	// the written inner declared, under which its clauses read; Inputs is
 	// what the rebuilt call passes at those places, the written call's source

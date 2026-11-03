@@ -97,17 +97,14 @@ func (d *Database) queryUnderPlannerOptions(
 		return refused(q.String(), err)
 	}
 
-	// Build source map — database is always $
-	sources := buildSourceMap(opts.sources, matcher)
-
-	// Validate declared sources exist
-	if err := validateQuerySources(q, sources); err != nil {
+	// The executor over the query's sources, the session's matcher at $. It
+	// has its plans carry their rosters when a source its router holds
+	// refuses unknown attributes, for the check at its entry.
+	exec, err := d.executorOverSources(q, opts.sources, matcher, planOpts)
+	if err != nil {
 		_ = session.Close()
 		return refused(q.String(), err)
 	}
-
-	// Create SourceRouter with full source map
-	router := executor.NewSourceRouter(sources)
 
 	inputRelations, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
@@ -115,11 +112,6 @@ func (d *Database) queryUnderPlannerOptions(
 		return refused(q.String(), err)
 	}
 
-	// Execute with the SourceRouter as the PatternMatcher. The executor has
-	// its plans carry their rosters when a source the router holds refuses
-	// unknown attributes, for the check at its entry.
-	planOpts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(router, d, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(opts.ctx), q, inputRelations)
 	if err != nil {
 		_ = session.Close()

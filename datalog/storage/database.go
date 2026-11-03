@@ -726,12 +726,21 @@ func (d *Database) LookupSource(source query.Symbol) (executor.EntityLookupMatch
 	return d.Matcher().(executor.EntityLookupMatcher).LookupSource(source)
 }
 
+// CanFuseAttributeFetch implements executor.AttributeFetchFusable for a
+// database passed as a named source, answering through its matcher: whether a
+// match of attr on the database answers, per entity, the one value its lookup
+// answers, under the schema it runs with and in its view.
+func (d *Database) CanFuseAttributeFetch(source query.Symbol, attr datalog.Keyword) bool {
+	return d.Matcher().(executor.AttributeFetchFusable).CanFuseAttributeFetch(source, attr)
+}
+
 // Compile-time verification that Database implements PatternMatcher and
-// answers the attribute-vocabulary and entity-lookup questions as a named
-// source.
+// answers the attribute-vocabulary, entity-lookup and attribute-fetch
+// questions as a named source.
 var _ executor.PatternMatcher = (*Database)(nil)
 var _ executor.AttributeVocabulary = (*Database)(nil)
 var _ executor.EntityLookupMatcher = (*Database)(nil)
+var _ executor.AttributeFetchFusable = (*Database)(nil)
 
 // AsOf returns a read-only Database handle that queries state as of the given
 // transaction. The returned handle uses CRDT resolution filtered to that point
@@ -849,6 +858,21 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 	opts.Cache = d.planCache
 	matcher := d.matcherWithExecOptions(opts)
 	return executor.NewExecutorWithOptions(matcher, d, opts)
+}
+
+// executorOverSources is the executor a query plans and runs through: matcher
+// at $ unless the query's WithSources sources bind it, beside those sources,
+// validated against the sources the query declares and routed by name, under
+// opts and the database's plan cache. Query passes its read session's
+// matcher. Explain, ExplainAlgebra and Analyze pass the database's, so a plan
+// they return is made for the sources the query runs over.
+func (d *Database) executorOverSources(q *query.Query, sources map[query.Symbol]executor.PatternMatcher, matcher executor.PatternMatcher, opts planner.PlannerOptions) (*executor.Executor, error) {
+	routed := buildSourceMap(sources, matcher)
+	if err := validateQuerySources(q, routed); err != nil {
+		return nil, err
+	}
+	opts.Cache = d.planCache
+	return executor.NewExecutorWithOptions(executor.NewSourceRouter(routed), d, opts), nil
 }
 
 // matcherWithExecOptions builds a fully-configured PatternMatcher using the
@@ -1048,10 +1072,10 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate inputs match :in clause (same validation as Query). The options
-	// among the inputs carry nothing to plan with; the rule set declares the
-	// invocations' required positions, which decide their phases.
-	_, regularInputs := extractQueryOptions(inputs)
+	// Validate inputs match :in clause (same validation as Query). The query's
+	// WithSources sources are the sources it is planned for; the rule set
+	// declares the invocations' required positions, which decide their phases.
+	opts, regularInputs := extractQueryOptions(inputs)
 	_, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
@@ -1061,13 +1085,13 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 		return nil, err
 	}
 
-	// Create executor to get its planner (ensures same options as execution)
-	exec := d.NewExecutor()
-
-	// Get the query plan from the executor's planner (planning is not annotated
-	// on this plan-only path).
-	queryPlanner := exec.GetPlanner()
-	return queryPlanner.PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
+	// The executor over the query's sources, whose planner makes the plan the
+	// query runs (planning is not annotated on this plan-only path).
+	exec, err := d.executorOverSources(q, opts.sources, d.Matcher(), d.effectivePlannerOptions())
+	if err != nil {
+		return nil, err
+	}
+	return exec.GetPlanner().PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
 }
 
 // ExplainAlgebra returns, without executing, the full record of what planning
@@ -1097,10 +1121,10 @@ func (d *Database) ExplainAlgebra(queryInput interface{}, inputs ...interface{})
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate inputs match :in clause (same validation as Query). The options
-	// among the inputs carry nothing to plan with; the rule set declares the
-	// invocations' required positions, which decide their phases.
-	_, regularInputs := extractQueryOptions(inputs)
+	// Validate inputs match :in clause (same validation as Query). The query's
+	// WithSources sources are the sources it is planned for; the rule set
+	// declares the invocations' required positions, which decide their phases.
+	opts, regularInputs := extractQueryOptions(inputs)
 	_, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
@@ -1110,8 +1134,12 @@ func (d *Database) ExplainAlgebra(queryInput interface{}, inputs ...interface{})
 		return nil, err
 	}
 
-	// Create executor to get its planner (ensures same options as execution)
-	exec := d.NewExecutor()
+	// The executor over the query's sources, whose planner records what
+	// planning does for the sources the query runs over.
+	exec, err := d.executorOverSources(q, opts.sources, d.Matcher(), d.effectivePlannerOptions())
+	if err != nil {
+		return nil, err
+	}
 	return exec.GetPlanner().ExplainPlan(prepared, query.Bindings{Rules: rules})
 }
 
@@ -1280,9 +1308,9 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// The rule set the inputs carry, for the plan; the query path below
-	// converts the inputs again for execution.
-	_, regularInputs := extractQueryOptions(inputs)
+	// The rule set the inputs carry, and the query's WithSources sources, for
+	// the plan; the query path below converts the inputs again for execution.
+	queryOpts, regularInputs := extractQueryOptions(inputs)
 	_, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
@@ -1312,9 +1340,14 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		eventsMu.Unlock()
 	}
 
-	// The plan from a planner under the same options. The handler above
-	// captures execution annotations; planning here is not annotated.
-	plan, err := d.NewExecutorWithOptions(opts).GetPlanner().PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
+	// The plan from a planner over the query's sources under the same options.
+	// The handler above captures execution annotations; planning here is not
+	// annotated.
+	planning, err := d.executorOverSources(q, queryOpts.sources, d.matcherWithExecOptions(opts), opts)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := planning.GetPlanner().PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to plan query: %w", err)
 	}

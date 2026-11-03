@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -105,7 +106,7 @@ func BenchmarkFullQuery(b *testing.B) {
 		)
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(b, datoms)
 	executor := NewExecutor(matcher, nil)
 
 	// Query with expression and aggregation

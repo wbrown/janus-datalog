@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -55,7 +56,7 @@ func TestMultiTupleRelationBinding(t *testing.T) {
 		{E: charlie, A: ageAttr, V: int64(35), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	// Test 1: Use a multi-tuple relation to bind multiple entities at once
 	t.Run("MultipleEntityBinding", func(t *testing.T) {
@@ -180,7 +181,7 @@ func TestMultiTupleRelationBinding(t *testing.T) {
 			{E: p3, A: priceAttr, V: 200.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 		}
 
-		productMatcher := NewMemoryPatternMatcher(productDatoms)
+		productMatcher := factsDatabase(t, productDatoms)
 
 		// Create a binding relation with category and price range
 		bindingRel := NewMaterializedRelation(
@@ -249,7 +250,7 @@ func TestRelationBasedPatternMatching(t *testing.T) {
 		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword(":foo"), V: "baz", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{

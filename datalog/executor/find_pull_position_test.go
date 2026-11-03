@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -15,7 +16,7 @@ func TestApplyFindPulls_RendersEachPullAtItsOwnElement(t *testing.T) {
 	e := datalog.NewSymbol("?e")
 	name, age := datalog.NewKeyword(":t/name"), datalog.NewKeyword(":t/age")
 	alice := datalog.NewIdentity("position:alice")
-	matcher := NewIndexedMemoryMatcher([]datalog.Datom{
+	matcher := factsDatabase(t, []datalog.Datom{
 		{E: alice, A: name, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		{E: alice, A: age, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	})
@@ -43,7 +44,7 @@ func TestApplyFindPulls_RendersEachPullAtItsOwnElement(t *testing.T) {
 			// The result as the find boundary projects it: one position per
 			// find element, the variable's value at each of its elements.
 			projected := NewMaterializedRelation([]query.Symbol{e, e}, []Tuple{{alice, alice}})
-			result, err := applyFindPulls(matcher, nil, projected, c.find)
+			result, err := ApplyFindPulls(matcher, nil, projected, c.find)
 			require.NoError(t, err)
 			tuples, err := CollectTuples(result, nil)
 			require.NoError(t, err)

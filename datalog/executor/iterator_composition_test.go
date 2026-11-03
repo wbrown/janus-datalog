@@ -92,7 +92,7 @@ func TestComposedIterators(t *testing.T) {
 		Op:    datalog.SymGTE,
 		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 		Right: query.ConstantTerm{Value: int64(30)},
-	})
+	}, nil, nil)
 
 	// Step 2: Project name and salary only
 	projectedSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?salary")}
@@ -195,7 +195,7 @@ func TestPredicateFilterIterator(t *testing.T) {
 	}
 
 	source := &sliceIterator{tuples: tuples, pos: -1}
-	predIter := NewPredicateFilterIterator(source, symbols, pred)
+	predIter := NewPredicateFilterIterator(source, symbols, pred, nil, nil)
 
 	// Collect filtered results
 	var results []Tuple
@@ -364,7 +364,7 @@ func BenchmarkIteratorComposition(b *testing.B) {
 				Op:    datalog.SymEQ,
 				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
 				Right: query.ConstantTerm{Value: int64(0)},
-			})
+			}, nil, nil)
 
 			// Wrap in a relation for projection
 			filteredRel := NewStreamingRelation(symbols, filterIter)

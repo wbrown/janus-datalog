@@ -561,7 +561,7 @@ func TestDecorrelation_EqualityBoundTranslation(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 
-	optimizer := NewOptimizer(DefaultPasses(nil)...)
+	optimizer := NewOptimizer(DefaultPasses(nil, everySourceAnswers)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("After:\n%s", optimized.String())

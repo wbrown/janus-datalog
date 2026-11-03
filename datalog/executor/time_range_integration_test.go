@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -53,7 +54,7 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 	}
 
 	// Setup matcher
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	// Query: Hourly OHLC for hours 9 and 10 only (not 11)
 	queryStr := `[:find ?hour (max ?h) (min ?l)
@@ -77,12 +78,12 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			// Execute without decorrelation (baseline)
-			execNoDecorr := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+			execNoDecorr := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			baselineResult, err := execNoDecorr.Execute(q)
 			if err != nil {
@@ -165,7 +166,7 @@ func TestTimeRangeOptimizationCorrectness(t *testing.T) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	// Query with decorrelated subquery (like OHLC pattern)
 	queryStr := `[:find ?hour ?high ?low
@@ -200,9 +201,9 @@ func TestTimeRangeOptimizationCorrectness(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {

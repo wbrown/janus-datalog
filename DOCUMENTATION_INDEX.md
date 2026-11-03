@@ -36,7 +36,7 @@ Configuration, semantics, and proofs in `docs/reference/`:
 - **[QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md)** - Type-safe Go query builder (qb package)
 - **[QUERY_INTO.md](docs/reference/QUERY_INTO.md)** - Typed query results into Go structs
 - **[REFLECT.md](docs/reference/REFLECT.md)** - Struct ↔ datom reflection API
-- **[MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Cross-source joins, in-memory sources, `SliceSource[T]`, custom matchers
+- **[MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Cross-source joins, memory databases, slice sources, custom matchers
 - **[OR_FALLBACK_SEMANTICS.md](docs/reference/OR_FALLBACK_SEMANTICS.md)** - `or` (union) vs `or-default` (fallback) semantics
 - **[TUPLE_GROUND.md](docs/reference/TUPLE_GROUND.md)** - Multi-variable `(ground …)` binding
 

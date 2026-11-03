@@ -1,21 +1,23 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// LookupAttribute is a data-answer method: a wrapper over a matcher that
-// cannot look up an entity's attribute answers an error, never (nil, false,
-// nil), which reads as the attribute being absent.
-func TestScanSharingMatcher_LookupOverAMatcherThatCannotLookUpIsAnError(t *testing.T) {
-	rows := NewSliceSource([]string{"subject"}, AttributeSchema[string]{
+// A scan-sharing matcher's lookup is the lookup of the matcher it wraps: over
+// a slice source, the slice's fact.
+func TestScanSharingMatcher_LookupIsTheLookupOfTheMatcherItWraps(t *testing.T) {
+	rows := sliceDatabase(t, []string{"subject"}, storage.AttributeSchema[string]{
 		datalog.NewKeyword(":t/name"): func(name string) any { return name },
 	})
 	m := NewScanSharingMatcher(rows, NewScanRegistry(), nil)
-	_, found, err := m.LookupAttribute(datalog.NewIdentity("lookup:subject"), datalog.NewKeyword(":t/a"))
-	require.Error(t, err)
-	require.False(t, found)
+	value, found, err := m.LookupAttribute(datalog.NewIdentity("slice:0"), datalog.NewKeyword(":t/name"))
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "subject", value)
 }

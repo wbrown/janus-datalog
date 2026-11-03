@@ -55,6 +55,11 @@ func TestVerifyStrategyUsed(t *testing.T) {
 				}
 			}
 
+			// Attribute-fetch fusion is off, so the email pattern runs as the
+			// join whose strategy each subtest reads.
+			planOpts := mode.plannerOptions()
+			planOpts.EnableAttributeFetchFusion = false
+
 			t.Run("default_behavior", func(t *testing.T) {
 				var strategies []string
 				opts := executor.ExecutorOptions{
@@ -70,7 +75,7 @@ func TestVerifyStrategyUsed(t *testing.T) {
 				}
 				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
-				exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+				exec := executor.NewExecutorWithOptions(matcher, db, planOpts)
 
 				result, err := exec.Execute(q)
 				if err != nil {
@@ -109,7 +114,7 @@ func TestVerifyStrategyUsed(t *testing.T) {
 				hashJoin := HashJoinScan
 				matcher.ForceJoinStrategy(&hashJoin)
 
-				exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+				exec := executor.NewExecutorWithOptions(matcher, db, planOpts)
 
 				result, err := exec.Execute(q)
 				if err != nil {

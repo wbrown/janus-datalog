@@ -59,7 +59,10 @@ func TestThetaJoinPair_PropagatesPredicateEvalError(t *testing.T) {
 		Fn:   "no-such-predicate",
 		Args: []query.PatternElement{query.Variable{Name: x}, query.Variable{Name: y}},
 	}
-	_, err := thetaJoinWithPredicate([]Relation{left, right}, pred, nil, nil, ExecutorOptions{})
+	joined, err := thetaJoinWithPredicate([]Relation{left, right}, pred, nil, nil, ExecutorOptions{})
+	if err == nil {
+		err = driveErr(joined)
+	}
 	require.Error(t, err)
 }
 
@@ -108,7 +111,7 @@ func TestFilterWithPredicateAndLookup_PropagatesAfterPartialResults(t *testing.T
 // because the source fails before yielding a tuple.
 func TestEvaluateExpressionWithLookup_PropagatesIteratorError(t *testing.T) {
 	src := newFailingStream(0, Tuple{int64(1)}, Tuple{int64(2)}, Tuple{int64(3)})
-	expr := &query.Expression{Binding: datalog.NewSymbol("?y")}
+	expr := &query.Expression{Function: erroringFunction{}, Binding: datalog.NewSymbol("?y")}
 	rel := evaluateExpressionWithLookup(src, expr, nil, nil)
 	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
 }
@@ -234,32 +237,6 @@ func TestMaterializedRelation_FilterWithPredicate_CarriesSourceError(t *testing.
 	require.ErrorIs(t, driveErr(rel), srcErr)
 }
 
-// TestMatchTreatsErroredEmptyBindingAsError: an errored relation that
-// materialized empty (the genuine route: a stream fails, Sort materializes
-// zero tuples plus the taint) is not an empty binding. Match's emptiness
-// fallback must surface the error instead of discarding the binding and
-// scanning unbound — the laundering half of
-// BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md.
-func TestMatchTreatsErroredEmptyBindingAsError(t *testing.T) {
-	x := datalog.NewSymbol("?x")
-	valAttr := datalog.NewKeyword(":item/val")
-	matcher := NewMemoryPatternMatcher([]datalog.Datom{
-		{E: datalog.NewIdentity("item:1"), A: valAttr, V: int64(1), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
-	})
-
-	erroredEmpty := newFailingStream(0, Tuple{int64(1)}).Sort(nil)
-	require.Equal(t, 0, erroredEmpty.Size(), "fixture: materialized empty")
-	require.ErrorIs(t, EmptyRelationError(erroredEmpty), errInjectedIterator, "fixture: carries the taint")
-
-	pattern := &query.DataPattern{Elements: []query.PatternElement{
-		query.Variable{Name: x},
-		query.Constant{Value: valAttr},
-		query.Blank{},
-	}}
-	_, err := matcher.Match(query.PatternQuery(pattern), Relations{erroredEmpty})
-	require.ErrorIs(t, err, errInjectedIterator)
-}
-
 // TestHashJoinSurfacesErroredEmptySide: joining against an errored-empty
 // relation must not present the empty join as a clean result.
 func TestHashJoinSurfacesErroredEmptySide(t *testing.T) {
@@ -270,4 +247,31 @@ func TestHashJoinSurfacesErroredEmptySide(t *testing.T) {
 
 	joined := HashJoinWithOptions(left, erroredEmpty, []query.Symbol{x}, ExecutorOptions{})
 	require.ErrorIs(t, driveErr(joined), errInjectedIterator)
+}
+
+// A build side's failure is the join's failure only where the probe side
+// holds a tuple: beside an empty probe side the join answers no tuple and no
+// failure, the build failing at its first tuple, leaving its index empty, or
+// past it, and beside a probe side with a tuple it answers the failure
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract). Of two
+// streams the left is the build side.
+func TestHashJoinRaisesABuildFailureOnlyWhereTheProbeSideHoldsATuple(t *testing.T) {
+	x := []query.Symbol{datalog.NewSymbol("?x")}
+	for _, b := range []struct {
+		name  string
+		build func() Relation
+	}{
+		{"a build failing at its first tuple", func() Relation { return newFailingStream(0, Tuple{int64(1)}, Tuple{int64(2)}) }},
+		{"a build failing past its first tuple", func() Relation { return newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)}) }},
+	} {
+		t.Run(b.name+" beside an empty probe side", func(t *testing.T) {
+			tuples, err := CollectTuples(HashJoin(b.build(), streamOf("?x"), x), nil)
+			require.NoError(t, err, "no assignment holds the empty probe side, so no failure is raised")
+			require.Empty(t, tuples)
+		})
+		t.Run(b.name+" beside a probe side with a tuple", func(t *testing.T) {
+			_, err := CollectTuples(HashJoin(b.build(), streamOf("?x", Tuple{int64(1)}), x), nil)
+			require.ErrorIs(t, err, errInjectedIterator)
+		})
+	}
 }

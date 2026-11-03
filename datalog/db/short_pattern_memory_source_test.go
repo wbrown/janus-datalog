@@ -31,8 +31,17 @@ func TestAShortPatternOnAMemorySourceAnswersWhatItsPaddedPatternAnswers(t *testi
 	d, err := db.OpenMemory()
 	require.NoError(t, err)
 	defer d.Close()
+	m, err := db.OpenMemory()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, m.Close()) }()
+	tx := m.NewTransaction()
+	for _, f := range facts {
+		require.NoError(t, tx.Add(f.E, f.A, f.V))
+	}
+	_, err = tx.Commit()
+	require.NoError(t, err)
 	source := db.WithSources(map[datalog.Symbol]db.PatternMatcher{
-		datalog.NewSymbol("$m"): db.NewMemorySource(facts),
+		datalog.NewSymbol("$m"): m,
 	})
 
 	names := map[datalog.Identity]string{}

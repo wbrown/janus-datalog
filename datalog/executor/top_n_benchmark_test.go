@@ -11,7 +11,7 @@ import (
 func BenchmarkOrderedLimit(b *testing.B) {
 	for _, tupleCount := range []int{10_000, 100_000} {
 		symbols, tuples := orderedLimitBenchmarkData(tupleCount)
-		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
+		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}, RelationProperties{})
 		orderBy := []query.OrderByClause{{
 			Variable:   symbols[0],
 			Descending: true,

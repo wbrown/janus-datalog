@@ -45,12 +45,24 @@ func TestAShortPatternAnswersWhatItsPaddedPatternAnswersAtEverySource(t *testing
 	}
 	_, err = tx.Commit()
 	require.NoError(t, err)
+	m, err := db.OpenMemory()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, m.Close()) }()
+	mtx := m.NewTransaction()
+	for _, f := range facts {
+		require.NoError(t, mtx.Add(f.E, f.A, f.V))
+	}
+	_, err = mtx.Commit()
+	require.NoError(t, err)
+	slice, err := db.NewSliceSource(rows, db.AttributeSchema[row]{
+		name: func(r row) any { return r.Name },
+		tn:   func(r row) any { return r.N },
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, slice.Close()) }()
 	sources := db.WithSources(map[datalog.Symbol]db.PatternMatcher{
-		datalog.NewSymbol("$m"): db.NewMemorySource(facts),
-		datalog.NewSymbol("$s"): executor.NewSliceSource(rows, executor.AttributeSchema[row]{
-			name: func(r row) any { return r.Name },
-			tn:   func(r row) any { return r.N },
-		}),
+		datalog.NewSymbol("$m"): m,
+		datalog.NewSymbol("$s"): slice,
 	})
 	entity := fmt.Sprintf("#identity %q", n1.L85())
 

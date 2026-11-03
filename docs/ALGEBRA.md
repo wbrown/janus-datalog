@@ -23,8 +23,8 @@ A single-tuple relation with literal values. Compiled from `(ground ...)`.
 **Map(expression, binding)(R) → R'**
 Extend each tuple with a computed value. Output symbols = input symbols + binding symbols.
 
-**Aggregate(groupBy, functions)(R) → R'**
-γ_{G,F}(R). Group by G, compute aggregate functions F per group. Output symbols = G + F result symbols.
+**Aggregate(groupBy, functions, bindings)(R) → R'**
+γ_{G,F}(R). Group by G, compute aggregate functions F per group. The bindings name G and the F results positionally. Output symbols = the symbols the bindings name, each once. A name the bindings write twice answers a group only where the two values it names agree.
 
 ### Binary (2 children)
 
@@ -147,14 +147,15 @@ transform from a LateralJoin with aggregates.
 
 The Aggregate becomes an uncorrelated SubqueryPattern:
 - `:find` = GROUP BY variables + aggregate functions
-- `:in` = `$` only (uncorrelated)
+- `:in` = the decorrelated inner query's sources and rule set, each source named for the source the written call passed there and declared once (`underCallSources`)
 - `:where` = decompiled child clauses
-- Binding = RelationBinding with GROUP BY + aggregate output symbols
-- Input = `$` (Constant source marker)
+- Binding = RelationBinding over the aggregate's bindings, which name the `:find` elements positionally
+- Inputs = each source under its own name, and the call's rule-set argument
 
 **Round-trip invariant:** GROUP BY symbols, aggregate functions, and inner WHERE
 clauses are all preserved. The SubqueryPattern's RelationBinding maps the `:find`
-elements to output symbols positionally.
+elements to the aggregate's bindings positionally. A name the bindings write
+twice unifies the two outputs it names, and the aggregate's output names it once.
 
 **Test:** Build an Aggregate node over compiled inner clauses, decompile, verify
 the SubqueryPattern has correct `:find`, `:in`, `:where`, and binding.
@@ -176,34 +177,40 @@ DataPatterns present.
 
 ### Join(LeftOuter, defaults)
 
-**Compile:** `(or [subq-branch] [ground-defaults])` where the subquery branch
-has been decorrelated (no longer correlated). This is the OUTPUT of the
-decorrelation transform, not a direct compilation from source.
+**Compile:** produced by rewrites, not compiled from a clause. Decorrelation
+produces it from a lateral join with defaults (Rules 1 and 4), and the
+get-else rewrite produces it from a get-else (Rule 5).
 
 **Decompile:** `Join(LeftOuter, joinSyms=[?x], defaults=[0])(left, right)` →
 
 ```
 decompile(left) ++
-(or-join [?x] <decompile(right)>
-               <default branch>)
+(or-default-join [[?x] <outputs>] <decompile(right)>
+                                  <default branch>)
 ```
 
 Left side clauses followed by an or-default-join:
-- Branch 1: decompiled right side (the Aggregate → SubqueryPattern)
+- Branch 1: decompiled right side: the Aggregate's SubqueryPattern (Rule 1),
+  the decorrelated SubqueryPattern (Rule 4), or the get-else's data pattern
+  (Rule 5)
 - Branch 2: default expressions for non-join symbols only (join keys subtracted)
 
-The default branch depends on `DefaultAttr`:
-- When `DefaultAttr` is set (from get-else rewrite): emits `get-else` expression
-  so `TypedDefaulter` produces schema-typed defaults (e.g., `[]string` not `[]interface{}`)
+The default branch depends on `DefaultGetElse`:
+- When `DefaultGetElse` is set (from the get-else rewrite): the default branch
+  is that get-else, so `TypedDefaulter` gives the default the type the schema
+  of the source it reads declares (e.g., `[]string` not `[]interface{}`). The
+  form's required run gains the variables the default reads.
 - Otherwise: emits `ground` expressions
 
-The form runs over windows of the outer relation. Branch 1 reads nothing of the
-outer, so it runs once, over the unit relation, and its result is indexed on
-the symbols it shares with the outer; each outer tuple probes the index. A
-tuple the index leaves unanswered takes branch 2 (defaults).
+The form runs over windows of the outer relation. A decorrelated subquery in
+branch 1 reads nothing of the outer, so it runs once, over the unit relation.
+The get-else's data pattern in branch 1 reads the required run, so it runs over
+each window's keys. Branch 1's result is indexed on the symbols it shares with
+the outer; each outer tuple probes the index. A tuple the index leaves
+unanswered takes branch 2 (defaults).
 
-**Round-trip invariant:** Left clauses preserved. Right side becomes an
-or-default-join SubqueryPattern. Default values map to ground or get-else
+**Round-trip invariant:** Left clauses preserved. Right side becomes the
+or-default-join's first branch. Default values map to ground or get-else
 expressions. Join symbols are explicit on the or-default-join clause.
 
 **Test:** Build LeftOuterJoin(defaults=[0]) over an outer Scan and an inner
@@ -243,8 +250,11 @@ DataPattern + NotClause.
 For `or-join`: `(or-join [?e] ...)` → `Union(output=[?e, ?x], joinVars=[?e])(branch1, branch2)`
 
 When an `(or ...)` or `(or-join ...)` branch contains correlated predicates
-(NOT, missing?) that require outer context, the compiler detects this via
-`branchesRequireOuterContext()` and routes to the LateralUnion path instead.
+(NOT, missing?) that require outer context (`branchesRequireOuterContext()`),
+the form compiles through `compileOrUnionCorrelated`. Each branch compiles over
+a placeholder providing the required run, and the branches still form the
+Union. The fallback's LateralUnion is not its target: the fallback
+short-circuits per group, and the union does not.
 
 **Decompile:**
 - `Union(joinVars=nil)(children...)` → `(or <decompile(child1)> <decompile(child2)> ...)`
@@ -264,9 +274,9 @@ type with branches and join vars.
 For `or-default-join`: `(or-default-join [[?e] ?x] ...)` →
 `LateralUnion(output=[?e, ?x], requiredVars=[?e], outputVars=[?x])(branch1, branch2)`
 
-Also produced when `(or ...)` / `(or-join ...)` branches contain correlated
-predicates (NOT, missing?) that read the outer relation's required run.
-Independent Union compilation cannot express anti-joins without context.
+An or-default whose first branch is one subquery and whose second is grounds
+alone compiles to a LateralJoin with defaults instead (see LateralJoin). Every
+other shape compiles to a LateralUnion (`compileOrFallbackWithVars`).
 
 **Decompile:**
 - `LateralUnion(requiredVars=nil, outputVars=nil)(children...)` → `(or-default <decompile(child1)> <decompile(child2)> ...)`
@@ -360,7 +370,8 @@ The rewritten tree `LeftOuterJoin(defaults) [R, Aggregate(S)]` decompiles to:
 
 ```
 <R clauses>
-(or [(q [:find ?x (agg ?v) :in $ :where <S clauses>] $) [[?x ?result] ...]]
+(or-default-join [[?x] ?result]
+    [(q [:find ?x (agg ?v) :in $ :where <S clauses>] $) [[?x ?result] ...]]
     [(ground default) ?result])
 ```
 
@@ -369,8 +380,8 @@ provides defaults for non-matching outer tuples.
 
 ### OR-Fallback Branch Caching
 
-The decorrelated SubqueryPattern inside an or-join reads nothing of the outer
-relation, so it runs once and returns ALL groups. The form runs over windows of
+The decorrelated SubqueryPattern inside an or-default-join reads nothing of the
+outer relation, so it runs once and returns ALL groups. The form runs over windows of
 the outer relation (`docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2):
 one tuple, then double the last, up to `ScopeWindowCap` tuples, 1000 by default
 (`executor.SmallBindingBoundary`). Per window, each branch runs once over the
@@ -531,11 +542,12 @@ From O(N²) nested correlated executions to O(1) single pass.
 **Decompilation of the result:**
 
 Same as Rule 1: the decorrelated subquery becomes an uncorrelated SubqueryPattern
-with RelationBinding inside an or-join (if defaults exist) or bare (if no defaults).
+with RelationBinding inside an or-default-join (if defaults exist) or bare (if no
+defaults).
 
 ```
 <R clauses>
-(or-join [?scenario]
+(or-default-join [[?scenario] ?lastKey ?lastUpdatedAt]
     [(q [:find ?s ?key ?ca
          :in $
          :where [?t :task/root ?s]
@@ -573,29 +585,40 @@ All conditions are structural — no cardinality estimates needed.
 ### Rule 5: Get-Else Scan Rewrite
 
 ```
-Map(get-else(E, A, default))(R)
+Map(get-else(S, E, A, default))(R)
   →
-R ⋈_LeftOuter(E, default) Scan([E A ?result])
+R ⋈_LeftOuter(E, get-else) Scan(S, [E A ?result])
 ```
 
 **Preconditions:**
 - The get-else expression references an entity variable `E` that exists in R
 - The attribute `A` is a keyword constant
 - The binding produces a single output symbol
+- The default's variables, when it reads any, are symbols R provides
+- The source S the get-else reads answers that its match of `[E A ?result]`
+  gives, for every entity, the one value its lookup gives:
+  `CanFuseAttributeFetch(S, A)` answers true. Where it answers false the
+  rewrite declines and records that reason.
 
 **Proof of equivalence:**
 
 The left side evaluates `get-else` per tuple: for each tuple in R, look up
-entity E's attribute A in storage. If found, bind the value to `?result`.
+entity E's attribute A in S. If found, bind the value to `?result`.
 If not found, bind the default value. This is a point lookup per tuple.
 
-The right side scans ALL (E, A) datoms via the AEVT index, producing a
-relation S with [E, ?result]. The LeftOuterJoin matches each R tuple to
-its S row by E. For R tuples without a match in S (entity lacks the
-attribute), the default fills in.
+The right side scans the (E, A) datoms of S, producing a relation with
+[E, ?result]. The LeftOuterJoin matches each R tuple to its scanned row by
+E. An R tuple without a match (the entity lacks the attribute) takes the
+default branch, the get-else itself.
 
-Both produce the same output: for each tuple in R, the attribute value
-if it exists, or the default if not.
+The two agree only where the scan answers, per entity, the one value the
+lookup answers, which is the source precondition. Without it they differ:
+on a cardinality-many attribute the scan answers each member as a row of its
+own where the lookup answers the set, and on a history handle the scan
+answers every version. `docs/proposals/GET_ELSE_SCAN_REWRITE_PROOF.md`
+proves the rewrite under the precondition, asked of the source the scan reads
+when the plan runs, with the plan cache serving a plan only where the sources
+answer as they did when it was made.
 
 **Performance analysis:**
 
@@ -618,31 +641,34 @@ seek alone. For N>1, the scan+join dominates.
 
 **Decompilation of the result:**
 
-The rewritten `LeftOuterJoin(E, default) [R, Scan(E A ?result)]` decompiles
-to the same OR-fallback pattern used by decorrelation:
+The rewritten `LeftOuterJoin(E, get-else) [R, Scan(S, [E A ?result])]`
+decompiles to R's clauses followed by an or-default-join:
 
 ```
 <R clauses>
-(or-join [E]
-    [E A ?result]
-    [(ground default) ?result])
+(or-default-join [[E <the default's variables>] ?result]
+    [S E A ?result]
+    [(get-else S E A default) ?result])
 ```
 
-This is valid Datalog. The DataPattern scans via index. The or-join
-provides the default for non-matching entities.
+The required run is E and the variables the default reads. The data
+pattern scans S through its index. A key it leaves unanswered takes the
+second branch, the get-else, which answers the default typed by S's schema.
+A `$` source is written as a pattern with no source.
 
 **Round-trip specification:**
 
 **Compile:** `[(get-else $ ?e :attr default) ?v]` → `Map(get-else(...))(child)`
 
-**Optimize:** `Map(get-else(?e, :attr, default))` →
-`LeftOuterJoin(on=[?e], default) [child, Scan([?e :attr ?v])]`
+**Optimize:** where `CanFuseAttributeFetch($, :attr)` answers true,
+`Map(get-else(?e, :attr, default))` →
+`LeftOuterJoin(on=[?e], get-else) [child, Scan([?e :attr ?v])]`
 
-**Decompile:** → `(or-join [?e] [?e :attr ?v] [(ground default) ?v])`
+**Decompile:** → `(or-default-join [[?e] ?v] [?e :attr ?v] [(get-else $ ?e :attr default) ?v])`
 
 **Test:** Compile get-else, optimize, decompile. Verify: DataPattern +
-or-join with default. Execute against real data and verify same results
-as unoptimized get-else.
+or-default-join whose default branch is the get-else. Execute against real
+data and verify same results as unoptimized get-else.
 
 ### Rule 3: Join Reordering (future, cost-based)
 
@@ -663,9 +689,10 @@ R ⋈ S → S ⋈ R     when |S| < |R|
 | `(not-join [?x] [...])` | AntiJoin(outer, inner) with explicit join vars |
 | `(or b1 b2)` pattern-only | Union(b1, b2) |
 | `(or-join [vars] b1 b2)` pattern-only | Union(b1, b2) with JoinVars |
-| `(or [subq] [ground])` | LateralJoin(outer, inner, defaults) |
-| `(or [DataPattern+NOT] [ground])` | Union via compileOrFallbackExclusive |
-| `(or [subq+NOT] [ground])` | LateralJoin+defaults (NOT guards skipped) |
+| `(or b1 b2)` with NOT or missing? | Union via compileOrUnionCorrelated |
+| `(or-default [subq] [ground])` | LateralJoin(outer, inner, defaults) |
+| `(or-default [DataPattern+NOT] [ground])` | LateralUnion via compileOrFallbackExclusive |
+| `(or-default [subq+NOT] [ground])` | LateralUnion via compileOrFallbackExclusive |
 | `[(q [...] $ ?x) binding]` correlated | LateralJoin(correlationVars=[?x]) |
 | `[(q [...] $) binding]` uncorrelated | LateralJoin(correlationVars=[]) |
 | `[(missing? $ ?e :attr)]` | Select (predicate preserved as-is) |
@@ -697,7 +724,7 @@ Before any transforms, prove that every operator round-trips correctly.
 - `TestRoundTrip_AntiJoin` — `[?e :type :foo] (not [?e :deleted true])`
 - `TestRoundTrip_AntiJoinExplicit` — `[?e :type :foo] (not-join [?e] [?e :deleted true])`
 - `TestRoundTrip_Union` — `(or [?e :a ?x] [?e :b ?x])`
-- `TestRoundTrip_LateralJoin` — `(or [(q [...] $ ?e) [[?count]]] [(ground 0) ?count])`
+- `TestRoundTrip_LateralJoin` — `(or-default [(q [...] $ ?e) [[?count]]] [(ground 0) ?count])`
 - `TestRoundTrip_LateralJoinNoDefaults` — `[(q [...] $ ?e) [[?count]]]`
 - `TestRoundTrip_Aggregate` — constructed manually (output of decorrelation)
 - `TestRoundTrip_JoinLeftOuter` — constructed manually (output of decorrelation)
@@ -766,7 +793,7 @@ Extend decorrelation to non-aggregate correlated subqueries per Rule 4.
    NOT clauses, or nested subqueries in WHERE
 5. For non-aggregate decorrelation: same rewrite as Rule 1 but without
    the Aggregate node — just move correlation var to :find, change binding
-   to RelationBinding, emit as bare SubqueryPattern or or-join
+   to RelationBinding, emit as bare SubqueryPattern or or-default-join
 6. **Test**: `TestDecorrelation_ArgmaxPattern` — nested correlated subquery
    with max aggregate inside non-aggregate outer
 7. **Test**: `TestDecorrelation_WithFilteringPredicates` — non-aggregate
@@ -786,7 +813,7 @@ index scans with left-outer-join defaults.
 1. ✅ Add `GetElseScanRewritePass()` optimization pass
 2. ✅ Detect `Map(get-else(E, A, default))` nodes in the algebra tree
 3. ✅ Rewrite to `LeftOuterJoin(on=[E], default) [child, Scan([E A ?result])]`
-4. ✅ The LeftOuterJoin decompiles to `(or-join [E] [E A ?result] [(ground default) ?result])`
+4. ✅ The LeftOuterJoin decompiles to `(or-default-join [[E] ?result] [E A ?result] [(get-else $ E A default) ?result])`
 5. ✅ **Test**: `TestGetElseScanRewrite_Simple` — single get-else round-trip
 6. ✅ **Test**: `TestGetElseScanRewrite_Multiple` — 4 chained get-else rewrites
 7. ✅ **Test**: `TestGetElseScanRewrite_NonGetElsePreserved` — arithmetic preserved
@@ -818,10 +845,10 @@ Enable algebra optimizer by default and fix all regressions.
 6. ✅ **Verify**: `go test ./datalog/...` — all 13 packages pass
 7. ✅ **Verify**: downstream application tests pass
 
-**Key insight**: or-join's join vars are NOT unconditionally provided.
-When branch 2 (ground default) doesn't produce the join var, it must be
-required from the outer relation. Otherwise the phaser reorders clauses,
-breaking NOT clause dependencies.
+**Key insight**: an or-default-join does not provide its required run. Its
+default branch binds only the outputs, so the required run comes from the
+outer relation. Otherwise the phaser reorders clauses, breaking NOT clause
+dependencies.
 
 ---
 
@@ -845,23 +872,23 @@ executions are offset by more expensive scans.
 
 ### Key Finding: Rule 5 Provides All The Speedup
 
-Rule 5 (get-else → or-join with cached DataPattern scans) cuts wall time
-from 28.4s → 13.7s. It reduces the intermediate relation sizes feeding
+Rule 5 (get-else → or-default-join with cached DataPattern scans) cuts wall
+time from 28.4s → 13.7s. It reduces the intermediate relation sizes feeding
 into hash joins, causing the dominant 20.5s join to drop to 6.9s.
 
 **Disproven hypothesis**: "Rule 5 inside decorrelated subqueries is
 harmful because LookupAttribute with EA cache is faster than full scans."
 Testing showed disabling Rule 5 returns wall time to baseline (28.4s).
 Rule 5 helps everywhere, including inside decorrelated subqueries, because
-the or-join DataPattern branch cache amortizes the scan cost across all
-tuples.
+the or-default-join's DataPattern branch cache amortizes the scan cost across
+all tuples.
 
 ### Remaining Bottleneck: Per-Entity Storage Scans
 
 The 13.7s comes from 23,897 `matcher.Match()` calls — **per-entity
-pattern evaluation**, not per-attribute scans. The or-join from Rule 5
+pattern evaluation**, not per-attribute scans. The or-default-join from Rule 5
 evaluates per outer tuple: for each of the ~8K tasks, each get-else
-or-join branch calls `matcher.Match()` to scan storage. The branch cache
+or-default-join branch calls `matcher.Match()` to scan storage. The branch cache
 prevents re-scanning after the first evaluation, but subsequent patterns
 (bare DataPatterns in the subquery WHERE) still scan per-entity.
 
@@ -1006,10 +1033,13 @@ key-only iterators make redundant scans cheap.
 4. **missing? → AntiJoin** — reverted to Select (preserves predicate through round-trip)
 5. **Default branch binding all symbols** — `decompileLateralJoin` now subtracts
    join keys from binding symbols so defaults only bind non-join symbols
-6. **extractGroundDefaults rejecting NOT** — now skips NOT/missing? guards (safe
-   because LeftOuterJoin handles non-matching tuples via defaults)
-7. **Uncorrelated subquery defaults lost** — uncorrelated SubqueryPattern+defaults
-   now wraps in LeftOuterJoin (previously only correlated path attached defaults)
+6. **Guards beside the grounds** — `extractGroundDefaults` states no defaults
+   for a branch holding a NOT, a missing? or any other clause beside its
+   grounds, since such a guard decides which tuples take the default, so the
+   fallback compiles to a LateralUnion
+7. **Uncorrelated subquery defaults** — an uncorrelated SubqueryPattern
+   compiles to a LateralJoin with no correlation variables, which carries the
+   defaults as a correlated one does (`compileOrFallbackWithVars`)
 
 ### Current compiler coverage
 
@@ -1022,12 +1052,12 @@ key-only iterators make redundant scans cheap.
 | NotClause | AntiJoin | ✅ |
 | NotJoinClause | AntiJoin (explicit) | ✅ |
 | OR (pattern-only) | Union | ✅ |
-| OR (with correlated predicates) | LateralUnion (detected, routed) | ✅ |
+| OR (with correlated predicates) | Union via compileOrUnionCorrelated | ✅ |
 | or-join | Union with JoinVars preserved | ✅ |
 | or-default (subquery+ground) | LateralJoin+defaults | ✅ |
 | or-default (NOT+ground fallback) | LateralUnion via compileOrFallbackExclusive | ✅ |
-| or-default (subquery+NOT+ground) | LateralJoin+defaults (NOT skipped) | ✅ |
-| or-default-join | LateralUnion with JoinVars preserved | ✅ |
+| or-default (subquery+NOT+ground) | LateralUnion via compileOrFallbackExclusive | ✅ |
+| or-default-join | as or-default, by its branches' shape | ✅ |
 | SubqueryPattern (correlated) | LateralJoin | ✅ |
 | SubqueryPattern (uncorrelated) | LateralJoin (no correlation vars) | ✅ |
 
@@ -1041,7 +1071,7 @@ key-only iterators make redundant scans cheap.
 9. **Double join in `compileOrFallback` + `compileOrFallbackExclusive`** —
    `compileOrFallbackExclusive` was returning `joinWith(current, union)`, then
    the caller was joining again, creating `Join(current, Join(current, Union))`.
-   Fixed by having `compileOrFallbackExclusive` return just the Union node.
+   Fixed by having `compileOrFallbackExclusive` return just the LateralUnion node.
 
 10. **Vector default limitation in get-else rewrite** — added `DefaultAttr
    *datalog.Keyword` to `Join` node. The get-else rewrite stores the attribute

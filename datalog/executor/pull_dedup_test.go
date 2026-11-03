@@ -1,9 +1,10 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -16,7 +17,7 @@ import (
 // Pull + :limit N≥2: LimitRelation.ensure deduplicates Identity tuples, then
 // the boundary pull renders only the N surviving tuples.
 func TestPullWithLimitTwoTuples(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
+	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
 	q, err := parser.ParseQuery(`[:find (pull ?e [:user/name])
 	                              :where [?e :user/age ?age]
@@ -25,9 +26,9 @@ func TestPullWithLimitTwoTuples(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			result, err := executor.Execute(q)
 			if err != nil {
@@ -60,7 +61,7 @@ func TestPullWithRelationInputUnion(t *testing.T) {
 	add("a2", "A", 2)
 	add("b1", "B", 3)
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	q, err := parser.ParseQuery(`[:find (pull ?e [:item/val])
 	                              :in $ [[?k] ...]
@@ -69,9 +70,9 @@ func TestPullWithRelationInputUnion(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			inputRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?k")}, []Tuple{{"A"}, {"B"}})

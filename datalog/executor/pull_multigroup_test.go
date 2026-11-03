@@ -1,9 +1,10 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -23,11 +24,11 @@ func TestPullWithDisjointFindGroups(t *testing.T) {
 		{E: datalog.NewIdentity("user:alice"), A: ageAttr, V: int64(34), Tx: tx},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			t.Run("ground-bound disjoint symbol", func(t *testing.T) {
 				q, err := parser.ParseQuery(`[:find (pull ?e [:user/name]) ?tag

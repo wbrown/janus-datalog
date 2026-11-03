@@ -272,6 +272,22 @@ func (i *CountingIterator) Count() int {
 	return i.count
 }
 
+// failedTuple answers the failed tuple of the iterator it counts, when that
+// one answers one (failedTupleIterator), and false otherwise.
+func (i *CountingIterator) failedTuple() (Tuple, []int, bool) {
+	if inner, ok := i.inner.(failedTupleIterator); ok {
+		return inner.failedTuple()
+	}
+	return nil, nil, false
+}
+
+// resume resumes the iterator it counts, whose failedTuple answered a
+// tuple, and the iterator then reads on, so the count is not done.
+func (i *CountingIterator) resume() {
+	i.inner.(failedTupleIterator).resume()
+	i.done = false
+}
+
 // IsDone returns true if iteration has completed
 func (i *CountingIterator) IsDone() bool {
 	return i.done
@@ -449,31 +465,36 @@ func NewMaterializedRelationWithOptions(symbols []query.Symbol, tuples []Tuple, 
 }
 
 // NewMaterializedRelationWithProperties creates a deduplicated materialized
-// relation with explicit ordering and candidate-key guarantees.
+// relation with explicit ordering and candidate-key guarantees. Its tuples
+// are held, so reading it evaluates nothing.
 func NewMaterializedRelationWithProperties(
 	symbols []query.Symbol,
 	tuples []Tuple,
 	opts ExecutorOptions,
 	properties RelationProperties,
 ) *MaterializedRelation {
+	held := properties.clone()
+	held.Evaluates = false
 	return &MaterializedRelation{
 		symbols:    symbols,
 		tuples:     deduplicateTuples(tuples),
 		options:    opts,
-		properties: properties.clone(),
+		properties: held,
 	}
 }
 
 // newMaterializedRelationFromSet constructs a Relation from tuples already
 // proven duplicate-free by the producing relational operator, holding the
-// properties the operator derived as given: a relation's properties are
-// immutable, and every derivation builds its own values.
+// ordering and keys the operator derived as given: a relation's properties
+// are immutable, and every derivation builds its own values. Its tuples are
+// held, so reading it evaluates nothing.
 func newMaterializedRelationFromSet(
 	symbols []query.Symbol,
 	tuples []Tuple,
 	opts ExecutorOptions,
 	properties RelationProperties,
 ) *MaterializedRelation {
+	properties.Evaluates = false
 	return &MaterializedRelation{
 		symbols:    symbols,
 		tuples:     tuples,
@@ -487,16 +508,21 @@ func newMaterializedRelationFromSet(
 // complete tuple appears at most once, as produced by a distinct scan or a
 // set-preserving operator. The warranty replaces the deduplication pass;
 // the value-domain admission check still runs because boundary callers
-// inject raw Go values into relational flow. Interior operators, whose
-// tuples never left relational flow and which carry derived
+// inject raw Go values into relational flow. The properties are the
+// guarantees the caller warrants of the tuples, held as a copy; the tuples
+// are held, so reading the relation evaluates nothing. Interior operators,
+// whose tuples never left relational flow and which carry derived
 // RelationProperties, construct through newMaterializedRelationFromSet
 // instead.
-func NewMaterializedRelationFromSet(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions) *MaterializedRelation {
+func NewMaterializedRelationFromSet(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions, properties RelationProperties) *MaterializedRelation {
 	validateTupleValueDomain(tuples)
+	held := properties.clone()
+	held.Evaluates = false
 	return &MaterializedRelation{
-		symbols: symbols,
-		tuples:  tuples,
-		options: opts,
+		symbols:    symbols,
+		tuples:     tuples,
+		options:    opts,
+		properties: held,
 	}
 }
 
@@ -1392,6 +1418,12 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 		return nil, fmt.Errorf("cannot project empty symbol list - invalid query")
 	}
 
+	// The identity projection, the relation's own symbols in its own order,
+	// is the relation (docs/proposals/BINDING_MATCH_PROOF.md, T1).
+	if symbolsMatch(r.symbols, symbols) {
+		return r, nil
+	}
+
 	// Validate symbols exist
 	for _, sym := range symbols {
 		if !query.ContainsSymbol(r.symbols, sym) {
@@ -1466,23 +1498,33 @@ func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 
 // FilterWithPredicate filters the relation using a query.Predicate.
 // Filtering is a pure streaming transform — one pass, nothing retained —
-// so the result is always a composed stream. Consumers that need replay
-// call Materialize at their point of need.
+// so the result is always a composed stream, and the predicate evaluates as
+// the stream is pulled. The result evaluates as its source does, and also
+// when the predicate can fail on a value of the stream (canFailOnAValueOver):
+// a predicate function or a transaction range can, a comparison cannot.
+// Consumers that need replay call Materialize at their point of need.
 func (r *StreamingRelation) FilterWithPredicate(pred query.Predicate) Relation {
-	predIter := NewPredicateFilterIterator(r.Iterator(), r.symbols, pred)
-	return NewStreamingRelationWithProperties(r.symbols, predIter, r.options, r.properties)
+	predIter := NewPredicateFilterIterator(r.Iterator(), r.symbols, pred, nil, nil)
+	properties := r.properties.clone()
+	properties.Evaluates = properties.Evaluates || canFailOnAValueOver(pred, r.properties.Identities)
+	return NewStreamingRelationWithProperties(r.symbols, predIter, r.options, properties)
 }
 
 // EvaluateFunction evaluates a function and adds its result as a new symbol.
 // Like filtering, this is a pure streaming transform: always a composed
-// stream, never a buffer.
+// stream, never a buffer, which evaluates the function as it is pulled. The
+// result evaluates as the relation does, and also when the function can fail
+// on a value of the relation (canFailOnAValueOver).
 func (r *StreamingRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
-	evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, &query.Expression{Function: fn, Binding: outputSymbol}, nil, nil)
+	expr := &query.Expression{Function: fn, Binding: outputSymbol}
+	evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, expr, nil, nil)
+	properties := r.properties.addSymbol(outputSymbol)
+	properties.Evaluates = properties.Evaluates || canFailOnAValueOver(expr, r.properties.Identities)
 	return NewStreamingRelationWithProperties(
 		evalIter.Symbols(),
 		evalIter,
 		r.options,
-		r.properties.addSymbol(outputSymbol),
+		properties,
 	)
 }
 
@@ -1662,8 +1704,37 @@ func (p *ProductRelation) Symbols() []query.Symbol {
 	return p.symbols
 }
 
+// productEvaluates is whether reading the product of relations evaluates a
+// function that can fail on a value: when any member carries the evaluating
+// mark, since the product reads its first member as it is pulled and every
+// other member through the cache its first pass fills, so a member evaluates
+// as the product is pulled (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md,
+// T11).
+func productEvaluates(relations []Relation) bool {
+	for _, member := range relations {
+		if member.Properties().Evaluates {
+			return true
+		}
+	}
+	return false
+}
+
+// productIdentities is the identity symbols of the product of relations, each
+// member's, since the product keeps every member's values and the members
+// share no symbol.
+func productIdentities(relations []Relation) []query.Symbol {
+	var identities []query.Symbol
+	for _, member := range relations {
+		identities = append(identities, member.Properties().Identities...)
+	}
+	return identities
+}
+
+// Properties carries the evaluating mark when any member carries it
+// (productEvaluates), and every member's identity symbols
+// (productIdentities).
 func (p *ProductRelation) Properties() RelationProperties {
-	return RelationProperties{}
+	return RelationProperties{Evaluates: productEvaluates(p.relations), Identities: productIdentities(p.relations)}
 }
 
 // Rename is the product of the members each under the part of the
@@ -1738,6 +1809,12 @@ func (p *ProductRelation) Project(symbols []query.Symbol) (Relation, error) {
 	// Empty projection is invalid in Datalog - must have at least one find element
 	if len(symbols) == 0 {
 		return nil, fmt.Errorf("cannot project empty symbol list - invalid query")
+	}
+
+	// The identity projection, the relation's own symbols in its own order,
+	// is the relation (docs/proposals/BINDING_MATCH_PROOF.md, T1).
+	if symbolsMatch(p.symbols, symbols) {
+		return p, nil
 	}
 
 	// Validate symbols exist
@@ -1834,6 +1911,9 @@ type ProductIterator struct {
 	current   []Tuple
 	first     bool
 	done      bool
+	// empty is set when a member holds no tuple: the product holds none, and
+	// no member's failure is its error.
+	empty bool
 }
 
 func (pi *ProductIterator) Next() bool {
@@ -1842,22 +1922,40 @@ func (pi *ProductIterator) Next() bool {
 	}
 
 	// On the first call, open each relation in turn and take its first
-	// tuple. An empty one ends the product: the relations after it stay
-	// unopened, and the iterators before it, pulled once, are read to their
-	// ends so that a replay cache they fill is complete when Close closes
-	// them.
+	// tuple, its end or its failure. An empty one ends the product: the
+	// relations after it stay unopened, and the iterators before it, pulled
+	// once, are read to their ends so that a replay cache they fill is
+	// complete when Close closes them. No assignment holds an empty member,
+	// so no member's failure is the product's error. A member failing in
+	// place of a first tuple ends the product with its failure once every
+	// other member has shown a tuple or a failure
+	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract).
 	if pi.first {
 		pi.first = false
+		failed := false
 		for i, rel := range pi.relations {
 			pi.iterators[i] = rel.Iterator()
-			if !pi.iterators[i].Next() {
-				for _, opened := range pi.iterators[:i] {
-					completeCache(opened)
-				}
-				pi.done = true
-				return false
+			if pi.iterators[i].Next() {
+				pi.current[i] = pi.iterators[i].Tuple()
+				continue
 			}
-			pi.current[i] = pi.iterators[i].Tuple()
+			if pi.iterators[i].Error() != nil {
+				failed = true
+				continue
+			}
+			for _, opened := range pi.iterators[:i] {
+				completeCache(opened)
+			}
+			pi.empty = true
+			pi.done = true
+			return false
+		}
+		if failed {
+			for _, opened := range pi.iterators {
+				completeCache(opened)
+			}
+			pi.done = true
+			return false
 		}
 		return true
 	}
@@ -1912,6 +2010,9 @@ func (pi *ProductIterator) Close() error {
 }
 
 func (pi *ProductIterator) Error() error {
+	if pi.empty {
+		return nil
+	}
 	for _, it := range pi.iterators {
 		if it != nil {
 			if err := it.Error(); err != nil {

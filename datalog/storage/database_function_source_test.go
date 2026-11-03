@@ -170,23 +170,24 @@ func TestDatabaseFunction_InASubqueryReadsTheSourceTheCallPasses(t *testing.T) {
 	}
 }
 
-// A database function on a source that cannot look up an entity's attribute
-// is an error, never an answer read from another source.
-func TestDatabaseFunction_OnASourceThatCannotLookUpIsAnError(t *testing.T) {
+// A database function on a slice source, passed by a subquery's call as the
+// inner $, answers from the slice's facts: the slice's entity holds no :t/a,
+// so the inner missing? holds of it.
+func TestDatabaseFunction_OnASliceSourceAnswersItsFacts(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := twoSourceFixture(t, mode, DatabaseOptions{})
-			cache := executor.NewSliceSource([]string{"one"}, executor.AttributeSchema[string]{
+			cache := sliceDatabase(t, []string{"one"}, AttributeSchema[string]{
 				kw(":t/name"): func(name string) any { return name },
 			})
-			_, err := executor.CollectTuples(d.Query(
+			tuples, err := executor.CollectTuples(d.Query(
 				`[:find ?n ?m
 				  :in $ $cache
 				  :where [$cache ?e :t/name ?n]
 				         [(q [:find ?x :in $ ?e :where [(missing? $ ?e :t/a) ?x]] $cache ?e) [[?m]]]]`,
 				sourceNamed("$cache", cache)))
-			require.Error(t, err, "the inner missing? reads $cache, which cannot look up an attribute")
-			require.Contains(t, err.Error(), "$cache")
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"one", true}}, tuples, "the inner missing? reads $cache, the source the call passes")
 		})
 	}
 }

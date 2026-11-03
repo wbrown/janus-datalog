@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wbrown/janus-datalog/datalog/algebra"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -138,6 +139,16 @@ type PlannerOptions struct {
 	// false).
 	CollectRosters bool
 
+	// MatchAnswersLookup is the sources' answer to whether a match of an
+	// attribute on the source a query names answers, per entity, the one
+	// value the source's lookup answers. The get-else scan rewrite applies
+	// only where it answers true, a plan carries every answer its rewrites
+	// read (RealizedPlan.SourceAnswers), and the plan cache serves a plan
+	// only where the requesting planner answers each alike. An executor sets
+	// it from its matcher's CanFuseAttributeFetch. Nil answers false for
+	// every source, so a planner given none declines every get-else rewrite.
+	MatchAnswersLookup algebra.MatchAnswersLookup
+
 	// Executor streaming options - control memory vs performance tradeoffs
 	EnableTrueStreaming     bool // Avoid auto-materialization of StreamingRelation (default: true)
 	EnableSymmetricHashJoin bool // Use symmetric hash join for stream-to-stream joins (default: false)
@@ -220,6 +231,12 @@ type RealizedPlan struct {
 	// clause evaluates, by the clause, planned with the plan; the executor's
 	// evaluation reads it here.
 	Evaluations map[*query.RuleInvocation]*InvocationEvaluation
+
+	// SourceAnswers is each question the get-else scan rewrite asked the
+	// sources while this plan and the body plans its evaluations embed were
+	// made, with the answer each got. The plan cache serves the plan only
+	// where the requesting planner's sources answer every one alike.
+	SourceAnswers []SourceAnswer
 }
 
 // String returns a human-readable representation of a RealizedPhase

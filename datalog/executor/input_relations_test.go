@@ -14,7 +14,7 @@ import (
 // given and the count the :in binds. A slice shorter than the :in never binds
 // nothing for the inputs past its end.
 func TestExecuteWithRelationsRefusesARelationCountThatDiffersFromTheInputs(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(chainDatoms(3))
+	var matcher PatternMatcher
 	one := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?p")}, []Tuple{{page(1)}})
 	pair := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?p"), datalog.NewSymbol("?q")}, []Tuple{{page(1), page(2)}})
 	cases := []struct {

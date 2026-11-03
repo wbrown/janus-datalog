@@ -18,7 +18,7 @@ func rewriteGetElse(t *testing.T, text string) ([]query.Clause, []RewriteRecord)
 	root, err := Compile(q, nil)
 	require.NoError(t, err)
 	sink := &RewriteSink{Collect: true}
-	optimized, err := NewOptimizer(GetElseScanRewritePass(sink)).Optimize(root)
+	optimized, err := NewOptimizer(GetElseScanRewritePass(sink, everySourceAnswers)).Optimize(root)
 	require.NoError(t, err)
 	clauses, err := Decompile(optimized)
 	require.NoError(t, err)

@@ -55,7 +55,7 @@ func TestJoinRoutesAnswerTheJoinOfSets(t *testing.T) {
 			{alice, dept, eng},
 		},
 	}
-	cache := executor.NewMemoryPatternMatcher([]datalog.Datom{
+	cache := factsDatabase(t, []datalog.Datom{
 		{E: cacheOne, A: cacheUser, V: "Alice"},
 		{E: cacheOne, A: cacheScore, V: int64(95)},
 		{E: cacheTwo, A: cacheUser, V: "Bob"},

@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"fmt"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -27,7 +28,7 @@ func BenchmarkOHLCFullChain(b *testing.B) {
 		b.Run(bm.name, func(b *testing.B) {
 			// Create test data
 			datoms := createOHLCData(bm.numDays, bm.numHours)
-			matcher := NewMemoryPatternMatcher(datoms)
+			matcher := factsDatabase(b, datoms)
 			exec := NewExecutor(matcher, nil)
 
 			// Build the query
@@ -236,7 +237,7 @@ func BenchmarkScanRegistryAccess(b *testing.B) {
 func BenchmarkTimeExtractionFunctions(b *testing.B) {
 	// Create test data
 	datoms := createOHLCData(0, 260)
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(b, datoms)
 	exec := NewExecutor(matcher, nil)
 
 	// Query with multiple time extractions

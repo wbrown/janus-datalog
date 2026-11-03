@@ -107,7 +107,7 @@ func TestExecuteRuleInvocation_ARenameOfAHeldPredicateAnswersItsSet(t *testing.T
 	delta := NewMaterializedRelation([]query.Symbol{a, b}, []Tuple{{page(2), page(3)}})
 	held := map[query.Symbol]Relation{follows: set.relation(ExecutorOptions{}), query.DeltaSymbol(follows): delta}
 	keeping := NewContext().WithRules(rs).WithDerived(held).WithSets(map[query.Symbol]*derivedSet{follows: set})
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 	invoke := func(name query.Symbol, args ...query.PatternElement) *query.RuleInvocation {
 		return &query.RuleInvocation{Name: name, Args: args}
 	}
@@ -136,69 +136,6 @@ func TestExecuteRuleInvocation_ARenameOfAHeldPredicateAnswersItsSet(t *testing.T
 			}
 			require.Same(t, c.set, got, "the rename of a held predicate answers the set the evaluation keeps for it")
 			require.Equal(t, c.set.tuples, rel.(*MaterializedRelation).tuples, "the rename is the set's tuples so far")
-		})
-	}
-}
-
-// A query's result carries no derived set. A :find that is exactly an
-// invocation's arguments answers the invocation's relation, the set's tuples
-// the evaluation derived; a join with the result as its build side drains
-// the result's tuples and probes no index the evaluation keeps, under each
-// planner profile (docs/proposals/CONCURRENCY_PROOF.md, P2).
-func TestExecuteWithRelations_AResultCarriesNoDerivedSet(t *testing.T) {
-	x, n := datalog.NewSymbol("?x"), datalog.NewSymbol("?n")
-	rs := mustRules(t, followsRulesText)
-	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, mode.plannerOptions())
-			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
-			require.NoError(t, err)
-			require.NotZero(t, result.Size(), "the fixture's closure holds pairs")
-
-			// The group holds one tuple per tuple of the result, its ?x and
-			// an ordinal, so the two sides tie in size and the result, on the
-			// right, is the build side.
-			position := query.SymbolIndex(result.Symbols(), x)
-			require.GreaterOrEqual(t, position, 0, "the result binds ?x")
-			var groupTuples []Tuple
-			perKey := map[interface{}]int{}
-			require.NoError(t, ForEach(result, func(tuple Tuple) error {
-				groupTuples = append(groupTuples, Tuple{tuple[position], int64(len(groupTuples))})
-				perKey[tuple[position]]++
-				return nil
-			}))
-			expected := 0
-			for _, c := range perKey {
-				expected += c * c
-			}
-			var events []annotations.Event
-			opts := ExecutorOptionsFromPlanner(mode.plannerOptions())
-			opts.Handler = func(event annotations.Event) { events = append(events, event) }
-			group := NewMaterializedRelationWithOptions([]query.Symbol{x, n}, groupTuples, opts)
-			require.Equal(t, result.Size(), group.Size())
-			count := 0
-			require.NoError(t, ForEach(HashJoinWithOptions(group, result, []query.Symbol{x}, opts), func(Tuple) error {
-				count++
-				return nil
-			}))
-			require.Equal(t, expected, count, "the join answers the nested loop's pairs")
-
-			var strategy, build []annotations.Event
-			for _, event := range events {
-				switch event.Name {
-				case annotations.JoinStrategy:
-					strategy = append(strategy, event)
-				case annotations.JoinBuild:
-					build = append(build, event)
-				}
-			}
-			require.Len(t, strategy, 1)
-			require.Equal(t, "right", strategy[0].Data["build_side"], "the result is the build side")
-			require.Equal(t, false, strategy[0].Data["build_kept"], "the join probed an index the evaluation keeps")
-			require.Len(t, build, 1)
-			require.Equal(t, false, build[0].Data["build_kept"])
-			require.Equal(t, result.Size(), build[0].Data["tuple_count"], "the join drained the result's tuples")
 		})
 	}
 }

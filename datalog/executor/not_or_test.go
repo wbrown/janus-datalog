@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"strings"
@@ -6,8 +6,10 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 func TestNotClause(t *testing.T) {
@@ -26,11 +28,11 @@ func TestNotClause(t *testing.T) {
 		{E: alice, A: archivedAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find non-archived users
 			// [:find ?name :where [?e :user/name ?name] (not [?e :user/archived true])]
@@ -104,7 +106,7 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 		{E: datalog.NewIdentity("item:3"), A: valAttr, V: int64(3), Tx: tx},
 		{E: datalog.NewIdentity("seen:1"), A: seenAttr, V: int64(2), Tx: tx},
 	}
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	v := datalog.NewSymbol("?v")
 	q := &query.Query{
@@ -130,9 +132,9 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -168,7 +170,7 @@ func TestNotClauseWithExistentialBodyVariable(t *testing.T) {
 		{E: datalog.NewIdentity("item:3"), A: valAttr, V: int64(3), Tx: tx},
 		{E: datalog.NewIdentity("seen:1"), A: seenAttr, V: int64(2), Tx: tx},
 	}
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	v := datalog.NewSymbol("?v")
 	q := &query.Query{
@@ -189,9 +191,9 @@ func TestNotClauseWithExistentialBodyVariable(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -273,13 +275,13 @@ func TestOrDefaultJoinBranchLocalAlphaEquivalence(t *testing.T) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			run := func(local query.Symbol) map[int64]bool {
 				t.Helper()
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 				result, err := exec.Execute(buildQuery(local))
 				if err != nil {
 					t.Fatalf("execution failed with branch local %s: %v", local, err)
@@ -360,13 +362,13 @@ func TestOrJoinBranchLocalAlphaEquivalence(t *testing.T) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			run := func(local query.Symbol) map[int64]bool {
 				t.Helper()
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 				result, err := exec.Execute(buildQuery(local))
 				if err != nil {
 					t.Fatalf("execution failed with branch local %s: %v", local, err)
@@ -408,11 +410,11 @@ func TestNotClauseNoMatches(t *testing.T) {
 		// No one is archived
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find non-archived users (no one is archived)
 			q := &query.Query{
@@ -473,11 +475,11 @@ func TestNotClauseAllMatch(t *testing.T) {
 		{E: bob, A: archivedAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find non-archived users (everyone is archived)
 			q := &query.Query{
@@ -542,11 +544,11 @@ func TestNotJoinClause(t *testing.T) {
 		{E: bob, A: deletedAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find users that are neither archived nor deleted
 			// [:find ?name :where [?e :user/name ?name] (not-join [?e] [?e :user/archived true] [?e :user/deleted true])]
@@ -620,11 +622,11 @@ func TestOrClause(t *testing.T) {
 		{E: charlie, A: statusAttr, V: "inactive", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find users with status "active" OR "pending"
 			// [:find ?name :where [?e :user/name ?name] (or [?e :user/status "active"] [?e :user/status "pending"])]
@@ -709,11 +711,11 @@ func TestOrJoinClause(t *testing.T) {
 		{E: charlie, A: userStatusAttr, V: "inactive", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Charlie is inactive
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find users that are active users OR enabled admins
 			// [:find ?name :where [?e :user/name ?name] (or-join [?e] [?e :user/status "active"] [?e :admin/status "enabled"])]
@@ -787,11 +789,11 @@ func TestOrJoinClause(t *testing.T) {
 
 func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 	// Directly test the query executor
-	matcher := NewMemoryPatternMatcher(nil)
+	matcher := factsDatabase(t, nil)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Build the OR clause query directly
 			orClause := &query.OrClause{
@@ -838,11 +840,11 @@ func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 func TestOrFallbackWithGroundExpression(t *testing.T) {
 	// Test OR with ground expression as fallback
 	// When pattern matches nothing, ground should provide default value
-	matcher := NewMemoryPatternMatcher(nil) // Empty database
+	matcher := factsDatabase(t, nil) // Empty database
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: (or [?e :nonexistent ?x] [(ground 0) ?x])
 			// Since no data exists, should fall back to ground(0)
@@ -902,11 +904,11 @@ func TestOrFallbackFirstBranchMatches(t *testing.T) {
 		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: (or-default [?e :user/name ?x] [(ground "fallback") ?x])
 			// First branch should match, so we should get "Alice", not "fallback"
@@ -960,14 +962,14 @@ func TestOrFallbackFirstBranchMatches(t *testing.T) {
 func TestOrFallbackMultipleBranches(t *testing.T) {
 	// Test OR with multiple fallback branches
 	// (or [nonexistent1] [nonexistent2] [(ground "default")])
-	matcher := NewMemoryPatternMatcher(nil) // Empty database
+	matcher := factsDatabase(t, nil) // Empty database
 
 	nonexistent1 := datalog.NewKeyword(":nonexistent1")
 	nonexistent2 := datalog.NewKeyword(":nonexistent2")
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q := &query.Query{
 				Find: []query.FindElement{
@@ -1034,11 +1036,11 @@ func TestOrFallbackWithArithmeticExpression(t *testing.T) {
 		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: (or [?e :nonexistent ?x] [(+ 1 1) ?x])
 			// Pattern won't match, so should get 2 from arithmetic
@@ -1111,11 +1113,11 @@ func TestOrFallbackPatternOnlyUnionSemantics(t *testing.T) {
 		{E: bob, A: premiumAttr, V: true, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},  // Bob is premium
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Pattern-only OR should return BOTH Alice and Bob (union semantics)
 			q := &query.Query{
@@ -1171,11 +1173,11 @@ func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
 		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: (or-default [?e :user/name ?x] [(ground "fallback") ?x])
 			// Pattern should match, returning "Alice"
@@ -1235,11 +1237,11 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 		{E: alice, A: statusAttr, V: completeStatus, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Build the OR clause with SubqueryPattern and ground fallback
 			// (or-default [(q [:find (count ?t) :where [?t :task/status :status/complete]] $) [[?count]]]
@@ -1331,13 +1333,13 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 		// No tasks for scenario2 (should fall back to 0)
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			// Register an annotation handler to debug OR fallback behavior
 			var events []annotations.Event
-			opts := mode.plannerOptions()
+			opts := mode.PlannerOptions()
 			opts.Handler = func(event annotations.Event) {
 				if strings.HasPrefix(event.Name, "or-fallback/") {
 					events = append(events, event)
@@ -1467,13 +1469,13 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 		// Note: scenario2 has NO tasks
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			// Register an annotation handler to see what's happening
 			var events []annotations.Event
-			opts := mode.plannerOptions()
+			opts := mode.PlannerOptions()
 			opts.Handler = func(event annotations.Event) {
 				events = append(events, event)
 			}
@@ -1599,11 +1601,11 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 		{E: task1, A: countAttr, V: int64(5), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Same as TestOrFallbackWithPatternAndTupleGround but with SCALAR ground
 			orClause := &query.OrDefaultClause{
@@ -1694,14 +1696,14 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 
 func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 	// Test OR with SubqueryPattern that returns empty, falling back to ground
-	matcher := NewMemoryPatternMatcher(nil) // Empty database
+	matcher := factsDatabase(t, nil) // Empty database
 
 	statusAttr := datalog.NewKeyword(":task/status")
 	completeStatus := datalog.NewKeyword(":status/complete")
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Same query but with empty database - should fall back to ground(0)
 			orClause := &query.OrClause{
@@ -1792,11 +1794,11 @@ func TestOrCorrelatedUnionWithIdentityBranch(t *testing.T) {
 		{E: room3, A: areaAttr, V: area1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query:
 			// [:find ?rname
@@ -1901,11 +1903,11 @@ func TestOrUnionIncludesAllBranches(t *testing.T) {
 		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query:
 			// [:find ?x
@@ -1990,7 +1992,7 @@ func TestClauseOrderIndependenceForNot(t *testing.T) {
 		{E: event1, A: eventGoalAttr, V: goalA, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	cases := []struct {
 		name string
@@ -2021,9 +2023,9 @@ func TestClauseOrderIndependenceForNot(t *testing.T) {
 				t.Fatalf("failed to parse query: %v", err)
 			}
 
-			for _, mode := range optimizerModes {
-				t.Run(mode.name, func(t *testing.T) {
-					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			for _, mode := range OptimizerModes {
+				t.Run(mode.Name(), func(t *testing.T) {
+					executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 					result, err := executor.Execute(q)
 					if err != nil {
@@ -2072,7 +2074,7 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 		{E: event1, A: eventGoalAttr, V: goalA, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	goalSym := datalog.NewSymbol("?goal")
 
 	cases := []struct {
@@ -2106,9 +2108,9 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 				t.Fatalf("failed to parse query: %v", err)
 			}
 
-			for _, mode := range optimizerModes {
-				t.Run(mode.name, func(t *testing.T) {
-					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			for _, mode := range OptimizerModes {
+				t.Run(mode.Name(), func(t *testing.T) {
+					executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 					inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
 
 					result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
@@ -2147,7 +2149,7 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 		{E: e2, A: flagAttr, V: true, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	eSym := datalog.NewSymbol("?e")
 
 	cases := []struct {
@@ -2175,9 +2177,9 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 				t.Fatalf("failed to parse query: %v", err)
 			}
 
-			for _, mode := range optimizerModes {
-				t.Run(mode.name, func(t *testing.T) {
-					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			for _, mode := range OptimizerModes {
+				t.Run(mode.Name(), func(t *testing.T) {
+					executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 					inputRel := NewMaterializedRelation([]query.Symbol{eSym}, []Tuple{{e1}})
 
 					result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
@@ -2204,21 +2206,14 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 	}
 }
 
-// TestMissingOnLookupLessMatcherFailsLoudly pins the loud-failure contract
-// for database-function predicates on a matcher without entity lookup.
-// SliceSource implements no LookupAttribute, so [(missing? $ ?e :attr)]
-// cannot be answered here; the required behavior is a loud error.
-// Both execution contexts are pinned independently — they fail through
-// different defects (BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md):
-// bare, the predicate's Eval error is deferred and was laundered by
-// emptiness-branching consumers (0 tuples, err=nil); annotated, the collector
-// wrapper fabricated "attribute absent" for every lookup (wrong tuples,
-// err=nil). Observability must never change results: both contexts must
-// yield the same loud error.
-func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
-	// A slice source gives its item i the entity slice:i.
+// missing? on a slice source answers from the slice's facts, bare and with an
+// annotation handler alike: registering an observer never changes what a
+// query answers. A slice source gives its item i the entity slice:i, and
+// slice:1 carries no :goal/flag, so missing? holds of it and its name is the
+// answer.
+func TestMissingOnASliceSourceAnswersAlikeBareAndAnnotated(t *testing.T) {
 	goalB := datalog.NewIdentity("slice:1")
-	matcher := NewSliceSource([]string{"alpha", "beta"}, AttributeSchema[string]{
+	matcher := sliceDatabase(t, []string{"alpha", "beta"}, storage.AttributeSchema[string]{
 		datalog.NewKeyword(":entity/name"): func(name string) any { return name },
 	})
 	goalSym := datalog.NewSymbol("?goal")
@@ -2231,8 +2226,7 @@ func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	// Both arms must error: registering an observer must not change what a query
-	// answers, and the annotated arm is the one that wraps the matcher.
+	// The annotated arm is the one that wraps the matcher.
 	handlers := []struct {
 		name    string
 		handler annotations.Handler
@@ -2241,17 +2235,24 @@ func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
 		{"annotated", func(annotations.Event) {}},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range OptimizerModes {
 		for _, tc := range handlers {
-			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
-				opts := mode.plannerOptions()
+			t.Run(mode.Name()+"/"+tc.name, func(t *testing.T) {
+				opts := mode.PlannerOptions()
 				opts.Handler = tc.handler
 				executor := NewExecutorWithOptions(matcher, nil, opts)
 				inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
 
 				result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
-				if err == nil {
-					t.Fatalf("missing? on a matcher without entity lookup completed silently (tuples=%d); want a loud error", result.Size())
+				if err != nil {
+					t.Fatalf("missing? on a slice source: %v", err)
+				}
+				tuples, err := CollectTuples(result, nil)
+				if err != nil {
+					t.Fatalf("reading the result: %v", err)
+				}
+				if len(tuples) != 1 || tuples[0][0] != "beta" {
+					t.Fatalf("missing? holds of slice:1, so its name beta is the one answer; got %v", tuples)
 				}
 			})
 		}

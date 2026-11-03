@@ -497,9 +497,6 @@ func TestExecuteTupleGround(t *testing.T) {
 		}
 
 		result := groups[0]
-		if result.Size() != 1 {
-			t.Errorf("Expected 1 tuple, got %d", result.Size())
-		}
 
 		// Check symbols
 		symbols := result.Symbols()
@@ -513,13 +510,15 @@ func TestExecuteTupleGround(t *testing.T) {
 			}
 		}
 
-		// Check values
-		it := result.Iterator()
-		defer it.Close()
-		if !it.Next() {
-			t.Fatal("Expected a tuple")
+		// Check the tuples the result is read to, and their values
+		tuples, err := CollectTuples(result, nil)
+		if err != nil {
+			t.Fatalf("reading the result failed: %v", err)
 		}
-		tuple := it.Tuple()
+		if len(tuples) != 1 {
+			t.Fatalf("Expected 1 tuple, got %d", len(tuples))
+		}
+		tuple := tuples[0]
 		expectedVals := []int64{1, 2, 3}
 		for i, exp := range expectedVals {
 			if tuple[i] != exp {
@@ -557,8 +556,12 @@ func TestExecuteTupleGround(t *testing.T) {
 
 		result := groups[0]
 		// Should have 2 tuples (one for each ?x value) with ?a, ?b added
-		if result.Size() != 2 {
-			t.Errorf("Expected 2 tuples, got %d", result.Size())
+		tuples, err := CollectTuples(result, nil)
+		if err != nil {
+			t.Fatalf("reading the result failed: %v", err)
+		}
+		if len(tuples) != 2 {
+			t.Errorf("Expected 2 tuples, got %d", len(tuples))
 		}
 
 		// Check symbols: should have ?x, ?a, ?b
@@ -580,7 +583,14 @@ func TestExecuteTupleGround(t *testing.T) {
 			Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}}, // 3 vars
 		}
 
-		_, err := executor.executeExpression(ctx, expr, nil)
+		groups, err := executor.executeExpression(ctx, expr, nil)
+		if err == nil {
+			for _, group := range groups {
+				if _, err = CollectTuples(group, nil); err != nil {
+					break
+				}
+			}
+		}
 		if err == nil {
 			t.Error("Expected error for mismatched tuple ground")
 		}
@@ -635,7 +645,11 @@ func TestExecuteRelationGround(t *testing.T) {
 			Function: &query.GroundFunction{Value: []interface{}{[]interface{}{int64(1), int64(2)}, []interface{}{int64(3)}}},
 			Binding:  query.RelationBinding{Variables: []query.Symbol{a, b}},
 		}
-		_, err := executor.executeExpression(NewContext(), ragged, nil)
+		groups, err := executor.executeExpression(NewContext(), ragged, nil)
+		if err == nil {
+			require.Len(t, groups, 1)
+			_, err = CollectTuples(groups[0], nil)
+		}
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "tuple 2")
 	})

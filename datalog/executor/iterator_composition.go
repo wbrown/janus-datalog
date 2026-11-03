@@ -79,22 +79,59 @@ func (it *ProjectIterator) Error() error {
 	return nil
 }
 
+// failedTupleIterator is an iterator that answers the tuple its own failure
+// arose on. After Next answers false with a failure, failedTuple answers that
+// tuple over the iterator's symbols, with no value at the positions the
+// failing evaluation would have filled, which it answers second, and false
+// when the failure did not arise on a tuple it read; resume drops the
+// failure, and Next reads on from the next tuple. A windowed form's reader
+// carries such a tuple into its window, so the form decides the failure at
+// the tuple's key (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure
+// contract).
+type failedTupleIterator interface {
+	Iterator
+	failedTuple() (Tuple, []int, bool)
+	resume()
+}
+
 // PredicateFilterIterator wraps another iterator and filters based on a query.Predicate
 type PredicateFilterIterator struct {
 	source    Iterator
 	predicate query.Predicate
 	symbols   []query.Symbol
-	current   Tuple
-	err       error
+	// lookupPredicate is the predicate when it is a database-function
+	// predicate given a lookup, which it evaluates through.
+	lookupPredicate *query.DatabaseFunctionPredicate
+	lookup          query.EntityLookup
+	envSymbols      []query.Symbol
+	envTuple        Tuple
+	bindings        map[query.Symbol]interface{}
+	current         Tuple
+	err             error
+	// failed is the source tuple err arose on, nil when err is the source's.
+	failed Tuple
 }
 
-// NewPredicateFilterIterator creates a new predicate-based filtering iterator
-func NewPredicateFilterIterator(source Iterator, symbols []query.Symbol, predicate query.Predicate) *PredicateFilterIterator {
-	return &PredicateFilterIterator{
-		source:    source,
-		predicate: predicate,
-		symbols:   symbols,
+// NewPredicateFilterIterator creates an iterator filtering source, whose
+// tuples carry symbols, by predicate. lookup is the lookup a database-function
+// predicate evaluates through, and env is the scope's environment relation,
+// whose one tuple binds into every evaluation, a tuple's symbol of the same
+// name taking its place; either may be nil.
+func NewPredicateFilterIterator(source Iterator, symbols []query.Symbol, predicate query.Predicate, lookup query.EntityLookup, env Relation) *PredicateFilterIterator {
+	envSymbols, envTuple := environmentTuple(env)
+	it := &PredicateFilterIterator{
+		source:     source,
+		predicate:  predicate,
+		symbols:    symbols,
+		lookup:     lookup,
+		envSymbols: envSymbols,
+		envTuple:   envTuple,
+		bindings:   make(map[query.Symbol]interface{}, len(symbols)+len(envSymbols)),
 	}
+	if dbPred, ok := predicate.(*query.DatabaseFunctionPredicate); ok && lookup != nil {
+		it.lookupPredicate = dbPred
+	}
+	return it
 }
 
 // Next advances to the next tuple that matches the predicate
@@ -102,14 +139,24 @@ func (it *PredicateFilterIterator) Next() bool {
 	for it.source.Next() {
 		it.current = it.source.Tuple()
 
-		// Create bindings for predicate evaluation
-		bindings := make(map[query.Symbol]interface{})
-		bindTuple(bindings, it.symbols, it.current)
+		for k := range it.bindings {
+			delete(it.bindings, k)
+		}
+		for i := range it.envSymbols {
+			it.bindings[it.envSymbols[i]] = it.envTuple[i]
+		}
+		bindTuple(it.bindings, it.symbols, it.current)
 
-		// Evaluate predicate
-		result, err := it.predicate.Eval(bindings)
+		var result bool
+		var err error
+		if it.lookupPredicate != nil {
+			result, err = it.lookupPredicate.EvalWithLookup(it.bindings, it.lookup)
+		} else {
+			result, err = it.predicate.Eval(it.bindings)
+		}
 		if err != nil {
 			it.err = err
+			it.failed = it.current
 			return false
 		}
 		if result {
@@ -137,6 +184,23 @@ func (it *PredicateFilterIterator) Error() error {
 		return it.err
 	}
 	return it.source.Error()
+}
+
+// failedTuple answers the source tuple the iterator's own failure arose on,
+// a copy, with a value at every position: the filter answers its source's
+// tuples. It answers false when the failure is the source's or there is none.
+func (it *PredicateFilterIterator) failedTuple() (Tuple, []int, bool) {
+	if it.failed == nil {
+		return nil, nil, false
+	}
+	return copyTuple(it.failed), nil, true
+}
+
+// resume drops the iterator's own failure, and Next reads on from the next
+// source tuple.
+func (it *PredicateFilterIterator) resume() {
+	it.err = nil
+	it.failed = nil
 }
 
 // admitExpressionResult resolves a function result entering relational flow.
@@ -172,15 +236,23 @@ func admitExpressionResult(fn query.Function, result interface{}) (interface{}, 
 // is pulled, so an evaluation failure surfaces from Error when the iteration
 // that reached it ends, and a tuple nothing pulls is never evaluated.
 type FunctionEvaluatorIterator struct {
-	source     Iterator
-	expr       *query.Expression
-	lookup     query.EntityLookup // the lookup a database function evaluates through
-	symbols    []query.Symbol     // the source's symbols
-	align      bindingAlignment
-	bound      bool // the expression binds a symbol
+	source  Iterator
+	expr    *query.Expression
+	lookup  query.EntityLookup // the lookup a database function evaluates through
+	symbols []query.Symbol     // the source's symbols
+	align   bindingAlignment
+	bound   bool // the expression binds a symbol
 	// expands is true for the collection and relation forms, which read any
 	// number of tuples from a value; the scalar and tuple forms read one.
-	expands    bool
+	expands bool
+	// invariant is true when the expression reads no symbol of the source, so
+	// it has one value over the source, and evaluated once that value is in
+	// hand: found, whether the function found one, and values, the binding's
+	// tuples read from it.
+	invariant  bool
+	evaluated  bool
+	found      bool
+	values     []Tuple
 	envSymbols []query.Symbol
 	envTuple   Tuple
 	bindings   map[query.Symbol]interface{}
@@ -188,6 +260,7 @@ type FunctionEvaluatorIterator struct {
 	pending    []Tuple // the binding's tuples for input not yet joined
 	current    Tuple
 	err        error // First eval error; replayed via Error() at iteration end
+	failed     Tuple // the source tuple err arose on, nil when err is the source's
 }
 
 // NewFunctionEvaluatorIterator creates an iterator evaluating expr over
@@ -202,6 +275,13 @@ func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, expr 
 	case query.CollectionBinding, query.RelationBinding:
 		expands = true
 	}
+	invariant := true
+	for _, sym := range expr.Function.RequiredSymbols() {
+		if query.ContainsSymbol(symbols, sym) {
+			invariant = false
+			break
+		}
+	}
 	return &FunctionEvaluatorIterator{
 		source:     source,
 		expr:       expr,
@@ -210,6 +290,7 @@ func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, expr 
 		align:      alignBinding(symbols, bindingSymbols),
 		bound:      len(bindingSymbols) > 0,
 		expands:    expands,
+		invariant:  invariant,
 		envSymbols: envSymbols,
 		envTuple:   envTuple,
 		bindings:   make(map[query.Symbol]interface{}, len(symbols)+len(envSymbols)),
@@ -242,26 +323,33 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 			return false
 		}
 		it.input = it.source.Tuple()
-		value, found, err := it.evaluate(it.input)
-		if err != nil {
-			it.err = err
-			return false
+		if !it.evaluated {
+			value, found, err := it.evaluate(it.input)
+			if err != nil {
+				it.err = err
+				it.failed = it.input
+				return false
+			}
+			it.found, it.values = found, nil
+			if found && it.bound {
+				if it.values, err = bindingTuples(it.expr.Binding, value); err != nil {
+					it.err = err
+					it.failed = it.input
+					return false
+				}
+			}
+			it.evaluated = it.invariant
 		}
 		// Absence (get-some found no attribute) is a soft no-match: skip the
 		// tuple.
-		if !found {
+		if !it.found {
 			continue
 		}
 		if !it.bound {
 			it.current = it.input
 			return true
 		}
-		pending, err := bindingTuples(it.expr.Binding, value)
-		if err != nil {
-			it.err = err
-			return false
-		}
-		it.pending = pending
+		it.pending = it.values
 	}
 }
 
@@ -312,6 +400,30 @@ func (it *FunctionEvaluatorIterator) Error() error {
 		return it.err
 	}
 	return it.source.Error()
+}
+
+// failedTuple answers the source tuple the iterator's own failure arose on,
+// over the iterator's symbols: the source's values, then no value at each
+// binding symbol that extends them, the positions it answers second. It
+// answers false when the failure is the source's or there is none.
+func (it *FunctionEvaluatorIterator) failedTuple() (Tuple, []int, bool) {
+	if it.failed == nil {
+		return nil, nil, false
+	}
+	tuple := make(Tuple, len(it.align.symbols))
+	copy(tuple, it.failed)
+	unknown := make([]int, 0, len(tuple)-len(it.failed))
+	for pos := len(it.failed); pos < len(tuple); pos++ {
+		unknown = append(unknown, pos)
+	}
+	return tuple, unknown, true
+}
+
+// resume drops the iterator's own failure, and Next reads on from the next
+// source tuple.
+func (it *FunctionEvaluatorIterator) resume() {
+	it.err = nil
+	it.failed = nil
 }
 
 // DedupIterator answers each distinct tuple of its source once, by whole

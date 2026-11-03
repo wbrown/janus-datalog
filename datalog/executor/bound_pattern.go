@@ -34,7 +34,8 @@ func streamsThrough(symbols []query.Symbol, groups Relations) bool {
 // variables as the outputs, framed through planner.WindowFraming as the
 // planner's walk frames it. The result's keys survive when the pattern
 // answers at most one tuple per subject tuple, a cardinality-one attribute
-// keyed by a required entity, as a fallback's do.
+// keyed by a required entity, as a fallback's do. Its identity symbols are
+// the subject's and the pattern's entity variable (AnswerIdentities).
 func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.DataPattern, groups Relations) (Relations, error) {
 	symbols := pattern.Symbols()
 	subject, consumed := e.findOuterRelation(symbols, groups)
@@ -52,6 +53,11 @@ func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.
 	}
 	atMostOne := patternAnswersAtMostOne(pattern, required, carriedSet, e.matcher)
 	properties := orProperties(subject.Properties(), outputs, nil, resultSyms, atMostOne)
+	for _, symbol := range AnswerIdentities(pattern) {
+		if !query.ContainsSymbol(properties.Identities, symbol) {
+			properties.Identities = append(properties.Identities, symbol)
+		}
+	}
 
 	f := framing{
 		form:      "pattern",

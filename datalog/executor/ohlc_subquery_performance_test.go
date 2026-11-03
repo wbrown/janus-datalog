@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"fmt"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -85,12 +86,12 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 		}
 	}
 
-	// Create memory matcher with our test data
-	matcher := NewMemoryPatternMatcher(datoms)
+	// A database holding the test data
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Test 1: Single subquery (just get the open price for each day)
 			t.Run("SingleSubquery", func(t *testing.T) {
@@ -277,7 +278,7 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(b, datoms)
 	exec := NewExecutor(matcher, nil)
 
 	// Benchmark single subquery
@@ -408,7 +409,7 @@ func BenchmarkRelationInput(b *testing.B) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(b, datoms)
 
 	// Query with RelationInput iteration
 	queryStr := `[:find ?n ?y ?m (max ?age)

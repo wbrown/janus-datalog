@@ -700,7 +700,7 @@ func TestQueryNamedSourcePatternIsNotChecked(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
-			cache := executor.NewMemoryPatternMatcher([]datalog.Datom{
+			cache := factsDatabase(t, []datalog.Datom{
 				{E: datalog.NewIdentity("cache:1"), A: kw(":cache/score"), V: int64(95)},
 			})
 

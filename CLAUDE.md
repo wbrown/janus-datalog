@@ -337,11 +337,11 @@ The storage layer connects the query engine to BadgerDB:
 
 ### Multi-Source Query Architecture
 - **One interface**: `PatternMatcher` is the sole interface for all data sources. No separate `DataSource` type.
-- **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source), `EntityLookupMatcher` (`LookupSource` returns the lookup of the source a `get-else`, `missing?` or `get-some` names, an unknown or lookup-less source being an error naming it) and `AttributeVocabulary` (routes the unknown-attribute question to the source named, which answers for itself; a database passed as a named source refuses a pattern on it as it does as `$`).
+- **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source), `EntityLookupMatcher` (`LookupSource` returns the lookup of the source a `get-else`, `missing?` or `get-some` names, an unknown or lookup-less source being an error naming it), `AttributeVocabulary` (routes the unknown-attribute question to the source named, which answers for itself; a database passed as a named source refuses a pattern on it as it does as `$`) and `AttributeFetchFusable` (answers from the source named whether its match of an attribute gives, per entity, the one value its lookup gives, an unknown or incapable source answering false; attribute-fetch fusion reads the answer, and so does the planner's get-else rewrite through `PlannerOptions.MatchAnswersLookup`).
 - **Source threading**: Sources are an execution context built once at the top level. `Query()` accepts `WithSources(...)` as a functional option. The `SourceRouter` becomes the executor's `PatternMatcher`, so subqueries inherit access to all sources automatically.
 - **IsSourceSymbol**: Helper `strings.HasPrefix(string(sym), "$")` replacing all hardcoded `sym == "$"` checks.
-- **Adding new source types**: Implement `PatternMatcher`. Optionally implement `PredicateAwareMatcher` for predicate pushdown. Pass via `WithSources`.
-- **Key files**: `executor/source_router.go`, `executor/slice_source.go`, `storage/database.go` (`WithSources`, `buildSourceMap`, `validateQuerySources`), `qb/source.go`
+- **Adding new source types**: Implement `PatternMatcher`. Optionally implement `PredicateAwareMatcher` for predicate pushdown, and `AttributeFetchFusable` where a match answers, per entity, the one value the source's lookup answers. Pass via `WithSources`.
+- **Key files**: `executor/source_router.go`, `storage/slice_source.go`, `storage/database.go` (`WithSources`, `buildSourceMap`, `validateQuerySources`), `qb/source.go`
 
 ## Implementation Status
 
@@ -455,7 +455,7 @@ The storage layer connects the query engine to BadgerDB:
 24. **CRDT storage** - LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector; all writes preserved with ElementIDs; `db.History()` for raw datom access, `db.AsOf(elementID)` for point-in-time queries; a handle and the matchers it mints carry their view as a mode, latest, history or as-of, with the as-of target beside it (`docs/reference/CRDT.md`, "Three database modes")
 25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible union semantics; `(or-default ...)`, `(or-default-join ...)` for fallback/default-value patterns (janus extension)
 26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates
-27. **Multi-source queries** - Named sources (`$name`), `SourceRouter`, cross-source joins, `MemoryPatternMatcher`, `SliceSource[T]`, query builder `Source()`/`PatFrom()`
+27. **Multi-source queries** - Named sources (`$name`), `SourceRouter`, cross-source joins, memory databases (`db.OpenMemory`), a slice's facts as a memory database (`NewSliceSource`), query builder `Source()`/`PatFrom()`
 28. **Database export/import** - EDN format export/import for backup and migration; CLI flags `-export` and `-import`; preserves all value types and transaction IDs
 29. **LZJ compression** - Custom LZ77+FSE codec; 3.6-13× ratios; deterministic; transparent at the storage layer; `#lzj` EDN tagged literal for export/import
 30. **Tier 3 blob store** - Out-of-line storage for large/compressed values with hash-keyed deduplication; values referenced by hash from index keys
@@ -792,7 +792,7 @@ Note: While our planner is explicit and feature-complete, the **information flow
 - **[docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md)** - QueryInto API: typed query results into Go structs
 - **[docs/INPUT_PARAMETER_SEMANTICS.md](docs/INPUT_PARAMETER_SEMANTICS.md)** - Comprehensive guide to input parameter handling
 - **[docs/reference/PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
-- **[docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Multi-source queries: cross-database joins, in-memory sources, SliceSource, custom sources
+- **[docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Multi-source queries: cross-database joins, memory databases, slice sources, custom sources
 
 ### Historical Context
 - **[docs/archive/early-design/DATALOG_GO_NOTES_HISTORICAL_INSIGHTS.md](docs/archive/early-design/DATALOG_GO_NOTES_HISTORICAL_INSIGHTS.md)** - Architectural insights and lessons learned

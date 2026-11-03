@@ -17,7 +17,7 @@ func TestGetElseScanRewrite_ReadsTheSourceTheGetElseNames(t *testing.T) {
 	require.NoError(t, err)
 	root, err := Compile(q, nil)
 	require.NoError(t, err)
-	optimized, err := NewOptimizer(GetElseScanRewritePass(nil)).Optimize(root)
+	optimized, err := NewOptimizer(GetElseScanRewritePass(nil, everySourceAnswers)).Optimize(root)
 	require.NoError(t, err)
 	clauses, err := Decompile(optimized)
 	require.NoError(t, err)

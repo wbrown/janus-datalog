@@ -1,14 +1,15 @@
-package executor
+package executor_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 // The window of docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.2: a
@@ -16,20 +17,7 @@ import (
 // window tuple, each window is reported by one event, a key answered by an
 // earlier window is probed and never evaluated again, and a branch holding
 // an invocation continues one fixpoint across the windows. Each contract is
-// the subject of one test over the executor on an in-memory matcher.
-
-// windowItems writes n entities carrying attr and returns their datoms and
-// the subject tuples over entity, in entity order.
-func windowItems(n int, attr datalog.Keyword) ([]datalog.Datom, []Tuple) {
-	var datoms []datalog.Datom
-	var tuples []Tuple
-	for i := 1; i <= n; i++ {
-		e := datalog.NewIdentity(fmt.Sprintf("window-item%d", i))
-		datoms = append(datoms, datalog.Datom{E: e, A: attr, V: int64(i), Tx: datalog.ElementID{Lamport: uint64(i), ReplicaID: 1}})
-		tuples = append(tuples, Tuple{e})
-	}
-	return datoms, tuples
-}
+// the subject of one test over the executor on a memory database.
 
 // windowEvents reads the window events a handler saw, in order: each
 // window's ordinal, tuple count and distinct key count.
@@ -52,19 +40,19 @@ func TestWindowGrowsFromOneTupleToTheCap(t *testing.T) {
 	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
 	attr := datalog.NewKeyword(":item/value")
 	const subjects = 20
-	datoms, tuples := windowItems(subjects, attr)
+	datoms, tuples := WindowItems(subjects, attr)
 	q := &query.Query{Where: []query.Clause{&query.OrJoinClause{
 		RequiredVars: []query.Symbol{entity},
 		OutputVars:   []query.Symbol{value},
-		Branches:     [][]query.Clause{{branchPattern(entity, value, attr)}},
+		Branches:     [][]query.Clause{{BranchPattern(entity, value, attr)}},
 	}}}
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			var events []annotations.Event
-			opts := mode.plannerOptions()
+			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
 			opts.Handler = func(e annotations.Event) { events = append(events, e) }
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor(nil)
+			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
 			answers := func(subject Relation) {
 				groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 				require.NoError(t, err)
@@ -92,7 +80,7 @@ func TestWindowGrowsFromOneTupleToTheCap(t *testing.T) {
 // keyCountingMatcher counts the binding tuples the patterns are matched
 // against: the keys a branch's evaluation seeks.
 type keyCountingMatcher struct {
-	PatternMatcher
+	*storage.Database
 	keys int
 }
 
@@ -102,7 +90,7 @@ func (m *keyCountingMatcher) Match(q *query.Query, bindings Relations) (Relation
 			m.keys += n
 		}
 	}
-	return m.PatternMatcher.Match(q, bindings)
+	return m.Database.Match(q, bindings)
 }
 
 // A key an earlier window answered is probed and never evaluated again: over
@@ -124,14 +112,17 @@ func TestKeyAnsweredByAnEarlierWindowIsProbedNotEvaluated(t *testing.T) {
 	q := &query.Query{Where: []query.Clause{&query.OrJoinClause{
 		RequiredVars: []query.Symbol{entity},
 		OutputVars:   []query.Symbol{value},
-		Branches:     [][]query.Clause{{branchPattern(entity, value, attr)}},
+		Branches:     [][]query.Clause{{BranchPattern(entity, value, attr)}},
 	}}}
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			matcher := &keyCountingMatcher{PatternMatcher: NewMemoryPatternMatcher(datoms)}
-			opts := mode.plannerOptions()
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			matcher := &keyCountingMatcher{Database: factsDatabase(t, datoms)}
+			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(nil)
+			// Attribute-fetch fusion is off, so the branch's pattern is matched
+			// over each window's keys, the seeks the matcher counts.
+			opts.EnableAttributeFetchFusion = false
+			exec := NewExecutorWithOptions(matcher, nil, opts).QueryExecutor(nil)
 			subject := NewStreamingRelation([]query.Symbol{entity, n}, NewMaterializedRelation([]query.Symbol{entity, n}, tuples).Iterator())
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 			require.NoError(t, err)
@@ -150,13 +141,13 @@ func TestKeyAnsweredByAnEarlierWindowIsProbedNotEvaluated(t *testing.T) {
 // derived tuple once.
 func TestFixpointContinuedAcrossWindowsDerivesEachTupleOnce(t *testing.T) {
 	const pages = 6
-	matcher := NewMemoryPatternMatcher(chainDatoms(pages))
-	rs := mustRules(t, followsRulesText)
-	q := mustParse(t, `[:find ?x ?y :in $ % :where [?x :page/kind "leaf"] (or-default-join [[?x] ?y] (follows ?x ?y) [(ground :end) ?y])]`)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	matcher := factsDatabase(t, ChainDatoms(pages))
+	rs := MustRules(t, FollowsRulesText)
+	q := MustParse(t, `[:find ?x ?y :in $ % :where [?x :page/kind "leaf"] (or-default-join [[?x] ?y] (follows ?x ?y) [(ground :end) ?y])]`)
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			var begins, completes, derived, windows int
-			opts := mode.plannerOptions()
+			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 2
 			opts.Handler = func(e annotations.Event) {
 				switch e.Name {
@@ -173,7 +164,7 @@ func TestFixpointContinuedAcrossWindowsDerivesEachTupleOnce(t *testing.T) {
 				}
 			}
 			exec := NewExecutorWithOptions(matcher, nil, opts)
-			inputs, err := createInputRelationsFromValuesWithOptions(q, []interface{}{datalog.SymDollar, datalog.NewSymbol("%")}, exec.options)
+			inputs, err := CreateInputRelationsFromValuesWithOptions(q, []interface{}{datalog.SymDollar, datalog.NewSymbol("%")}, exec.Options())
 			require.NoError(t, err)
 			rel, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs)
 			require.NoError(t, err)
@@ -192,12 +183,12 @@ func TestFixpointContinuedAcrossWindowsDerivesEachTupleOnce(t *testing.T) {
 // iteration, and the tuple bound counts the tuples carried across windows.
 func TestIterationBoundIsCountedPerWindowAndTheTupleBoundIsCarried(t *testing.T) {
 	const pages = 5
-	matcher := NewMemoryPatternMatcher(chainDatoms(pages))
-	rs := mustRules(t, followsRulesText)
-	form := mustParse(t, `[:find ?x ?y :in $ % :where (or-default-join [[?x] ?y] (follows ?x ?y) [(ground :end) ?y])]`).Where
+	matcher := factsDatabase(t, ChainDatoms(pages))
+	rs := MustRules(t, FollowsRulesText)
+	form := MustParse(t, `[:find ?x ?y :in $ % :where (or-default-join [[?x] ?y] (follows ?x ?y) [(ground :end) ?y])]`).Where
 	x := datalog.NewSymbol("?x")
 	run := func(t *testing.T, opts planner.PlannerOptions, order []Tuple) error {
-		exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(nil)
+		exec := NewExecutorWithOptions(matcher, nil, opts).QueryExecutor(nil)
 		subject := NewStreamingRelation([]query.Symbol{x}, NewMaterializedRelation([]query.Symbol{x}, order).Iterator())
 		groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: form}, []Relation{subject})
 		if err != nil {
@@ -209,20 +200,20 @@ func TestIterationBoundIsCountedPerWindowAndTheTupleBoundIsCarried(t *testing.T)
 	}
 	var fromTheHead, fromTheSink []Tuple
 	for i := 1; i <= pages; i++ {
-		fromTheHead = append(fromTheHead, Tuple{page(i)})
-		fromTheSink = append(fromTheSink, Tuple{page(pages + 1 - i)})
+		fromTheHead = append(fromTheHead, Tuple{Page(i)})
+		fromTheSink = append(fromTheSink, Tuple{Page(pages + 1 - i)})
 	}
-	for _, mode := range optimizerModes {
-		t.Run(mode.name+"/iterations per window", func(t *testing.T) {
-			opts := mode.plannerOptions()
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name()+"/iterations per window", func(t *testing.T) {
+			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 1
 			opts.MaxRuleIterations = 4
 			err := run(t, opts, fromTheHead)
 			var limit *query.RuleIterationLimitError
 			require.ErrorAs(t, err, &limit, "the first window, seeded by page1 alone, iterates the magic stratum once per page of the chain, past four, where the whole seed at once converges in one")
 		})
-		t.Run(mode.name+"/tuples carried", func(t *testing.T) {
-			opts := mode.plannerOptions()
+		t.Run(mode.Name()+"/tuples carried", func(t *testing.T) {
+			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 1
 			opts.MaxDerivedTuples = 9
 			err := run(t, opts, fromTheSink)

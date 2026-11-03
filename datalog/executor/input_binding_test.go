@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -86,10 +87,10 @@ func parsedQuery(t *testing.T, text string) *query.Query {
 // whose ?v the second relation holds.
 func TestRelationInputs_TwoAreJoined(t *testing.T) {
 	datoms, names := bindingEntities()
-	matcher := NewMemoryPatternMatcher(datoms)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	matcher := factsDatabase(t, datoms)
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			first := relationOver([]string{"?j", "?v"}, Tuple{int64(1), int64(10)}, Tuple{int64(2), int64(20)})
 			var tuples []string
 			require.NotPanics(t, func() {
@@ -116,10 +117,10 @@ func TestRelationInputs_TwoAreJoined(t *testing.T) {
 // (2 2) binds 2 alone.
 func TestInput_ARepeatedSymbolUnifies(t *testing.T) {
 	datoms, names := bindingEntities()
-	matcher := NewMemoryPatternMatcher(datoms)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	matcher := factsDatabase(t, datoms)
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			tupleQuery := parsedQuery(t, `[:find ?x :in $ [?w ?w] :where [?x :a ?w]]`)
 			var tuples []string
 			require.NotPanics(t, func() {
@@ -151,10 +152,10 @@ func TestInput_ARepeatedSymbolUnifies(t *testing.T) {
 // a symbol the :in names is the query's error.
 func TestExecuteWithRelations_BindsARelationByItsSymbols(t *testing.T) {
 	datoms, names := bindingEntities()
-	matcher := NewMemoryPatternMatcher(datoms)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	matcher := factsDatabase(t, datoms)
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			permuted := relationOver([]string{"?q", "?p"}, Tuple{int64(10), int64(1)})
 			rel, err := exec.ExecuteWithRelations(NewContext(), parsedQuery(t, `[:find ?x :in $ [?p ?q] :where [?x :a ?p] [?x :b ?q]]`), []Relation{permuted})
 			require.NoError(t, err)
@@ -178,7 +179,7 @@ func TestExecuteWithRelations_BindsARelationByItsSymbols(t *testing.T) {
 // entity.
 func TestExpressionBinding_ARepeatedSymbolUnifies(t *testing.T) {
 	datoms, names := bindingEntities()
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	shapes := []struct {
 		name, text string
 		want       []string
@@ -191,9 +192,9 @@ func TestExpressionBinding_ARepeatedSymbolUnifies(t *testing.T) {
 		{"inside a subquery, differing", `[:find ?x ?a :where [?x :a _] [(q [:find ?v :where [(ground [1 2]) [?v ?v]]] $) [[?a] ...]]]`, nil},
 		{"inside a subquery, agreeing", `[:find ?x ?a :where [?x :a _] [(q [:find ?v :where [(ground [1 1]) [?v ?v]]] $) [[?a] ...]]]`, []string{"x 1", "y 1"}},
 	}
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			for _, shape := range shapes {
 				rel, err := exec.Execute(parsedQuery(t, shape.text))
 				require.NoError(t, err, shape.name)
@@ -216,7 +217,7 @@ func TestExpressionBinding_ARepeatedSymbolUnifies(t *testing.T) {
 // the order the :order-by asks.
 func TestInput_AScalarOrATupleEntryBindsOneTuple(t *testing.T) {
 	datoms, names := bindingEntities()
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	three := []Tuple{{int64(1), "a"}, {int64(3), "b"}, {int64(2), "c"}}
 	cases := []struct {
 		name    string
@@ -232,9 +233,9 @@ func TestInput_AScalarOrATupleEntryBindsOneTuple(t *testing.T) {
 		{"a relation entry given three tuples, sorted on its first symbol", `[:find ?p ?q ?x :in $ [[?p ?q]] :where [?x :a 1] :order-by [[?p :desc]]]`, relationOver([]string{"?p", "?q"}, three...), "", []string{"3 b x", "2 c x", "1 a x"}},
 		{"a collection entry given three tuples, sorted on it", `[:find ?p ?x :in $ [?p ...] :where [?x :a 1] :order-by [[?p :desc]]]`, relationOver([]string{"?p"}, Tuple{int64(1)}, Tuple{int64(3)}, Tuple{int64(2)}), "", []string{"3 x", "2 x", "1 x"}},
 	}
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			for _, c := range cases {
 				t.Run(c.name, func(t *testing.T) {
 					rel, err := exec.ExecuteWithRelations(NewContext(), parsedQuery(t, c.text), []Relation{c.given})

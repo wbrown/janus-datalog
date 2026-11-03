@@ -50,7 +50,8 @@ func testAETVCardinalityOneRelationProperties(t *testing.T, mode optimizerMode) 
 		Ordering: []query.OrderByClause{{
 			Variable: entity, Descending: false,
 		}},
-		Keys: [][]query.Symbol{{entity}},
+		Keys:       [][]query.Symbol{{entity}},
+		Identities: []query.Symbol{entity},
 	}, rel.Properties())
 
 	tuples, err := executor.CollectTuples(rel, nil)
@@ -147,6 +148,7 @@ func testAVETValidatedRelationProperties(t *testing.T, mode optimizerMode) {
 		Ordering: []query.OrderByClause{{
 			Variable: entity, Descending: false,
 		}},
-		Keys: [][]query.Symbol{{entity}},
+		Keys:       [][]query.Symbol{{entity}},
+		Identities: []query.Symbol{entity},
 	}, rel.Properties())
 }

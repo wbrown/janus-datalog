@@ -102,6 +102,40 @@ func TestFallbackServesThePrefetchedWindowFromTheCache(t *testing.T) {
 	}
 }
 
+// A fallback serves its branch from the EA cache at an attribute the schema
+// does not define, as at a declared cardinality-one one: its lookup and a
+// match both resolve such an attribute by LWW, so the cache answers what the
+// branch's plan answers.
+func TestFallbackServesAnAttributeTheSchemaDoesNotDefineFromTheCache(t *testing.T) {
+	// Under a cap of 128 the subject's 120 entities are read in windows of 1,
+	// 2, 4, 8, 16, 32 and 57 tuples, the last the one window above the
+	// threshold.
+	const subjectSize, lastWindow = 120, 57
+	s, err := schema.NewBuilder().
+		Attribute(":t/n").Type(schema.TypeLong).One().Add().
+		Build()
+	require.NoError(t, err)
+	var facts []fact
+	var want []string
+	for i := 1; i <= subjectSize; i++ {
+		e := named(fmt.Sprintf("e%d", i))
+		facts = append(facts, fact{e, ":t/n", int64(i)}, fact{e, ":t/a", int64(i)})
+		want = append(want, fmt.Sprintf("%s %d", e.name, i))
+	}
+	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			result, events := runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"), true)
+			require.ElementsMatch(t, want, result, "every subject tuple takes its :t/a, from the plan before the prefetch and from the cache after it")
+			require.Len(t, eventsNamed(events, annotations.StorageResolveComplete), lastWindow,
+				"the branch is served from the cache for the prefetched window")
+
+			result, _ = runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"), false)
+			require.ElementsMatch(t, want, result, "the branch's plan answers what the cache answers")
+		})
+	}
+}
+
 // A fallback's build of a branch from the EA cache looks each entity of a
 // window up once, though the window's keys hold the entity more than once.
 func TestFallbackLooksUpEachEntityOfACachedWindowOnce(t *testing.T) {

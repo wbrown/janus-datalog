@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -70,9 +71,9 @@ func TestSubqueryRelationBinding_ScalesWithInputSize(t *testing.T) {
 				)
 			}
 
-			for _, mode := range optimizerModes {
-				t.Run(mode.name, func(t *testing.T) {
-					got := runExecute(t, datoms, buildQuery(), mode.algebra)
+			for _, mode := range OptimizerModes {
+				t.Run(mode.Name(), func(t *testing.T) {
+					got := runExecute(t, datoms, buildQuery(), mode.Algebra())
 					assert.Len(t, got, numPeople,
 						"each per-?e subquery returns exactly 1 tuple; outer produces %d tuples, expected %d results",
 						numPeople, numPeople)
@@ -88,7 +89,7 @@ func TestSubqueryRelationBinding_ScalesWithInputSize(t *testing.T) {
 func runExecute(t *testing.T, datoms []datalog.Datom, q *query.Query, algebra bool) [][2]interface{} {
 	t.Helper()
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	opts := planner.PlannerOptions{
 		EnableAlgebraOptimizer: algebra,
 	}

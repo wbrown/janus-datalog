@@ -19,7 +19,12 @@ func TestJoinCopyAnnotationE2E(t *testing.T) {
 			// builds is constructed with it.
 			var events []annotations.Event
 			recording := false
-			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+			// Attribute-fetch fusion is off, so the department pattern runs as
+			// the join whose build-copy annotation the test reads.
+			plannerOpts := mode.plannerOptions()
+			plannerOpts.EnableAttributeFetchFusion = false
+			db := openBackendDB(t, mode.backend, DatabaseOptions{
+				PlannerOptions: &plannerOpts,
 				AnnotationHandler: func(e annotations.Event) {
 					if recording {
 						events = append(events, e)

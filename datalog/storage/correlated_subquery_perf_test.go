@@ -397,7 +397,7 @@ func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
 		require.NoError(t, err)
 		root, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
 		require.NoError(t, err)
-		optimizer := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
+		optimizer := algebra.NewOptimizer(algebra.DefaultPasses(nil, db.CanFuseAttributeFetch)...)
 		optimized, err := optimizer.Optimize(root)
 		require.NoError(t, err)
 		rewritten, err := algebra.Decompile(optimized)

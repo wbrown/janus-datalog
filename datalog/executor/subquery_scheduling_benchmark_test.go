@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"fmt"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -42,7 +43,7 @@ func BenchmarkSubqueryDeferralScheduling(b *testing.B) {
 			)
 		}
 	}
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(b, datoms)
 	exec := NewExecutor(matcher, nil)
 
 	q, err := parser.ParseQuery(`[:find ?e ?total

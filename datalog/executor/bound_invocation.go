@@ -43,6 +43,8 @@ func (e *DefaultQueryExecutor) executeBoundInvocation(ctx *Context, inv *query.R
 	}
 	resultSyms := append(append([]query.Symbol(nil), outerSyms...), outputs...)
 	properties := orProperties(subject.Properties(), outputs, nil, resultSyms, len(outputs) == 0)
+	// The rule bodies run per window as the result is pulled.
+	properties.Evaluates = properties.Evaluates || canFailOnAValue([]query.Clause{inv}, ctx.Rules())
 
 	f := framing{
 		form:        "invocation",

@@ -514,6 +514,38 @@ func TestRuleSetDefaultSourceAttributes(t *testing.T) {
 	}
 }
 
+// A rule set's Sources returns every source its bodies name an attribute on,
+// in order of first appearance across its rules and each once: $ for a
+// pattern naming none, the source a database function reads, and a pattern's
+// named source.
+func TestRuleSetSourcesAreTheSourcesItsBodiesNameAnAttributeOn(t *testing.T) {
+	other, cache := sym("$other"), sym("$cache")
+	rs, err := NewRuleSet([]*Rule{
+		defineRule("probe", []string{"?a", "?b"},
+			scopePattern("?a", "page/next", "?b"),
+			&Expression{
+				Function: &GetElseFunction{Source: other, Entity: VariableTerm{Symbol: sym("?b")}, Attr: datalog.NewKeyword(":page/label"), Default: ConstantTerm{Value: "none"}},
+				Binding:  sym("?l"),
+			}),
+		defineRule("probe", []string{"?a", "?b"},
+			&DataPattern{Source: cache, Elements: []PatternElement{Variable{Name: sym("?a")}, Constant{Value: datalog.NewKeyword(":page/cached")}, Variable{Name: sym("?b")}}},
+			scopePattern("?b", "page/kind", "_")),
+	})
+	if err != nil {
+		t.Fatalf("NewRuleSet: %v", err)
+	}
+	want := []Symbol{datalog.SymDollar, other, cache}
+	got := rs.Sources()
+	if len(got) != len(want) {
+		t.Fatalf("sources %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("source %d is %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
 // attrVarPattern builds [?e ?a _] on the default source: a pattern whose
 // attribute is the variable named.
 func attrVarPattern(e, a string) *DataPattern {

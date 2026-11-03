@@ -209,8 +209,7 @@ func TestMergeJoinCorrectness(t *testing.T) {
 					bindingRel := executor.NewMaterializedRelationFromSet(
 						[]query.Symbol{datalog.NewSymbol("?e")},
 						tuples,
-						executor.ExecutorOptions{},
-					)
+						executor.ExecutorOptions{}, executor.RelationProperties{})
 
 					// Create pattern: [?e :test/value ?v]
 					pattern := &query.DataPattern{
@@ -311,8 +310,7 @@ func TestMergeJoinVsHashJoin(t *testing.T) {
 					bindingRel := executor.NewMaterializedRelationFromSet(
 						[]query.Symbol{datalog.NewSymbol("?e")},
 						tuples,
-						executor.ExecutorOptions{},
-					)
+						executor.ExecutorOptions{}, executor.RelationProperties{})
 
 					pattern := &query.DataPattern{
 						Elements: []query.PatternElement{
@@ -417,8 +415,7 @@ func TestMergeJoinPerformance(t *testing.T) {
 			bindingRel := executor.NewMaterializedRelationFromSet(
 				[]query.Symbol{datalog.NewSymbol("?e")},
 				tuples,
-				executor.ExecutorOptions{},
-			)
+				executor.ExecutorOptions{}, executor.RelationProperties{})
 
 			pattern := &query.DataPattern{
 				Elements: []query.PatternElement{
@@ -725,7 +722,7 @@ func createMockRelation(size int, symbols []query.Symbol) executor.Relation {
 	for i := 0; i < size; i++ {
 		tuples[i] = executor.Tuple{datalog.NewIdentity(fmt.Sprintf("entity:%d", i))}
 	}
-	return executor.NewMaterializedRelationFromSet(symbols, tuples, executor.ExecutorOptions{})
+	return executor.NewMaterializedRelationFromSet(symbols, tuples, executor.ExecutorOptions{}, executor.RelationProperties{})
 }
 
 func resultToMap(rel executor.Relation) map[string]int64 {

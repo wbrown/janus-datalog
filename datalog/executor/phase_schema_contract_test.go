@@ -22,7 +22,7 @@ func TestExecuteRealizedRejectsInvalidPhysicalPhaseMetadata(t *testing.T) {
 		}},
 	}
 
-	executor := NewExecutor(NewMemoryPatternMatcher(nil), nil)
+	executor := NewExecutor(nil, nil)
 	_, err := executor.ExecuteRealized(NewContext(), plan, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid realized plan")
@@ -41,24 +41,24 @@ func TestExistenceVerdictOverGroups(t *testing.T) {
 	empty := NewMaterializedRelation([]query.Symbol{x}, nil)
 	unit := NewUnitRelation(ExecutorOptions{})
 
-	groups, err := existenceVerdict([]Relation{full, full}, unit)
+	groups, err := existenceVerdict([]Relation{full, full}, nil, unit)
 	require.NoError(t, err)
 	require.Len(t, groups, 1, "every group has a tuple")
 	require.Same(t, unit, groups[0], "a verdict that holds is the unit relation given")
 	require.Empty(t, groups[0].Symbols(), "the unit relation carries no symbol")
 	require.Equal(t, 1, groups[0].Size(), "the unit relation carries one tuple")
 
-	groups, err = existenceVerdict([]Relation{full, empty}, unit)
+	groups, err = existenceVerdict([]Relation{full, empty}, nil, unit)
 	require.NoError(t, err)
 	require.Empty(t, groups, "a group with no tuple empties the result")
 
-	groups, err = existenceVerdict(nil, unit)
+	groups, err = existenceVerdict(nil, nil, unit)
 	require.NoError(t, err)
 	require.Len(t, groups, 1, "no group is a verdict that holds")
 	require.Same(t, unit, groups[0])
 
 	failing := NewStreamingRelation([]query.Symbol{x}, failingRelation{Relation: full, failAfter: 0}.Iterator())
-	_, err = existenceVerdict([]Relation{failing}, unit)
+	_, err = existenceVerdict([]Relation{failing}, nil, unit)
 	require.ErrorIs(t, err, errInjectedIterator, "a group's scan failure is the verdict's error")
 }
 
@@ -67,7 +67,7 @@ func TestExistenceVerdictOverGroups(t *testing.T) {
 // over no required run, and a form over no subject answer with it rather
 // than with a relation of their own.
 func TestExecutor_HoldsOneUnitRelation(t *testing.T) {
-	executor := NewExecutor(NewMemoryPatternMatcher(nil), nil)
+	executor := NewExecutor(nil, nil)
 	require.NotNil(t, executor.unit)
 	require.Empty(t, executor.unit.Symbols())
 	require.Equal(t, 1, executor.unit.Size())
@@ -83,7 +83,7 @@ func TestExecutePhaseTakesTheVerdictForAFragmentFindingNothing(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	full := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}})
 	empty := NewMaterializedRelation([]query.Symbol{x}, nil)
-	queryExecutor := NewExecutor(NewMemoryPatternMatcher(nil), nil).queryExecutor(nil)
+	queryExecutor := NewExecutor(nil, nil).queryExecutor(nil)
 	verdictPhase := planner.RealizedPhase{Query: &query.Query{}}
 	findingPhase := planner.RealizedPhase{
 		Query:    &query.Query{Find: []query.FindElement{query.FindVariable{Symbol: x}}},

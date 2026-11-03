@@ -42,11 +42,13 @@ type unverifiedTest struct {
 }
 
 // moduleSource is every Go file of a module, parsed, its functions and
-// methods indexed by directory and name, and its Test and Fuzz functions.
+// methods indexed by directory and name, the identifier each package-level
+// variable is declared with, indexed alike, and its Test and Fuzz functions.
 type moduleSource struct {
 	root, path string
 	fset       *token.FileSet
 	funcs      map[string]map[string][]moduleFunc
+	holds      map[string]map[string][]string
 	tests      []moduleFunc
 	verdicts   map[*ast.FuncDecl]bool
 	visiting   map[*ast.FuncDecl]bool
@@ -87,6 +89,7 @@ func parseModule(t *testing.T, root string) *moduleSource {
 		path:     path,
 		fset:     token.NewFileSet(),
 		funcs:    map[string]map[string][]moduleFunc{},
+		holds:    map[string]map[string][]string{},
 		verdicts: map[*ast.FuncDecl]bool{},
 		visiting: map[*ast.FuncDecl]bool{},
 	}
@@ -117,8 +120,23 @@ func parseModule(t *testing.T, root string) *moduleSource {
 		dir := filepath.Dir(p)
 		if m.funcs[dir] == nil {
 			m.funcs[dir] = map[string][]moduleFunc{}
+			m.holds[dir] = map[string][]string{}
 		}
 		for _, decl := range file.Decls {
+			if gd, isGen := decl.(*ast.GenDecl); isGen && gd.Tok == token.VAR {
+				for _, spec := range gd.Specs {
+					vs := spec.(*ast.ValueSpec)
+					if len(vs.Values) != len(vs.Names) {
+						continue
+					}
+					for i, n := range vs.Names {
+						if id, isIdent := vs.Values[i].(*ast.Ident); isIdent {
+							m.holds[dir][n.Name] = append(m.holds[dir][n.Name], id.Name)
+						}
+					}
+				}
+				continue
+			}
 			fd, ok := decl.(*ast.FuncDecl)
 			if !ok || fd.Body == nil {
 				continue
@@ -222,10 +240,16 @@ func (m *moduleSource) verifies(f moduleFunc) bool {
 }
 
 // anyVerifies reports whether a function or method named name declared in
-// dir verifies.
+// dir verifies, or the function a package-level variable named name holds,
+// the one named by the identifier it is declared with.
 func (m *moduleSource) anyVerifies(dir, name string) bool {
 	for _, f := range m.funcs[dir][name] {
 		if m.verifies(f) {
+			return true
+		}
+	}
+	for _, held := range m.holds[dir][name] {
+		if m.anyVerifies(dir, held) {
 			return true
 		}
 	}
@@ -522,13 +546,14 @@ func TestEveryTestVerifiesItsResult(t *testing.T) {
 // error occurred, under one error check or under either of two, one that
 // passes a function that only logs to a call, one that passes a variable
 // named like a comparing function, one that checks the error of a function
-// whose only error passes another on, and one that checks an error assigned
-// after a reported comparison. It passes a test that compares a value, one
-// that compares a value in the condition that checks the error, one that
-// expects an error, one that compares through a function it calls in a
-// subtest, one that passes a comparing function to a call, and ones that check
-// the error a function returns on a wrong result, directly or under an error
-// check.
+// whose only error passes another on, one that checks an error assigned after
+// a reported comparison, and one that calls a variable holding a function
+// that only logs. It passes a test that compares a value, one that compares a
+// value in the condition that checks the error, one that expects an error,
+// one that compares through a function it calls in a subtest, one that passes
+// a comparing function to a call, ones that check the error a function
+// returns on a wrong result, directly or under an error check, and one that
+// calls a variable holding a comparing function.
 func TestEveryTestVerifiesItsResult_FlagsATestThatChecksNothingAboutItsResult(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/m\n\ngo 1.26\n"), 0o644))
@@ -660,11 +685,23 @@ func TestChecksAnErrorAssignedAfterAReportedComparison(t *testing.T) {
 	t.Logf("produced %d", n)
 	require.NoError(t, err)
 }
+
+var requireOneHeld = requireOne
+
+var logsOneHeld = logsOne
+
+func TestThroughAVariableHoldingAComparingFunction(t *testing.T) {
+	requireOneHeld(t, 1)
+}
+
+func TestThroughAVariableHoldingAFunctionThatLogs(t *testing.T) {
+	logsOneHeld(t, 1)
+}
 `), 0o644))
 
 	var names []string
 	for _, u := range parseModule(t, root).unverified() {
 		names = append(names, u.name)
 	}
-	require.Equal(t, []string{"TestOnlyLogs", "TestOnlyErrors", "TestOnlyTwoErrors", "TestThroughAFunctionValueThatLogs", "TestPassesAVariableNamedLikeAComparingFunction", "TestThroughAnErrorThatOnlyPassesAnotherOn", "TestChecksAnErrorAssignedAfterAReportedComparison"}, names)
+	require.Equal(t, []string{"TestOnlyLogs", "TestOnlyErrors", "TestOnlyTwoErrors", "TestThroughAFunctionValueThatLogs", "TestPassesAVariableNamedLikeAComparingFunction", "TestThroughAnErrorThatOnlyPassesAnotherOn", "TestChecksAnErrorAssignedAfterAReportedComparison", "TestThroughAVariableHoldingAFunctionThatLogs"}, names)
 }

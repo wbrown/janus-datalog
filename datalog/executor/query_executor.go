@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -344,7 +345,7 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 			}
 			unread = append(unread, group)
 		}
-		verdict, verdictErr := existenceVerdict(unread, e.executor.unit)
+		verdict, verdictErr := existenceVerdict(unread, holders, e.executor.unit)
 		if verdictErr != nil {
 			return nil, verdictErr
 		}
@@ -459,21 +460,101 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 
 // existenceVerdict is the verdict over groups a find does not read: unit,
 // the executor's relation of one tuple over no symbol, when each group has a
-// tuple, nothing when one has none, and a group's scan failure as its error.
-// The find boundary takes it over the groups the find does not consume, and
-// a phase whose fragment finds nothing takes it over every group, the schema
-// a phase providing nothing declares.
-func existenceVerdict(groups []Relation, unit *MaterializedRelation) ([]Relation, error) {
+// tuple, nothing when one has none, and a group's failure as its error.
+// The find boundary takes it over the groups the find does not consume, the
+// groups it consumes held, and a phase whose fragment finds nothing takes it
+// over every group, the schema a phase providing nothing declares, none held.
+//
+// Every group is read to its first tuple, its end, or its failure before
+// the verdict is decided. A group with no tuple holds at no assignment, so
+// the verdict is empty and no group's failure is raised. Otherwise a group's
+// failure is at an assignment where every other clause holds, and the first
+// is the verdict's error. A group whose reading evaluates a function is read
+// past its first tuple only once every group has shown one: then each of its
+// tuples meets a tuple of every other group, and the group is read to its
+// end to raise a failure on any of them
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T11).
+//
+// The held groups are the ones the caller reads after the verdict, so the
+// verdict reads them only when it has a failure to raise, and then the
+// caller reads none. A held group with no tuple holds at no assignment, so
+// the verdict is empty and the failure is not raised.
+func existenceVerdict(groups, held []Relation, unit *MaterializedRelation) ([]Relation, error) {
+	// The iterators of the groups whose reading evaluates a function, each
+	// past its first tuple, and the first failure a group answered in place of
+	// a first tuple.
+	var evaluating []Iterator
+	var failure error
+	closeEvaluating := func(from int) error {
+		var err error
+		for _, it := range evaluating[from:] {
+			completeCache(it)
+			if closeErr := it.Close(); err == nil {
+				err = closeErr
+			}
+		}
+		return err
+	}
 	for _, group := range groups {
-		has, err := hasTuple(group)
+		var has bool
+		var err error
+		if group.Properties().Evaluates {
+			it := group.Iterator()
+			if it.Next() {
+				evaluating = append(evaluating, it)
+				continue
+			}
+			err = it.Error()
+			if closeErr := it.Close(); err == nil {
+				err = closeErr
+			}
+		} else {
+			has, err = hasTuple(group)
+		}
 		if err != nil {
-			return nil, err
+			if failure == nil {
+				failure = err
+			}
+			continue
 		}
 		if !has {
+			if closeErr := closeEvaluating(0); closeErr != nil {
+				return nil, closeErr
+			}
 			return []Relation{}, nil
 		}
 	}
-	return []Relation{unit}, nil
+	if failure != nil {
+		if closeErr := closeEvaluating(0); closeErr != nil {
+			failure = errors.Join(failure, closeErr)
+		}
+	} else {
+		for i, it := range evaluating {
+			for it.Next() {
+			}
+			err := it.Error()
+			if closeErr := it.Close(); err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				if closeErr := closeEvaluating(i + 1); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+				failure = err
+				break
+			}
+		}
+	}
+	if failure == nil {
+		return []Relation{unit}, nil
+	}
+	for _, group := range held {
+		has, err := hasTuple(group)
+		if err == nil && !has {
+			return []Relation{}, nil
+		}
+	}
+	return nil, failure
 }
 
 // renderConstantFindSymbols extends one relation group with find-consumed
@@ -675,6 +756,13 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 	if entityGroup < 0 {
 		return nil, 0, nil
 	}
+	// The bundle reads its input whole at the clause, so a group whose reading
+	// can fail is left to the pattern's windowed route, which pulls none of it
+	// where the pattern alone has no match
+	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T9).
+	if groups[entityGroup].Properties().Evaluates {
+		return nil, 0, nil
+	}
 
 	var fetches []attributeFetchSpec
 fetchLoop:
@@ -826,6 +914,10 @@ fetchLoop:
 	for _, fetch := range fetches {
 		properties = properties.addSymbol(fetch.output)
 	}
+	// The bundle answers an input tuple only where its entity is an identity.
+	if !query.ContainsSymbol(properties.Identities, entityVar.Name) {
+		properties.Identities = append(properties.Identities, entityVar.Name)
+	}
 	newGroups[entityGroup] = newMaterializedRelationFromSet(
 		outputSymbols,
 		output,
@@ -844,47 +936,10 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 
 	requiredSyms := expr.Function.RequiredSymbols()
 
-	// Special case: if groups is empty and expression has no required symbols
-	// (e.g., ground expression), evaluate once and create a single-tuple result
-	if len(groups) == 0 && len(requiredSyms) == 0 {
-		var result interface{}
-		var err error
-		if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
-			lookup, lookupErr := e.entityLookup(dbFunc)
-			if lookupErr != nil {
-				return nil, lookupErr
-			}
-			result, err = dbFunc.EvalWithLookup(make(map[query.Symbol]interface{}), lookup)
-		} else {
-			result, err = expr.Function.Eval(make(map[query.Symbol]interface{}))
-		}
-		if err != nil {
-			return nil, err
-		}
-		value, found, err := admitExpressionResult(expr.Function, result)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			// Absence with no groups: the expression produces no tuples.
-			return []Relation{}, nil
-		}
-
-		symbols := expr.BoundVariables()
-		if len(symbols) == 0 {
-			return groups, nil
-		}
-		bound, err := bindingTuples(expr.Binding, value)
-		if err != nil {
-			return nil, err
-		}
-		return []Relation{alignBinding(nil, symbols).relationOver(bound, e.options)}, nil
-	}
-
 	// Symbols the environment binds (single-valued :in parameters) need no
 	// relation group: the environment relation binds into the operator.
 	env := ctx.Environment()
-	envSymbols, envTuple := environmentTuple(env)
+	envSymbols, _ := environmentTuple(env)
 	var unresolvedExprSyms []query.Symbol
 	for _, sym := range requiredSyms {
 		if !query.ContainsSymbol(envSymbols, sym) {
@@ -908,136 +963,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 		}
 	}
 
-	if len(relevantRels) == 0 {
-		// No relation has required symbols
-		if len(unresolvedExprSyms) == 0 && len(groups) > 0 {
-			// Ground expression (or all-constants) with existing groups - evaluate once and add symbol(s)
-			// This handles OR fallback: (or [subquery] [(ground 0) ?count])
-			// and constant-bindable scalar expressions: [(+ ?age ?bonus) ?adjusted] where ?bonus is constant
-			evalBindings := make(map[query.Symbol]interface{}, len(envSymbols))
-			for i := range envSymbols {
-				evalBindings[envSymbols[i]] = envTuple[i]
-			}
-			var result interface{}
-			var err error
-			if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
-				lookup, lookupErr := e.entityLookup(dbFunc)
-				if lookupErr != nil {
-					return nil, lookupErr
-				}
-				result, err = dbFunc.EvalWithLookup(evalBindings, lookup)
-			} else {
-				result, err = expr.Function.Eval(evalBindings)
-			}
-			if err != nil {
-				return nil, err
-			}
-			value, found, err := admitExpressionResult(expr.Function, result)
-			if err != nil {
-				return nil, err
-			}
-
-			// The binding's symbols, and the tuples the result yields under
-			// it when a binding was produced. Absence still derives the
-			// symbols: the emptied groups below keep the schema this
-			// expression provides.
-			bindingSyms := expr.BoundVariables()
-			var bound []Tuple
-			if found {
-				bound, err = bindingTuples(expr.Binding, value)
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			// Each tuple the binding reads is joined with each tuple of each
-			// group: bound positions unify (filter) and new symbols extend
-			// the tuple. alignBinding is the single home of this semantics,
-			// shared with the per-tuple path.
-			var resultRels []Relation
-			for _, rel := range groups {
-				align := alignBinding(rel.Symbols(), bindingSyms)
-				// Absence against the single environment tuple drops every
-				// tuple of every group — a universally-false filter. The
-				// emptied relation keeps the aligned symbols so the phase
-				// contract's Provides survives.
-				if !found {
-					resultRels = append(resultRels, NewMaterializedRelationWithOptions(align.symbols, nil, e.options))
-					continue
-				}
-				// Pass-through tuples (no extension) must be copied out of
-				// a workspace-reusing source; extension allocates fresh.
-				needsCopy := rel.RequiresCopy()
-
-				var outputTuples []Tuple
-				iter := rel.Iterator()
-				for iter.Next() {
-					for _, boundTuple := range bound {
-						if out, ok := align.apply(iter.Tuple(), boundTuple); ok {
-							if needsCopy && !align.extendsTuple() {
-								out = copyTuple(out)
-							}
-							outputTuples = append(outputTuples, out)
-						}
-					}
-				}
-				scanErr := iter.Error()
-				if closeErr := iter.Close(); scanErr == nil {
-					scanErr = closeErr
-				}
-				if scanErr != nil {
-					return nil, scanErr
-				}
-				resultRels = append(resultRels, NewMaterializedRelationWithOptions(align.symbols, outputTuples, e.options))
-			}
-			return resultRels, nil
-		}
-
-		// Handle all-constants expression with no groups (e.g., get-some with scalar input only)
-		// This occurs when all required symbols are constant-bindable and there are no data patterns.
-		if len(unresolvedExprSyms) == 0 && len(groups) == 0 {
-			evalBindings := make(map[query.Symbol]interface{}, len(envSymbols))
-			for i := range envSymbols {
-				evalBindings[envSymbols[i]] = envTuple[i]
-			}
-
-			// Evaluate the expression - check for database function needing lookup
-			var result interface{}
-			var err error
-			if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
-				lookup, lookupErr := e.entityLookup(dbFunc)
-				if lookupErr != nil {
-					return nil, lookupErr
-				}
-				result, err = dbFunc.EvalWithLookup(evalBindings, lookup)
-			} else {
-				result, err = expr.Function.Eval(evalBindings)
-			}
-			if err != nil {
-				return nil, err
-			}
-
-			value, found, err := admitExpressionResult(expr.Function, result)
-			if err != nil {
-				return nil, err
-			}
-			if !found {
-				// Absence: emit an empty result rather than a tuple.
-				return []Relation{}, nil
-			}
-
-			symbols := expr.BoundVariables()
-			if len(symbols) == 0 {
-				// No binding - return empty groups (expression evaluated for side effect only)
-				return []Relation{}, nil
-			}
-			bound, err := bindingTuples(expr.Binding, value)
-			if err != nil {
-				return nil, err
-			}
-			return []Relation{alignBinding(nil, symbols).relationOver(bound, e.options)}, nil
-		}
-
+	if len(relevantRels) == 0 && len(unresolvedExprSyms) > 0 {
 		// Skip expression if no relevant relations and expression needs symbols
 		return groups, nil
 	}
@@ -1049,6 +975,24 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 		if lookup, lookupErr = e.entityLookup(dbFunc); lookupErr != nil {
 			return nil, lookupErr
 		}
+	}
+
+	// An expression whose symbols no group carries, a ground expression or
+	// one the environment alone binds, extends every group, and stands over
+	// the unit when there is none. It evaluates as each result is pulled, so a
+	// group with no tuple never evaluates it, and a failure is decided where
+	// the result is read, beside the other clauses
+	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T8 and the failure
+	// contract).
+	if len(relevantRels) == 0 {
+		if len(groups) == 0 {
+			return []Relation{evaluateExpressionWithLookup(e.executor.unit, expr, lookup, env)}, nil
+		}
+		extended := make([]Relation, len(groups))
+		for i, rel := range groups {
+			extended[i] = evaluateExpressionWithLookup(rel, expr, lookup, env)
+		}
+		return extended, nil
 	}
 
 	var result Relation
@@ -1132,10 +1076,13 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 		}
 
 		// Every required symbol is environment-bound: the environment alone
-		// decides the predicate. Filter its single tuple once — one
-		// evaluation, and a surviving tuple is a uniform pass. With no
-		// environment (a symbol-free predicate), the zero-symbol unit is the
-		// subject: one evaluation with no bindings, the same verdict shape.
+		// decides the predicate. Filter the zero-symbol unit with the
+		// environment bound in — one evaluation, and a surviving tuple is a
+		// uniform pass. A verdict that can fail as it is read joins the groups
+		// as a group of no symbol, and so does a failure the evaluation met,
+		// held: the find boundary reads such a group for its existence, beside
+		// every other clause (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the
+		// failure contract).
 		var lookup query.EntityLookup
 		if dbPred, ok := pred.(*query.DatabaseFunctionPredicate); ok {
 			var lookupErr error
@@ -1143,13 +1090,14 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 				return nil, lookupErr
 			}
 		}
-		subject := env
-		if subject == nil {
-			subject = e.executor.unit
-		}
-		verdict, err := filterWithPredicateAndLookup(subject, pred, lookup, nil)
+		verdict, err := filterWithPredicateAndLookup(e.executor.unit, pred, lookup, env)
 		if err != nil {
-			return nil, err
+			failed := newMaterializedRelationFromSet([]query.Symbol{}, nil, e.options, RelationProperties{})
+			failed.err = err
+			return append(groups[:len(groups):len(groups)], failed), nil
+		}
+		if verdict.Properties().Evaluates {
+			return append(groups[:len(groups):len(groups)], verdict), nil
 		}
 		passes := verdict.Size() == 1
 		if !passes {
@@ -1330,6 +1278,8 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 	}
 	atMostOne := subqueryAnswersAtMostOne(subq.Query, bound, carriedSet)
 	properties := orProperties(subject.Properties(), bound, nil, symbols, atMostOne)
+	// The body runs per window as the result is pulled.
+	properties.Evaluates = properties.Evaluates || canFailOnAValue(subq.Query.Where, ctx.Rules())
 
 	f := framing{
 		form:        "subquery",

@@ -90,7 +90,7 @@ func TestBranchesEmitAtMostOneJudgedAgainstTheCarriedHeader(t *testing.T) {
 	}
 	required := []query.Symbol{entity}
 	carried := []query.Symbol{entity}
-	matcher := NewMemoryPatternMatcher(nil)
+	var matcher PatternMatcher
 	require.True(t, orBranchesEmitAtMostOne([][]query.Clause{{tupleGround}, {ground}}, required, carried, matcher), "a ground under the tuple form binds one tuple")
 	require.False(t, orBranchesEmitAtMostOne([][]query.Clause{{relationGround}, {ground}}, required, carried, matcher), "a ground under the relation form binds the relation over its inner vectors")
 	require.False(t, orBranchesEmitAtMostOne([][]query.Clause{{collectionGround}, {ground}}, required, carried, matcher), "a ground under the collection form binds one tuple per element")
@@ -158,7 +158,7 @@ func TestPlanBranchesFramesEachBranchUnderTheHeader(t *testing.T) {
 	attr := datalog.NewKeyword(":t/a")
 	outer := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{datalog.NewIdentity("plan1")}})
 	r, err := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
+		newQueryExecutor(nil, nil, ExecutorOptions{}),
 		NewContext(),
 		[]query.Symbol{entity},
 		[]query.Symbol{value},
@@ -198,7 +198,7 @@ func TestPlanBranchesFramesEachBranchUnderTheHeader(t *testing.T) {
 		query.Variable{Name: entity}, query.Variable{Name: value},
 	}}
 	union, err := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
+		newQueryExecutor(nil, nil, ExecutorOptions{}),
 		NewContext().WithRules(rules),
 		[]query.Symbol{entity},
 		[]query.Symbol{value},
@@ -219,7 +219,7 @@ func TestPlanBranchesFramesEachBranchUnderTheHeader(t *testing.T) {
 	// the input's value.
 	z := datalog.NewSymbol("?z")
 	given, err := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
+		newQueryExecutor(nil, nil, ExecutorOptions{}),
 		NewContext().WithEnvironment(NewMaterializedRelation([]query.Symbol{z}, []Tuple{{int64(1)}})),
 		[]query.Symbol{z},
 		[]query.Symbol{value},
@@ -245,7 +245,7 @@ func TestPlanBranchesFramesEachBranchUnderTheHeader(t *testing.T) {
 func TestFrameBranchesFramesANotJoinBodyOverItsHeader(t *testing.T) {
 	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
 	attr := datalog.NewKeyword(":t/a")
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 	header := []query.Symbol{entity}
 	subject := NewMaterializedRelation([]query.Symbol{entity, value}, nil)
 	plans, err := frameBranches(exec, NewContext(), [][]query.Clause{{branchPattern(entity, value, attr)}, {branchGround(entity, int64(1))}}, framing{
@@ -272,7 +272,7 @@ func TestFrameBranchesFramesANotJoinBodyOverItsHeader(t *testing.T) {
 // environment's, and the window's keys are counted over ?x's position alone.
 func TestFrameBranchesCarryAFrameSymbolByTheSymbolItStandsFor(t *testing.T) {
 	v, w, x, y := datalog.NewSymbol("?v"), datalog.NewSymbol("?w"), datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 	subject := NewMaterializedRelation([]query.Symbol{x, v}, nil)
 	f := framing{
 		form: "subquery", subject: subject, required: []query.Symbol{v, w}, find: []query.FindElement{query.FindVariable{Symbol: y}},
@@ -294,7 +294,7 @@ func TestFrameBranchesCarryAFrameSymbolByTheSymbolItStandsFor(t *testing.T) {
 // provides beyond its frame, and the frame plans.
 func TestFrameBranchesFramesASubqueryOverItsInputsWithItsFindShape(t *testing.T) {
 	x, v, s := datalog.NewSymbol("?x"), datalog.NewSymbol("?v"), datalog.NewSymbol("?s")
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 	count := query.FindAggregate{Function: datalog.SymCount, Arg: s}
 	body := []query.Clause{branchPattern(x, v, datalog.NewKeyword(":t/v")), branchPattern(x, s, datalog.NewKeyword(":t/s"))}
 	plans, err := frameBranches(exec, NewContext(), [][]query.Clause{body}, framing{
@@ -363,7 +363,7 @@ func TestContinuationsForSharesTheContextsAndOwnsNewOnes(t *testing.T) {
 func TestNewWindowedIteratorComposesTheModulesOverTheSubject(t *testing.T) {
 	entity, value, z := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value"), datalog.NewSymbol("?z")
 	attr := datalog.NewKeyword(":t/a")
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 	ctx := NewContext().WithEnvironment(NewMaterializedRelation([]query.Symbol{z}, []Tuple{{int64(7)}}))
 	subject := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{datalog.NewIdentity("compose1")}})
 	required := []query.Symbol{entity, z}
@@ -386,115 +386,6 @@ func TestNewWindowedIteratorComposesTheModulesOverTheSubject(t *testing.T) {
 	require.True(t, it.ownsContinued, "an iterator under a context carrying no continuations owns new ones")
 	require.Same(t, it.continued, it.ctx.continued, "the context the branches run under carries them")
 	require.Equal(t, f, it.framing, "the iterator reads the framing it was composed over")
-}
-
-// buildBranchTuples runs a branch's plan over the run it is given, and over
-// the unit relation when given none, and reads the result whole with its
-// symbols, the frame's header; a failure of the branch's scan is the
-// build's error.
-func TestBuildBranchTuplesRunsThePlanOverTheRunAndReadsItWhole(t *testing.T) {
-	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
-	attr := datalog.NewKeyword(":t/a")
-	e1 := datalog.NewIdentity("build1")
-	datoms := []datalog.Datom{{E: e1, A: attr, V: int64(5), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}}
-	plansOf := func(matcher PatternMatcher, required []query.Symbol, branch query.Clause, subject Relation) (*OrFallbackRelation, []branchRun) {
-		r, err := NewOrFallbackRelation(newQueryExecutor(matcher, nil, ExecutorOptions{}), NewContext(), required, []query.Symbol{value}, [][]query.Clause{{branch}}, subject, ExecutorOptions{}, true)
-		require.NoError(t, err)
-		plans, err := r.planBranches()
-		require.NoError(t, err)
-		return r, plans
-	}
-
-	r, plans := plansOf(NewMemoryPatternMatcher(nil), nil, branchGround(value, int64(3)), NewUnitRelation(ExecutorOptions{}))
-	tuples, syms, err := buildBranchTuples(r.executor, r.ctx, r.framing(nil), plans[0], nil)
-	require.NoError(t, err)
-	require.Equal(t, []query.Symbol{value}, syms, "the result's symbols are the frame's header")
-	require.Equal(t, []Tuple{{int64(3)}}, tuples, "a nil run is the unit relation, over which the ground yields its one tuple")
-
-	subject := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{e1}})
-	run := newMaterializedRelationFromSet([]query.Symbol{entity}, []Tuple{{e1}}, ExecutorOptions{}, deduplicatedProperties([]query.Symbol{entity}))
-	r, plans = plansOf(NewMemoryPatternMatcher(datoms), []query.Symbol{entity}, branchPattern(entity, value, attr), subject)
-	tuples, syms, err = buildBranchTuples(r.executor, r.ctx, r.framing(nil), plans[0], run)
-	require.NoError(t, err)
-	require.Equal(t, []query.Symbol{entity, value}, syms)
-	require.Equal(t, []Tuple{{e1, int64(5)}}, tuples, "the pattern over the run's entity yields its value")
-
-	failing := datalog.NewKeyword(":t/failing")
-	matcher := &failingScanMatcher{failAttr: failing, dataRel: NewMaterializedRelation([]query.Symbol{entity, value}, nil)}
-	r, plans = plansOf(matcher, []query.Symbol{entity}, branchPattern(entity, value, failing), subject)
-	_, _, err = buildBranchTuples(r.executor, r.ctx, r.framing(nil), plans[0], run)
-	require.ErrorIs(t, err, errInjectedIterator, "the branch's scan failure is the build's error")
-}
-
-// buildBranchTuples presents a branch's answer under the enclosing names
-// when its frame carries a substitution: each answer symbol the
-// substitution names is renamed to the symbol standing for it, two answer
-// symbols standing for one name keep the first, and an answer symbol the
-// substitution does not name, a constant argument's, is dropped. The inner
-// query reads ?x and finds ?v, called with ?e at two places and a constant
-// at the third, bound to ?c.
-func TestBuildBranchTuplesPresentsTheAnswerUnderTheFramesSubstitution(t *testing.T) {
-	x, y, k, v := datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?k"), datalog.NewSymbol("?v")
-	e, c := datalog.NewSymbol("?e"), datalog.NewSymbol("?c")
-	attr := datalog.NewKeyword(":t/a")
-	e1 := datalog.NewIdentity("present1")
-	datoms := []datalog.Datom{{E: e1, A: attr, V: int64(5), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}}
-	exec := newQueryExecutor(NewMemoryPatternMatcher(datoms), nil, ExecutorOptions{})
-	subst, err := query.SubstitutionOf([]query.Symbol{x, y, v}, []query.Symbol{e, e, c})
-	require.NoError(t, err)
-	f := framing{
-		required: []query.Symbol{x, y, k}, find: []query.FindElement{query.FindVariable{Symbol: v}}, given: []query.Symbol{x, y, k}, standsFor: []query.Symbol{e, e, nil},
-		subject: NewMaterializedRelation([]query.Symbol{e}, nil), subst: subst,
-	}
-	plans, err := frameBranches(exec, NewContext(), [][]query.Clause{{branchPattern(x, v, attr)}}, f)
-	require.NoError(t, err)
-	run := newMaterializedRelationFromSet([]query.Symbol{x, y, k}, []Tuple{{e1, e1, int64(9)}}, ExecutorOptions{}, deduplicatedProperties([]query.Symbol{x, y, k}))
-	tuples, syms, err := buildBranchTuples(exec, NewContext(), f, plans[0], run)
-	require.NoError(t, err)
-	require.Equal(t, []query.Symbol{e, c}, syms, "?x renamed to ?e, ?y standing for ?e too dropped, the constant's ?k dropped, ?v renamed to ?c")
-	require.Equal(t, []Tuple{{e1, int64(5)}}, tuples)
-}
-
-// buildFromCache is the fallback's build policy: a branch holding a clause
-// other than a data pattern answers with no symbols and reports nothing; a
-// branch of data patterns alone reports the narrowing decision with the
-// run's key count and, on a cold cache, answers with no symbols, so the
-// composition builds it from the plan; and on a warm cache it answers with
-// the cache's tuples over the entity and value symbols.
-func TestBuildFromCacheIsTheFallbacksBuildOfAPatternBranch(t *testing.T) {
-	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
-	attr := datalog.NewKeyword(":item/priority")
-	e1 := datalog.NewIdentity("fromcache:e1")
-	matcher := NewIndexedMemoryMatcher([]datalog.Datom{{E: e1, A: attr, V: int64(4)}}).WithSchema(cardinalityOneSchema(t, ":item/priority"))
-	var events []annotations.Event
-	opts := ExecutorOptions{Handler: func(e annotations.Event) { events = append(events, e) }}
-	it := &OrFallbackIterator{
-		windowedIterator: windowedIterator{executor: newQueryExecutor(matcher, nil, opts), framing: framing{key: []query.Symbol{entity}}, options: opts},
-		branches:         [][]query.Clause{{branchGround(value, int64(0))}, {branchPattern(entity, value, attr)}},
-	}
-	run := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{e1}})
-
-	tuples, syms, err := it.buildFromCache(0, run)
-	require.NoError(t, err)
-	require.Nil(t, syms, "a ground branch is not the fallback's to build")
-	require.Nil(t, tuples)
-	require.Empty(t, events, "and reports no narrowing")
-
-	tuples, syms, err = it.buildFromCache(1, run)
-	require.NoError(t, err)
-	require.Nil(t, syms, "on a cold cache the pattern branch is built from the plan")
-	require.Nil(t, tuples)
-	require.Len(t, events, 1)
-	require.Equal(t, annotations.OrFallbackBranchNarrowed, events[0].Name)
-	require.Equal(t, 1, events[0].Data["branch"])
-	require.Equal(t, true, events[0].Data["narrowed"])
-	require.Equal(t, 1, events[0].Data["join_keys"], "the run's one key")
-
-	it.prefetched = true
-	tuples, syms, err = it.buildFromCache(1, run)
-	require.NoError(t, err)
-	require.Equal(t, []query.Symbol{entity, value}, syms, "on a warm cache the branch is built from the cache")
-	require.Equal(t, []Tuple{{e1, int64(4)}}, tuples)
 }
 
 // The module events carry their payloads under the form: the build names
@@ -560,185 +451,6 @@ func TestEmitCachedMatchesSetsTheFirstTupleAndTheDrainState(t *testing.T) {
 	require.False(t, it.emitCachedMatches(0, cb, nil, outerTuple))
 }
 
-// The fallback answers a subject tuple from the first branch with a result
-// for it, reading the result before the carried-output filter: a tuple
-// whose carried output disagrees with branch 1's value is dropped and never
-// passed to branch 2, and a tuple branch 1 has no result for takes branch
-// 2.
-func TestNextShortCircuitDecidesBeforeTheCarriedOutputFilter(t *testing.T) {
-	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
-	attr := datalog.NewKeyword(":t/a")
-	e1, e2 := datalog.NewIdentity("decide1"), datalog.NewIdentity("decide2")
-	datoms := []datalog.Datom{{E: e1, A: attr, V: int64(5), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}}
-	var successes []int
-	options := ExecutorOptions{Handler: func(e annotations.Event) {
-		if e.Name == annotations.OrFallbackBranchSuccess {
-			successes = append(successes, e.Data["branch_index"].(int))
-		}
-	}}
-	outer := NewMaterializedRelation([]query.Symbol{entity, value}, []Tuple{{e1, int64(0)}, {e2, int64(0)}})
-	relation, err := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(datoms), nil, options),
-		NewContext(),
-		[]query.Symbol{entity},
-		[]query.Symbol{value},
-		[][]query.Clause{{branchPattern(entity, value, attr)}, {branchGround(value, int64(0))}},
-		outer,
-		options,
-		true,
-	)
-	require.NoError(t, err)
-	it := relation.Iterator()
-	require.True(t, it.Next(), "the second subject tuple is answered")
-	require.Equal(t, Tuple{e2, int64(0)}, it.Tuple())
-	require.False(t, it.Next())
-	require.NoError(t, it.Error())
-	require.Equal(t, []int{1}, successes, "branch 1 answers e1 and the filter drops it; only e2 reaches branch 2")
-}
-
-// The union takes every branch's result per subject tuple, in branch order,
-// and advances to the next subject tuple when the branches are exhausted.
-func TestNextCorrelatedUnionTakesEveryBranchPerSubjectTuple(t *testing.T) {
-	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
-	itemA, itemB := datalog.NewKeyword(":t/a"), datalog.NewKeyword(":t/b")
-	e1, e2 := datalog.NewIdentity("union1"), datalog.NewIdentity("union2")
-	datoms := []datalog.Datom{
-		{E: e1, A: itemA, V: int64(1), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
-		{E: e1, A: itemB, V: int64(2), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
-		{E: e2, A: itemB, V: int64(3), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
-	}
-	outer := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{e1}, {e2}})
-	relation, err := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(datoms), nil, ExecutorOptions{}),
-		NewContext(),
-		[]query.Symbol{entity},
-		[]query.Symbol{value},
-		[][]query.Clause{{branchPattern(entity, value, itemA)}, {branchPattern(entity, value, itemB)}},
-		outer,
-		ExecutorOptions{},
-		false,
-	)
-	require.NoError(t, err)
-	it := relation.Iterator()
-	var got []Tuple
-	for it.Next() {
-		got = append(got, copyTuple(it.Tuple()))
-	}
-	require.NoError(t, it.Error())
-	require.Equal(t, []Tuple{{e1, int64(1)}, {e1, int64(2)}, {e2, int64(3)}}, got)
-}
-
-// A union branch reading nothing of the subject is built at the first
-// window and indexed on the header symbols its result shares with the
-// subject, the required run and the carried outputs the subject carries,
-// and probed per subject tuple: the probe's matches are the branch tuples
-// agreeing with the subject tuple on those symbols, and the union's tuples
-// are the subject joined with the branch on them. An output the environment
-// alone binds is joined by the carried-output filter after the probe, which
-// TestUnionBranchProvidingAnEnvironmentBoundOutputIsJoinedWithTheEnvironmentsTuple
-// pins.
-func TestUnionBranchIndexIsKeyedOnTheRequiredRunAndTheCarriedOutputs(t *testing.T) {
-	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
-	attr := datalog.NewKeyword(":t/a")
-	x1, x2, x3 := datalog.NewIdentity("keyed1"), datalog.NewIdentity("keyed2"), datalog.NewIdentity("keyed3")
-	datoms := []datalog.Datom{
-		{E: x1, A: attr, V: int64(1), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
-		{E: x2, A: attr, V: int64(3), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
-	}
-	subject := func() Relation {
-		return NewMaterializedRelation([]query.Symbol{entity, value}, []Tuple{{x1, int64(1)}, {x1, int64(2)}, {x2, int64(3)}, {x3, int64(3)}})
-	}
-	unionOf := func(branch query.Clause) *OrFallbackIterator {
-		relation, err := NewOrFallbackRelation(
-			newQueryExecutor(NewMemoryPatternMatcher(datoms), nil, ExecutorOptions{}),
-			NewContext(),
-			[]query.Symbol{entity},
-			[]query.Symbol{value},
-			[][]query.Clause{{branch}},
-			subject(),
-			ExecutorOptions{},
-			false,
-		)
-		require.NoError(t, err)
-		it := relation.Iterator().(*OrFallbackIterator)
-		require.NoError(t, it.err)
-		require.True(t, it.nextWindow())
-		require.NotNil(t, it.branchCache[0], "a branch reading nothing is built at the first window")
-		return it
-	}
-	collect := func(it *OrFallbackIterator) []Tuple {
-		var got []Tuple
-		for it.Next() {
-			got = append(got, copyTuple(it.Tuple()))
-		}
-		require.NoError(t, it.Error())
-		return got
-	}
-
-	// A branch providing the carried output alone is keyed on it.
-	it := unionOf(branchSubquery(value, attr))
-	cb := it.branchCache[0]
-	require.Equal(t, []Tuple{{int64(1)}}, cb.Probe(Tuple{x1, int64(1)}))
-	require.Empty(t, cb.Probe(Tuple{x1, int64(2)}))
-	require.Equal(t, []Tuple{{int64(3)}}, cb.Probe(Tuple{x3, int64(3)}))
-	require.Equal(t, []Tuple{{x1, int64(1)}, {x2, int64(3)}, {x3, int64(3)}}, collect(it))
-
-	// A branch providing the required run and the carried output is keyed on
-	// both.
-	inner, innerValue := datalog.NewSymbol("?inner"), datalog.NewSymbol("?innerValue")
-	it = unionOf(&query.SubqueryPattern{
-		Query: &query.Query{
-			Find:  []query.FindElement{query.FindVariable{Symbol: inner}, query.FindVariable{Symbol: innerValue}},
-			In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
-			Where: []query.Clause{branchPattern(inner, innerValue, attr)},
-		},
-		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
-		Binding: query.RelationBinding{Variables: []query.Symbol{entity, value}},
-	})
-	cb = it.branchCache[0]
-	require.Equal(t, []Tuple{{x1, int64(1)}}, cb.Probe(Tuple{x1, int64(1)}))
-	require.Empty(t, cb.Probe(Tuple{x1, int64(2)}))
-	require.Empty(t, cb.Probe(Tuple{x3, int64(3)}))
-	require.Equal(t, []Tuple{{x1, int64(1)}, {x2, int64(3)}}, collect(it))
-}
-
-// A union branch providing an output the environment alone binds is joined
-// with the environment's tuple: the branch's tuples disagreeing with the
-// environment's value are dropped, and each subject tuple is paired with
-// the agreeing value alone.
-func TestUnionBranchProvidingAnEnvironmentBoundOutputIsJoinedWithTheEnvironmentsTuple(t *testing.T) {
-	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
-	attr := datalog.NewKeyword(":t/a")
-	x1, x2, x3 := datalog.NewIdentity("envout1"), datalog.NewIdentity("envout2"), datalog.NewIdentity("envout3")
-	datoms := []datalog.Datom{
-		{E: x1, A: attr, V: int64(1), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
-		{E: x2, A: attr, V: int64(3), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
-	}
-	subject := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{x1}, {x3}})
-	ctx := NewContext().WithEnvironment(NewMaterializedRelation([]query.Symbol{value}, []Tuple{{int64(1)}}))
-	relation, err := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(datoms), nil, ExecutorOptions{}),
-		ctx,
-		[]query.Symbol{entity},
-		[]query.Symbol{value},
-		[][]query.Clause{{branchSubquery(value, attr)}},
-		subject,
-		ExecutorOptions{},
-		false,
-	)
-	require.NoError(t, err)
-	it := relation.Iterator().(*OrFallbackIterator)
-	require.NoError(t, it.err)
-	require.True(t, it.nextWindow())
-	require.NotNil(t, it.branchCache[0], "a branch reading nothing is built at the first window")
-	var got []Tuple
-	for it.Next() {
-		got = append(got, copyTuple(it.Tuple()))
-	}
-	require.NoError(t, it.Error())
-	require.Equal(t, []Tuple{{x1, int64(1)}, {x3, int64(1)}}, got, "the value 3 disagrees with the environment and is dropped")
-}
-
 // Whether the result deduplicates follows the form and the subject's key: a
 // union of more than one branch deduplicates on the composite key, since two
 // branches can answer one subject tuple; a union of one branch deduplicates
@@ -759,7 +471,7 @@ func TestDeduplicationFollowsTheFormAndTheSubjectsKey(t *testing.T) {
 	one := [][]query.Clause{{branchGround(value, int64(0))}}
 	form := func(subject Relation, branches [][]query.Clause, shortCircuit bool) *OrFallbackRelation {
 		rel, err := NewOrFallbackRelation(
-			newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
+			newQueryExecutor(nil, nil, ExecutorOptions{}),
 			NewContext(),
 			[]query.Symbol{entity},
 			[]query.Symbol{value},
@@ -832,7 +544,7 @@ func TestFallbackKeepsTheSubjectsKeyThroughAPatternBranchServedByOneLookup(t *te
 
 	require.Contains(t, keysOf(cardinalityOne, []query.Symbol{entity}, []query.Symbol{value}, pattern), subjectKey, "a cardinality-one pattern keyed by the subject's required entity")
 	require.NotContains(t, keysOf(everyVersion, []query.Symbol{entity}, []query.Symbol{value}, pattern), subjectKey, "the matcher answers every version, as under History")
-	require.NotContains(t, keysOf(NewMemoryPatternMatcher(nil), []query.Symbol{entity}, []query.Symbol{value}, pattern), subjectKey, "a matcher without the capability")
+	require.NotContains(t, keysOf(nil, []query.Symbol{entity}, []query.Symbol{value}, pattern), subjectKey, "a matcher without the capability")
 	require.NotContains(t, keysOf(cardinalityOne, nil, []query.Symbol{entity, value}, pattern), subjectKey, "an entity the header does not require")
 
 	named := datalog.NewSymbol("$named")
@@ -863,7 +575,7 @@ func TestPatternAnswersAtMostOneAsksTheMatcherForThePatternsSource(t *testing.T)
 	everyVersion := fusionOracle{answer: func(query.Symbol, datalog.Keyword) bool { return false }}
 	require.True(t, patternAnswersAtMostOne(pattern, required, carried, cardinalityOne), "a cardinality-one pattern keyed by the subject's required entity")
 	require.False(t, patternAnswersAtMostOne(pattern, required, carried, everyVersion), "the matcher answers every version, as under History")
-	require.False(t, patternAnswersAtMostOne(pattern, required, carried, NewMemoryPatternMatcher(nil)), "a matcher without the capability")
+	require.False(t, patternAnswersAtMostOne(pattern, required, carried, nil), "a matcher without the capability")
 	require.False(t, patternAnswersAtMostOne(pattern, nil, carried, cardinalityOne), "an entity the header does not require")
 	require.False(t, patternAnswersAtMostOne(pattern, required, nil, cardinalityOne), "an entity the subject does not carry")
 	require.False(t, patternAnswersAtMostOne(branchPattern(value, entity, attr).(*query.DataPattern), required, carried, cardinalityOne), "an entity position holding an output")

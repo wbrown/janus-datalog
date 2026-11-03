@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -55,14 +54,14 @@ func TestTopNRelationMatchesSortThenLimit(t *testing.T) {
 		for _, limit := range []int{0, 1, 3, len(tuples), len(tuples) + 5} {
 			t.Run(order.name+"/limit_"+strconv.Itoa(limit), func(t *testing.T) {
 				wantRel := NewLimitRelation(
-					NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}).Sort(order.orderBy),
+					NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}, RelationProperties{}).Sort(order.orderBy),
 					limit,
 				)
 				want, err := CollectTuples(wantRel, nil)
 				require.NoError(t, err)
 
 				gotRel := TopNRelation(
-					NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}),
+					NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}, RelationProperties{}),
 					order.orderBy,
 					limit,
 				)
@@ -108,7 +107,7 @@ func TestTopNRelationUsesSecondarySortKeys(t *testing.T) {
 		{int64(10), "a"},
 	}
 
-	result := TopNRelation(NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}), orderBy, 2)
+	result := TopNRelation(NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}, RelationProperties{}), orderBy, 2)
 	got, err := CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(10), "a"}, {int64(10), "b"}}, got)
@@ -163,7 +162,7 @@ func runTopNDifferential(t *testing.T, seed int64) {
 		limit := random.Intn(count + 3)
 		expected := nativeTopNReference(tuples, orderBy, limit)
 		actual, err := collectTypedTuples(TopNRelation(
-			NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}),
+			NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}, RelationProperties{}),
 			orderBy,
 			limit,
 		))
@@ -212,7 +211,7 @@ func TestTopNRelationCompleteTiesRemainValid(t *testing.T) {
 		tuples = append(tuples, Tuple{int64(1), fmt.Sprintf("payload-%d", i)})
 	}
 	result := TopNRelation(
-		NewMaterializedRelationFromSet([]query.Symbol{score, payload}, tuples, ExecutorOptions{}),
+		NewMaterializedRelationFromSet([]query.Symbol{score, payload}, tuples, ExecutorOptions{}, RelationProperties{}),
 		[]query.OrderByClause{{Variable: score, Descending: false}},
 		5,
 	)
@@ -222,6 +221,18 @@ func TestTopNRelationCompleteTiesRemainValid(t *testing.T) {
 	for _, tuple := range tuples {
 		require.Equal(t, int64(1), tuple[0])
 	}
+}
+
+// iteratorCountingRelation counts the iterators opened over the relation it
+// holds.
+type iteratorCountingRelation struct {
+	Relation
+	iteratorCalls int
+}
+
+func (r *iteratorCountingRelation) Iterator() Iterator {
+	r.iteratorCalls++
+	return r.Relation.Iterator()
 }
 
 func TestTopNRelationZeroAndMalformedOrderDoNotOpenSource(t *testing.T) {
@@ -265,66 +276,4 @@ func TestTopNRelationPropagatesCloseError(t *testing.T) {
 		1,
 	)
 	require.ErrorIs(t, driveErr(result), closeErr)
-}
-
-func TestOrderedLimitWithNonProjectedKeyRetainsFullSortSemantics(t *testing.T) {
-	nameAttr := datalog.NewKeyword(":person/name")
-	scoreAttr := datalog.NewKeyword(":person/score")
-	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
-	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("p1"), A: nameAttr, V: "A", Tx: tx},
-		{E: datalog.NewIdentity("p1"), A: scoreAttr, V: int64(100), Tx: tx},
-		{E: datalog.NewIdentity("p2"), A: nameAttr, V: "A", Tx: tx},
-		{E: datalog.NewIdentity("p2"), A: scoreAttr, V: int64(90), Tx: tx},
-		{E: datalog.NewIdentity("p3"), A: nameAttr, V: "B", Tx: tx},
-		{E: datalog.NewIdentity("p3"), A: scoreAttr, V: int64(80), Tx: tx},
-	}
-
-	q, err := parser.ParseQuery(`[:find ?name
-	                              :where [?e :person/name ?name]
-	                                     [?e :person/score ?score]
-	                              :order-by [[?score :desc]]
-	                              :limit 2]`)
-	require.NoError(t, err)
-
-	matcher := NewMemoryPatternMatcher(datoms)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			result, err := exec.Execute(q)
-			require.NoError(t, err)
-			got, err := CollectTuples(result, nil)
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{"A"}, {"B"}}, got)
-		})
-	}
-}
-
-func TestOrderedLimitAfterAggregationUsesGlobalTopN(t *testing.T) {
-	city := datalog.NewKeyword(":person/city")
-	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
-	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("p1"), A: city, V: "BOS", Tx: tx},
-		{E: datalog.NewIdentity("p2"), A: city, V: "LA", Tx: tx},
-		{E: datalog.NewIdentity("p3"), A: city, V: "NYC", Tx: tx},
-		{E: datalog.NewIdentity("p4"), A: city, V: "SF", Tx: tx},
-	}
-
-	q, err := parser.ParseQuery(`[:find ?city (count ?p)
-	                              :where [?p :person/city ?city]
-	                              :order-by [[?city :asc]]
-	                              :limit 2]`)
-	require.NoError(t, err)
-
-	matcher := NewMemoryPatternMatcher(datoms)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			result, err := exec.Execute(q)
-			require.NoError(t, err)
-			got, err := CollectTuples(result, nil)
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{"BOS", int64(1)}, {"LA", int64(1)}}, got)
-		})
-	}
 }

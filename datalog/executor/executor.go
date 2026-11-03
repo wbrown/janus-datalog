@@ -44,17 +44,21 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 // NewExecutorWithOptions creates a new query executor with custom planner
 // options. Its plans carry their rosters when a source the matcher routes to
 // refuses attributes its schema does not declare, so the check at the
-// executor's entry reads a roster from every plan its own planner makes.
+// executor's entry reads a roster from every plan its own planner makes. Its
+// planner's get-else scan rewrite reads the matcher's answer to whether a
+// match on a source answers the source's lookup, so the plans the planner
+// makes, and those its cache serves, rest on the sources this executor reads.
 func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opts planner.PlannerOptions) *Executor {
 	// Convert to executor options
 	execOpts := ExecutorOptionsFromPlanner(opts)
 
-	// Configure matcher with executor options if it supports it
-	if indexedMatcher, ok := matcher.(*IndexedMemoryMatcher); ok {
-		indexedMatcher.WithOptions(execOpts)
-	}
-
 	opts.CollectRosters = opts.CollectRosters || anySourceRefusesUnknownAttributes(matcher)
+
+	// A matcher without the capability answers false for every source.
+	opts.MatchAnswersLookup = nil
+	if fusable, ok := matcher.(AttributeFetchFusable); ok {
+		opts.MatchAnswersLookup = fusable.CanFuseAttributeFetch
+	}
 
 	// Create the appropriate planner based on options
 	queryPlanner := planner.CreatePlanner(nil, opts)
@@ -117,24 +121,23 @@ func (e *Executor) ExecuteWithContext(ctx *Context, q *query.Query) (Relation, e
 	return e.ExecuteWithRelations(ctx, q, []Relation{})
 }
 
-// refuseUnknownAttributes asks each source the query runs over, $ and each
-// named source its :in declares, when that source refuses attributes its
-// schema does not declare, about the attributes the plan's roster names on
-// it and the ones the rule set's bodies name on it. The roster is the
-// plan's, collected at planning from the prepared query under
-// PlannerOptions.CollectRosters and read here after it, so the check runs on
-// both planner modes alike and reads nothing of the execution. A source that
-// does not refuse is asked about nothing, and its roster is not read, so a
-// plan over sources that refuse nothing carries none. The first refusal is
+// refuseUnknownAttributes asks each source the query or the rule set it runs
+// with names an attribute on, when that source refuses attributes its schema
+// does not declare, about the attributes the plan's roster names on it and
+// the ones the rule set's bodies name on it, whether or not the query's :in
+// declares the source. The roster is the plan's, collected at planning from
+// the prepared query under PlannerOptions.CollectRosters and read here after
+// it, so the check runs on both planner modes alike and reads nothing of the
+// execution. A plan carries a roster only when a source the executor routes
+// to refuses, so a plan with none has no source to ask. The sources are
+// asked in the order the query first names an attribute on each, then the
+// rule set's others in the order its bodies do, and the first refusal is
 // returned.
 func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan *planner.RealizedPlan) error {
-	sources := []query.Symbol{datalog.SymDollar}
-	for _, input := range plan.Query.In {
-		if source, ok := input.(query.DatabaseInput); ok && source.Name != datalog.SymDollar {
-			sources = append(sources, source.Name)
-		}
+	if plan.Rosters == nil {
+		return nil
 	}
-	for _, source := range sources {
+	for _, source := range plan.Rosters.Sources() {
 		if !vocabulary.RefusesUnknownAttributes(source) {
 			continue
 		}
@@ -145,6 +148,17 @@ func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan 
 			if err := vocabulary.UnknownAttributes(source, ctx.rules.SourceAttributes(source)); err != nil {
 				return err
 			}
+		}
+	}
+	if ctx.rules == nil {
+		return nil
+	}
+	for _, source := range ctx.rules.Sources() {
+		if query.ContainsSymbol(plan.Rosters.Sources(), source) || !vocabulary.RefusesUnknownAttributes(source) {
+			continue
+		}
+		if err := vocabulary.UnknownAttributes(source, ctx.rules.SourceAttributes(source)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -652,7 +666,7 @@ func (e *DefaultQueryExecutor) executePhase(ctx *Context, phaseNumber int, phase
 		return nil, fmt.Errorf("phase %d failed: %w", phaseNumber, err)
 	}
 	if len(phase.Query.Find) == 0 {
-		result, err = existenceVerdict(result, e.executor.unit)
+		result, err = existenceVerdict(result, nil, e.executor.unit)
 		if err != nil {
 			return nil, fmt.Errorf("phase %d failed: %w", phaseNumber, err)
 		}

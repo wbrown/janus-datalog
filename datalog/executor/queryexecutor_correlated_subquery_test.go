@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -44,11 +45,11 @@ func TestQueryExecutorCorrelatedSubquery(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			opts := mode.zeroPlannerOptions()
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			opts := mode.ZeroPlannerOptions()
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			result, err := exec.Execute(q)
 

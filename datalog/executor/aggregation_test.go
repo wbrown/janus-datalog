@@ -219,7 +219,7 @@ func TestStreamingAggregationEmitsMaterializedAnnotation(t *testing.T) {
 	for i := range tuples {
 		tuples[i] = Tuple{int64(i)}
 	}
-	base := NewMaterializedRelationFromSet([]query.Symbol{value}, tuples, ExecutorOptions{})
+	base := NewMaterializedRelationFromSet([]query.Symbol{value}, tuples, ExecutorOptions{}, RelationProperties{})
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),
 		base.Iterator(),
@@ -273,7 +273,7 @@ func TestAggregationRejectsMissingGroupSymbolWithoutPanic(t *testing.T) {
 	}
 	source := NewStreamingRelationWithOptions(
 		[]query.Symbol{order},
-		NewMaterializedRelationFromSet([]query.Symbol{order}, tuples, ExecutorOptions{}).Iterator(),
+		NewMaterializedRelationFromSet([]query.Symbol{order}, tuples, ExecutorOptions{}, RelationProperties{}).Iterator(),
 		ExecutorOptions{EnableStreamingAggregation: true},
 	)
 

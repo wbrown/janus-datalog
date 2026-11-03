@@ -25,7 +25,7 @@ func parseFunction(fn string, args []query.PatternElement) (query.Function, erro
 		return parseGroundFunction(args)
 	case "identity":
 		return parseIdentity(args)
-	// Database functions - require $ and database access
+	// Database functions - read the source their first argument names, $ or $name
 	case "get-else":
 		return parseGetElse(args)
 	case "missing?":
@@ -367,9 +367,6 @@ func extractConstantValue(arg query.PatternElement) (interface{}, error) {
 		return a.Value, nil
 	case query.VectorConstant:
 		return a.Values, nil
-	case query.Variable:
-		// Variables are not allowed as default values
-		return nil, fmt.Errorf("expected constant, got variable %s", a.Name)
 	default:
 		return nil, fmt.Errorf("expected constant, got %T", arg)
 	}

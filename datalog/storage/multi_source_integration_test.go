@@ -35,7 +35,7 @@ func TestMultiSource_MemorySourceWithDatabase(t *testing.T) {
 				{E: datalog.NewIdentity("cache:2"), A: datalog.NewKeyword(":cache/user-id"), V: "uid-2"},
 				{E: datalog.NewIdentity("cache:2"), A: datalog.NewKeyword(":cache/score"), V: int64(82)},
 			}
-			cache := executor.NewMemoryPatternMatcher(cacheDatoms)
+			cache := factsDatabase(t, cacheDatoms)
 
 			// Query joining database and memory source
 			results, err := executor.CollectTuples(db.Query(
@@ -83,7 +83,7 @@ func TestMultiSource_MemorySourceOnly(t *testing.T) {
 				{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword(":item/name"), V: "Shield"},
 				{E: datalog.NewIdentity("e3"), A: datalog.NewKeyword(":item/name"), V: "Potion"},
 			}
-			items := executor.NewMemoryPatternMatcher(facts)
+			items := factsDatabase(t, facts)
 
 			results, err := executor.CollectTuples(db.Query(
 				`[:find ?name
@@ -129,7 +129,7 @@ func TestMultiSource_SliceSourceWithQueryBuilder(t *testing.T) {
 				{Key: "character-eval", DependsOn: []string{"character"}},
 			}
 
-			ruleSource := executor.NewSliceSource(rules, executor.AttributeSchema[Rule]{
+			ruleSource := sliceDatabase(t, rules, AttributeSchema[Rule]{
 				datalog.NewKeyword(":rule/key"):        func(r Rule) any { return r.Key },
 				datalog.NewKeyword(":rule/depends-on"): func(r Rule) any { return r.DependsOn },
 			})
@@ -187,7 +187,7 @@ func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
 				{Key: "character-eval", DependsOn: []string{"character"}},
 			}
 
-			ruleSource := executor.NewSliceSource(rules, executor.AttributeSchema[Rule]{
+			ruleSource := sliceDatabase(t, rules, AttributeSchema[Rule]{
 				datalog.NewKeyword(":rule/key"):        func(r Rule) any { return r.Key },
 				datalog.NewKeyword(":rule/depends-on"): func(r Rule) any { return r.DependsOn },
 			})

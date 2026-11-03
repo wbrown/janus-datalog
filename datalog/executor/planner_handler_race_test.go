@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"sync"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
@@ -30,10 +31,8 @@ import (
 // scrambled (some see zero, some see several). Run under -race to additionally
 // catch the data race directly.
 func TestPlannerHandler_ConcurrentAnnotatedQueriesIsolated(t *testing.T) {
-	// Planning runs regardless of matcher contents; an empty matcher is enough.
-	// Shared across goroutines, so the planners still contend on whatever the
-	// matcher and its options hold.
-	matcher := NewMemoryPatternMatcher(nil)
+	// The executors share one empty database as their source.
+	matcher := factsDatabase(t, nil)
 
 	q, err := parser.ParseQuery(`[:find ?e ?v :where [?e :x/v ?v]]`)
 	if err != nil {
@@ -61,12 +60,10 @@ func TestPlannerHandler_ConcurrentAnnotatedQueriesIsolated(t *testing.T) {
 					}
 				},
 			})
-			rel, err := exec.Execute(q)
-			if err != nil {
+			if _, err := CollectTuples(exec.Execute(q)); err != nil {
 				errs[idx] = err
 				return
 			}
-			_ = collectTuples(rel)
 		}(i)
 	}
 	wg.Wait()

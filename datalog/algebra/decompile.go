@@ -154,19 +154,23 @@ func decompileJoin(n *Node) ([]query.Clause, error) {
 
 // decompileLeftOuterJoin emits left clauses followed by an OR-fallback.
 //
-// Per ALGEBRA.md Rule 1, a LeftOuterJoin is produced by decorrelation:
+// Decorrelation (ALGEBRA.md Rules 1 and 4) and the get-else rewrite (Rule 5)
+// produce a LeftOuterJoin, decorrelation as:
 //
 //	LeftOuterJoin(on=x, defaults=D) [R, Aggregate(x, F)(S)]
 //
 // Decompiles to:
 //
 //	<R clauses>
-//	(or <Aggregate → SubqueryPattern>
+//	(or-default-join [[x] <outputs>]
+//	    <Aggregate → SubqueryPattern>
 //	    <ground D>)
 //
-// The SubqueryPattern runs once (uncorrelated). The OR-fallback evaluates
-// per outer tuple: filterBranchToOuterTuple matches on shared symbols,
-// non-matching tuples get defaults.
+// The required run is the join symbols, and the outputs are the right
+// side's other symbols. The default branch is the grounds, or the get-else
+// a get-else rewrite carries (DefaultGetElse), whose default's variables the
+// required run gains. The SubqueryPattern runs once (uncorrelated), and an
+// outer tuple it answers nothing for takes the defaults.
 //
 // LeftOuterJoin ALWAYS has defaults (the decorrelation transform produces
 // InnerJoin when there are no defaults).

@@ -52,14 +52,27 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 // the environment into the operator, with the per-tuple bindings map as
 // operator-internal scratch.
 //
-// Eager: the scan completes before returning, so every error — predicate
-// evaluation, source iteration, close — is knowable synchronously and
-// returns in-band. The deferred-error convention is exclusively for
+// A filter whose result can fail as it is read, the predicate failing on a
+// value of the relation (canFailOnAValueOver) or the relation evaluating as
+// it is read, is a stream carrying the evaluating mark. Its failure is the
+// stream's error, raised where a reader that sees every other clause reads it
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract).
+//
+// Any other filter is eager: the scan completes before returning, so every
+// error — source iteration, close — is knowable synchronously and returns
+// in-band. The deferred-error convention is exclusively for
 // lazily-discovered errors on streaming relations; deferring a known error
 // here left it to consumers that inspect relations structurally (emptiness
 // branches) and laundered it into a silent empty
 // (BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY).
 func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, env Relation) (result Relation, resultErr error) {
+	if properties := rel.Properties(); properties.Evaluates || canFailOnAValueOver(pred, properties.Identities) {
+		properties = properties.clone()
+		properties.Evaluates = true
+		filter := NewPredicateFilterIterator(rel.Iterator(), rel.Symbols(), pred, lookup, env)
+		return NewStreamingRelationWithProperties(rel.Symbols(), filter, rel.Options(), properties), nil
+	}
+
 	symbols := rel.Symbols()
 	needsCopy := rel.RequiresCopy()
 	envSymbols, envTuple := environmentTuple(env)
@@ -155,6 +168,11 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			properties = properties.addSymbol(symbol)
 		}
 	}
+	// The stream evaluates the expression as it is pulled, which can fail on
+	// a value unless the expression fails on no value over rel's identity
+	// symbols (expressionFailsOnNoValueOver).
+	properties = properties.clone()
+	properties.Evaluates = properties.Evaluates || !expressionFailsOnNoValueOver(expr, rel.Properties().Identities)
 	return NewStreamingRelationWithProperties(evaluator.Symbols(), evaluator, rel.Options(), properties)
 }
 

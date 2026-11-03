@@ -150,6 +150,10 @@ func NewOrFallbackRelation(
 		symbols,
 		shortCircuit && branchesAtMostOne,
 	)
+	// The branches run per window as the result is pulled.
+	for _, branch := range branches {
+		properties.Evaluates = properties.Evaluates || canFailOnAValue(branch, ctx.Rules())
+	}
 	deduplicate := len(branches) > 1
 	if shortCircuit {
 		deduplicate = len(outerRel.Properties().Keys) == 0
@@ -974,7 +978,10 @@ func (it *OrFallbackIterator) answer() bool {
 		if !advanced {
 			continue
 		}
-		if it.seen != nil {
+		// An output of a failed window tuple holds no value where its failing
+		// evaluation would have filled one, and it is never emitted: Next ends
+		// the iterator with the tuple's failure. So it is not deduplicated.
+		if it.seen != nil && it.reader.failureAt(it.answering) == nil {
 			_, hash, held := it.seen.Find(it.currentTuple)
 			if held {
 				continue
@@ -993,7 +1000,7 @@ func (it *OrFallbackIterator) answer() bool {
 // when the window is answered.
 func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 	for it.windowPos < len(it.reader.window) {
-		outerTuple := it.reader.window[it.windowPos]
+		outerTuple := it.tupleToAnswer()
 		for it.unionBranchIdx < len(it.branches) {
 			branchIdx := it.unionBranchIdx
 			it.unionBranchIdx++
@@ -1020,7 +1027,7 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 // see it. Returns false when the window is answered.
 func (it *OrFallbackIterator) nextShortCircuit() bool {
 	for it.windowPos < len(it.reader.window) {
-		outerTuple := it.reader.window[it.windowPos]
+		outerTuple := it.tupleToAnswer()
 		it.windowPos++
 		for branchIdx := range it.branches {
 			cb, built := it.branchCache[branchIdx]

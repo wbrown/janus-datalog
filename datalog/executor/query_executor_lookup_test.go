@@ -52,15 +52,11 @@ func TestExecutor_DatabaseFunctionReadsTheSourceItNames(t *testing.T) {
 		`[:find ?v :in $ $src :where [$src ?e :t/name "one"] [(get-else $ ?e :t/a "none") ?v]]`))
 }
 
-// An executor whose matcher cannot look up an entity's attribute refuses a
-// database function, naming it, and never answers it as absent.
-func TestExecutor_DatabaseFunctionOverAMatcherThatCannotLookUpIsAnError(t *testing.T) {
-	exec := executor.NewExecutor(executor.NewSliceSource([]string{"one"}, executor.AttributeSchema[string]{
+// A database function over a slice source answers from the slice's facts:
+// the slice's entity holds no :t/a, so missing? holds of it.
+func TestExecutor_DatabaseFunctionOverASliceSourceAnswersItsFacts(t *testing.T) {
+	exec := executor.NewExecutor(sliceDatabase(t, []string{"one"}, storage.AttributeSchema[string]{
 		datalog.NewKeyword(":t/name"): func(name string) any { return name },
 	}), nil)
-	q, err := parser.ParseQuery(`[:find ?m :where [?e :t/name "one"] [(missing? $ ?e :t/a) ?m]]`)
-	require.NoError(t, err)
-	_, err = executor.CollectTuples(exec.Execute(q))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing?")
+	require.Equal(t, true, executeOne(t, exec, `[:find ?m :where [?e :t/name "one"] [(missing? $ ?e :t/a) ?m]]`))
 }

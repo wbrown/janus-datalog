@@ -17,7 +17,7 @@ func TestHashJoin_AKeySymbolASideLacksIsAnError(t *testing.T) {
 	a, b, c, z := datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?z")
 	left := NewMaterializedRelation([]query.Symbol{a, b}, []Tuple{{int64(1), int64(2)}})
 	right := NewMaterializedRelation([]query.Symbol{a, c}, []Tuple{{int64(1), int64(3)}})
-	exec := NewExecutor(NewMemoryPatternMatcher(nil), nil)
+	exec := NewExecutor(nil, nil)
 	joins := []struct {
 		name string
 		join func(syms []query.Symbol) Relation

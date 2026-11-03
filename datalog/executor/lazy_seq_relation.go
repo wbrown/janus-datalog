@@ -119,6 +119,11 @@ func (r *LazySeqRelation) Project(symbols []query.Symbol) (Relation, error) {
 	if len(symbols) == 0 {
 		return nil, fmt.Errorf("cannot project to zero symbols")
 	}
+	// The identity projection, the relation's own symbols in its own order,
+	// is the relation (docs/proposals/BINDING_MATCH_PROOF.md, T1).
+	if symbolsMatch(r.symbols, symbols) {
+		return r, nil
+	}
 	for _, symbol := range symbols {
 		if SymbolIndex(r, symbol) < 0 {
 			return nil, fmt.Errorf("cannot project: symbol %s not found in relation (has symbols: %v)", symbol, r.symbols)
@@ -136,20 +141,33 @@ func (r *LazySeqRelation) ProjectFromPattern(pattern *query.DataPattern) Relatio
 	return r.realizeAll().ProjectFromPattern(pattern)
 }
 
+// FilterWithPredicate is the relation's tuples the predicate admits, a stream
+// that evaluates the predicate as it is pulled. It evaluates as the relation
+// does, and also when the predicate can fail on a value of the relation
+// (canFailOnAValueOver).
 func (r *LazySeqRelation) FilterWithPredicate(pred query.Predicate) Relation {
+	properties := r.properties.clone()
+	properties.Evaluates = properties.Evaluates || canFailOnAValueOver(pred, r.properties.Identities)
 	return r.fromIterator(
-		NewPredicateFilterIterator(r.Iterator(), r.symbols, pred),
+		NewPredicateFilterIterator(r.Iterator(), r.symbols, pred, nil, nil),
 		r.symbols,
-		r.properties,
+		properties,
 	)
 }
 
+// EvaluateFunction is the relation's tuples each extended with the
+// function's value, a stream that evaluates the function as it is pulled. It
+// evaluates as the relation does, and also when the function can fail on a
+// value of the relation (canFailOnAValueOver).
 func (r *LazySeqRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
-	evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, &query.Expression{Function: fn, Binding: outputSymbol}, nil, nil)
+	expr := &query.Expression{Function: fn, Binding: outputSymbol}
+	evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, expr, nil, nil)
+	properties := r.properties.addSymbol(outputSymbol)
+	properties.Evaluates = properties.Evaluates || canFailOnAValueOver(expr, r.properties.Identities)
 	return r.fromIterator(
 		evalIter,
 		evalIter.Symbols(),
-		r.properties.addSymbol(outputSymbol),
+		properties,
 	)
 }
 

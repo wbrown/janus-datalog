@@ -8,16 +8,19 @@ import (
 
 // Rosters is what a prepared query names on each source, collected once by
 // CollectRosters and held with the query's plan, which the vocabulary check
-// reads: per source, $ among them, the keyword constants written in the
-// attribute position of the data patterns on it, at any depth of header
-// forms and subquery bodies, an inner query's under the sources its call
-// passes, and on $ the attributes of the :find pull patterns and of
-// get-else, get-some and missing?. A keyword that reaches an attribute
-// position through a variable is a value, whatever binds the variable, and
-// is named on no source. Keywords and symbols are interned, so each set is
-// keyed on the value itself.
+// reads. Per source, $ among them, it holds the keyword constants written in
+// the attribute position of the data patterns on the source and the
+// attributes of the get-else, get-some and missing? that read it, at any
+// depth of header forms and subquery bodies, an inner query's under the
+// sources its call passes, and on $ the attributes of the :find pull
+// patterns. It holds the sources in the order the query first names an
+// attribute on each. A keyword that reaches an attribute position through a
+// variable is a value, whatever binds the variable, and is named on no
+// source. Keywords and symbols are interned, so each set is keyed on the
+// value itself.
 type Rosters struct {
 	sources map[Symbol]*sourceRoster
+	order   []Symbol
 }
 
 // CollectRosters walks a prepared query once and returns what it names. The
@@ -32,18 +35,24 @@ func CollectRosters(q *Query) *Rosters {
 
 // SourceAttributes returns every attribute the query names on the source,
 // in order of first appearance and each once: on $, the attributes of each
-// pull pattern in :find, then, in clause order, the keyword constant in the
-// attribute position of each data pattern whose Source is nil or $ and the
-// attributes of get-else, get-some and missing? as an expression or as a
-// predicate; on a named source, the keyword constant in the attribute
-// position of each data pattern on it. A pattern inside a subquery body is
-// read under the source the call passes at its inner source's place. A
-// source no pattern names has no roster.
+// pull pattern in :find first, then, in clause order, the keyword constant in
+// the attribute position of each data pattern on the source, a pattern whose
+// Source is nil reading $, and the attributes of each get-else, get-some and
+// missing? that reads the source, as an expression or as a predicate. A
+// pattern or function inside a subquery body is read under the source the
+// call passes at its inner source's place. A source the query names no
+// attribute on has no roster.
 func (r *Rosters) SourceAttributes(source Symbol) []datalog.Keyword {
 	if on := r.sources[source]; on != nil {
 		return on.order
 	}
 	return nil
+}
+
+// Sources returns every source the query names an attribute on, in order of
+// first appearance and each once.
+func (r *Rosters) Sources() []Symbol {
+	return r.order
 }
 
 // PullPatternAttributes returns every attribute a pull pattern names, through
@@ -65,12 +74,14 @@ func newRosters() *Rosters {
 	return &Rosters{sources: map[Symbol]*sourceRoster{}}
 }
 
-// add records an attribute named on a source.
+// add records an attribute named on a source, and the source the first time
+// the query names an attribute on it.
 func (r *Rosters) add(source Symbol, attr datalog.Keyword) {
 	on := r.sources[source]
 	if on == nil {
 		on = &sourceRoster{seen: map[datalog.Keyword]bool{}}
 		r.sources[source] = on
+		r.order = append(r.order, source)
 	}
 	if on.seen[attr] {
 		return

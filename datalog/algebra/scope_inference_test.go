@@ -244,7 +244,7 @@ func TestDecorrelation_CompilesTheInnerQueryUnderItsCallsRuleSet(t *testing.T) {
 
 	root, err := Compile(q, rules)
 	require.NoError(t, err)
-	optimized, err := NewOptimizer(DefaultPasses(nil)...).Optimize(root)
+	optimized, err := NewOptimizer(DefaultPasses(nil, everySourceAnswers)...).Optimize(root)
 	require.NoError(t, err)
 	clauses, err := Decompile(optimized)
 	require.NoError(t, err)
@@ -437,7 +437,7 @@ func TestCompile_NotJoinBodyWithASubqueryOverItsHeader(t *testing.T) {
 			require.NoError(t, err)
 			requireLateralJoinOutputs(t, root)
 
-			optimized, err := NewOptimizer(DefaultPasses(nil)...).Optimize(root)
+			optimized, err := NewOptimizer(DefaultPasses(nil, everySourceAnswers)...).Optimize(root)
 			require.NoError(t, err)
 			clauses, err := Decompile(optimized)
 			require.NoError(t, err)

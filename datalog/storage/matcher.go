@@ -633,26 +633,24 @@ func (m *PatternMatcher) valuesEqual(v1, v2 interface{}) bool {
 	return datalog.ValuesEqual(v1, v2)
 }
 
-// LookupAttribute retrieves the value of an attribute for an entity.
-// This implements the query.EntityLookup interface for database functions
-// like get-else, missing?, and get-some.
-//
-// Returns (value, true) if the attribute exists, (nil, false) otherwise.
-// For cardinality-one, returns the current value (highest Tx via LWW).
-// For cardinality-many, returns one of the current set members.
-// CanFuseAttributeFetch reports whether a same-entity fetch of attr can be
-// fused into a per-tuple LookupAttribute binding. True only when the
-// attribute is declared CardinalityOne in the schema AND the matcher reads
-// the current view — the two conditions under which LookupAttribute returns
-// the single value a matched pattern would. Returns false for schemaless,
-// CardinalityMany/Vector, or temporal matchers. The matcher is one source and
+// CanFuseAttributeFetch reports whether a match of attr on the matcher
+// answers, per entity, the one value LookupAttribute answers: true in the
+// latest view for an attribute the matcher resolves cardinality-one, whether
+// its schema defines it so or holds no definition of it, since
+// LookupAttribute and CRDTResolvingIterator both resolve an attribute with no
+// definition by LWW. False for a cardinality-many attribute, whose match
+// answers each member as a tuple of its own, for a cardinality-vector
+// attribute, and on a history or as-of matcher. The matcher is one source and
 // answers for itself under any name, so the source is not read.
 func (m *PatternMatcher) CanFuseAttributeFetch(_ query.Symbol, attr datalog.Keyword) bool {
-	if m.schema == nil || m.mode != latestMode {
+	if m.mode != latestMode {
 		return false
 	}
+	if m.schema == nil {
+		return true
+	}
 	def := m.schema.GetAttribute(attr)
-	return def != nil && def.Cardinality == schema.CardinalityOne
+	return def == nil || def.Cardinality == schema.CardinalityOne
 }
 
 // LookupSource implements executor.EntityLookupMatcher: the matcher is one
@@ -661,6 +659,14 @@ func (m *PatternMatcher) LookupSource(_ query.Symbol) (executor.EntityLookupMatc
 	return m, nil
 }
 
+// LookupAttribute answers an entity's value of an attribute, the lookup the
+// database functions get-else, missing? and get-some read. It answers
+// (value, true) when the attribute holds a value and (nil, false) otherwise.
+// A cardinality-one attribute, and one the schema holds no definition of,
+// answers its current value by LWW. A cardinality-many attribute answers its
+// current members as one value, in no fixed order. A cardinality-vector
+// attribute answers its vector, typed by the schema's value type, once the
+// vector has been written, an emptied vector included.
 func (m *PatternMatcher) LookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,

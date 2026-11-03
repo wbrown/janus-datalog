@@ -24,7 +24,7 @@ Run from the **repository root**. Examples that load shared data (`examples/data
 | 8 | `not_or_clauses.go` | not, not-join, or, or-join, or-default | 2 |
 | 9 | `pull_api.go` | PullInto, struct tags, nested refs, convenience getters | 3 |
 | 10 | `temporal_queries.go` | AsOf, History, ElementID, time travel | 1 |
-| 11 | `multi_source.go` | SliceSource, NewMemorySource, cross-source joins | 2 |
+| 11 | `multi_source.go` | Slice sources, memory databases, cross-source joins | 2 |
 | 12 | `annotations.go` | WithVerbose, custom annotation handler, event tracing | 1 |
 | 13 | `storage_internals.go` | Explain, Analyze, plan cache, direct store access | 4 |
 | 14 | `export_import.go` | Export/Import EDN, compressed export, round-trip | 1 |

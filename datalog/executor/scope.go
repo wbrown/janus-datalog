@@ -120,14 +120,13 @@ func (e *DefaultQueryExecutor) materialized(rel Relation) (*MaterializedRelation
 	return newMaterializedRelationFromSet(rel.Symbols(), tuples, e.options, rel.Properties()), nil
 }
 
-// hasTuple reports whether a relation yields a tuple: by its size when the
-// relation knows it, otherwise by one pull of its iterator. An iterator
-// filling the relation's replay cache is read to its end instead, since a
-// cache closed before its end leaves the relation unreadable.
+// hasTuple reports whether a relation yields a tuple, and the failure it
+// keeps, by one pull of its iterator: the iterator's Error answers the
+// failure a held relation carries, a replayed cache's and a fold's. An
+// iterator filling the relation's replay cache is read to its end instead,
+// since a cache closed before its end leaves the relation unreadable. Each
+// caller is the relation's last reader, so the pull is its one read.
 func hasTuple(rel Relation) (bool, error) {
-	if size := rel.Size(); size >= 0 {
-		return size > 0, nil
-	}
 	it := rel.Iterator()
 	has := it.Next()
 	completeCache(it)
@@ -314,6 +313,9 @@ func (e *DefaultQueryExecutor) executeNotJoinClause(ctx *Context, clause *query.
 	}
 	it := &notJoinIterator{windowedIterator: newWindowedIterator(e, ctx, f, plans, e.options)}
 	it.policy = formPolicy{answer: it.answer}
-	result := NewStreamingRelationWithProperties(subject.Symbols(), it, e.options, subject.Properties())
+	// The body runs per window as the result is pulled.
+	properties := subject.Properties().clone()
+	properties.Evaluates = properties.Evaluates || canFailOnAValue(clause.Clauses, ctx.Rules())
+	result := NewStreamingRelationWithProperties(subject.Symbols(), it, e.options, properties)
 	return replaceConsumedGroups(groups, consumed, result, e.options.Handler), nil
 }

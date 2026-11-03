@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -99,12 +100,12 @@ func TestParallelDecorrelationSymbolOrder(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			// Test with PARALLEL decorrelation
 			t.Run("ParallelDecorrelation", func(t *testing.T) {
-				matcher := NewMemoryPatternMatcher(datoms)
-				exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+				matcher := factsDatabase(t, datoms)
+				exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 				result, err := exec.Execute(parsedQuery)
 				if err != nil {
@@ -175,8 +176,8 @@ func TestParallelDecorrelationSymbolOrder(t *testing.T) {
 
 			// Test with SEQUENTIAL decorrelation (should work)
 			t.Run("SequentialDecorrelation", func(t *testing.T) {
-				matcher := NewMemoryPatternMatcher(datoms)
-				exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+				matcher := factsDatabase(t, datoms)
+				exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 				result, err := exec.Execute(parsedQuery)
 				if err != nil {

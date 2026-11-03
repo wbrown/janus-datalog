@@ -442,8 +442,8 @@ q := qb.Query().
 
 **Source types:**
 - `*storage.Database` — cross-database joins
-- `executor.NewMemoryPatternMatcher(datoms)` — in-memory facts
-- `executor.NewSliceSource(items, schema)` — Go slices via attribute schema
+- `db.OpenMemory()` — in-memory facts, written through a transaction
+- `db.NewSliceSource(items, schema)` — a Go slice's facts via an attribute schema, as a memory database
 
 See [docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md) for the complete reference.
 

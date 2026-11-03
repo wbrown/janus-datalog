@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
@@ -29,7 +30,7 @@ func BenchmarkParallelDecorrelation(b *testing.B) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(b, datoms)
 
 	// Query with 2 subqueries that decorrelate into 2 merged queries
 	queryStr := `[:find ?name ?max-price ?count
@@ -53,12 +54,12 @@ func BenchmarkParallelDecorrelation(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		result, err := exec.Execute(q)
+		tuples, err := CollectTuples(exec.Execute(q))
 		if err != nil {
 			b.Fatalf("Execution failed: %v", err)
 		}
-		if result.Size() != 100 {
-			b.Fatalf("Expected 100 results, got %d", result.Size())
+		if len(tuples) != 100 {
+			b.Fatalf("Expected 100 results, got %d", len(tuples))
 		}
 	}
 }
@@ -108,7 +109,7 @@ func BenchmarkParallelOHLCDecorrelation(b *testing.B) {
 		datalog.Datom{E: symbol, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	)
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(b, datoms)
 
 	// OHLC query with 4 subqueries (decorrelates into 2 filter groups)
 	queryStr := `[:find ?datetime ?open-price ?hour-high ?hour-low ?close-price ?total-volume

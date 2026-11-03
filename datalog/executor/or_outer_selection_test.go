@@ -2,12 +2,10 @@ package executor
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -21,7 +19,7 @@ func TestFindOuterRelationLeavesSingleStreamLazy(t *testing.T) {
 		[]query.Symbol{entity},
 		base.Iterator(),
 	)
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 
 	selected, consumed := exec.findOuterRelation(
 		[]query.Symbol{entity},
@@ -42,7 +40,7 @@ func TestFindOuterRelationCombinesTwoStreamsSharingNoSymbolAsTheirProduct(t *tes
 	rightBase := NewMaterializedRelation([]query.Symbol{y}, []Tuple{{int64(3)}})
 	left := NewStreamingRelation([]query.Symbol{x}, leftBase.Iterator())
 	right := NewStreamingRelation([]query.Symbol{y}, rightBase.Iterator())
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 
 	selected, consumed := exec.findOuterRelation(
 		[]query.Symbol{x, y},
@@ -107,7 +105,7 @@ func TestOrFallbackSurfacesTheSubjectsIteratorAndCloseErrors(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			relation, err := NewOrFallbackRelation(
-				newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
+				newQueryExecutor(nil, nil, ExecutorOptions{}),
 				NewContext(),
 				[]query.Symbol{entity},
 				[]query.Symbol{value},
@@ -128,94 +126,6 @@ func TestOrFallbackSurfacesTheSubjectsIteratorAndCloseErrors(t *testing.T) {
 				err = closeErr
 			}
 			require.EqualError(t, err, testCase.expected.Error())
-		})
-	}
-}
-
-// With the EA arm serving the branch, a subject's iteration error and its
-// close error are still the result's: the arm reads the window's run, and
-// the subject is read by the window reader. The arm is reached as a query
-// reaches it, through the fallback's prefetch trigger under
-// EnableEntityPrefetch: under a cap of 128 the subject's seventh window
-// holds 64 entities, the first above the threshold, so it is prefetched and
-// every later window's branch is built from the cache.
-func TestOrFallbackSurfacesTheSubjectsErrorsUnderTheEAArm(t *testing.T) {
-	// Under a cap of 128 a subject of 300 is read in windows of 1, 2, 4, 8,
-	// 16, 32, 64, 128 and 45 tuples.
-	const subjectSize = 300
-	const seventhWindow, eighthWindow, ninthWindow = 64, 128, 45
-	entitySymbol := datalog.NewSymbol("?entity")
-	valueSymbol := datalog.NewSymbol("?value")
-	attr := datalog.NewKeyword(":item/value")
-	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
-	var datoms []datalog.Datom
-	subject := make([]Tuple, 0, subjectSize)
-	for i := 0; i < subjectSize; i++ {
-		entity := datalog.NewIdentity(fmt.Sprintf("ea-cache-outer-error:item%d", i))
-		datoms = append(datoms, datalog.Datom{E: entity, A: attr, V: int64(i), Tx: tx})
-		subject = append(subject, Tuple{entity})
-	}
-	base := NewMaterializedRelation([]query.Symbol{entitySymbol}, subject)
-	branch := []query.Clause{&query.DataPattern{Elements: []query.PatternElement{
-		query.Variable{Name: entitySymbol},
-		query.Constant{Value: attr},
-		query.Variable{Name: valueSymbol},
-	}}}
-
-	testCases := []struct {
-		name     string
-		outer    Relation
-		expected error
-		lookups  int // the entities of the windows the arm built before the failure
-	}{
-		{
-			name:     "iteration",
-			outer:    failingRelation{Relation: base, failAfter: 200},
-			expected: errInjectedIterator,
-			lookups:  seventhWindow, // the eighth window fails while it is read
-		},
-		{
-			name:     "close",
-			outer:    failingRelation{Relation: base, failAfter: 1000, closeErr: errors.New("EA cache outer close failure")},
-			expected: errors.New("EA cache outer close failure"),
-			lookups:  seventhWindow + eighthWindow + ninthWindow,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			var triggers, lookups int
-			handler := func(e annotations.Event) {
-				switch e.Name {
-				case annotations.PrefetchTrigger:
-					triggers++
-				case annotations.StorageResolveComplete:
-					lookups++
-				}
-			}
-			matcher := NewIndexedMemoryMatcher(datoms).WithSchema(cardinalityOneSchema(t, ":item/value")).WithOptions(ExecutorOptions{Handler: handler})
-			options := ExecutorOptions{EnableEntityPrefetch: true, ScopeWindowCap: 128, Handler: handler}
-			relation, err := NewOrFallbackRelation(
-				newQueryExecutor(matcher, nil, options),
-				NewContext(),
-				[]query.Symbol{entitySymbol},
-				[]query.Symbol{valueSymbol},
-				[][]query.Clause{branch},
-				testCase.outer,
-				options,
-				true,
-			)
-			require.NoError(t, err)
-			iterator := relation.Iterator()
-			for iterator.Next() {
-			}
-			err = iterator.Error()
-			if closeErr := iterator.Close(); err == nil {
-				err = closeErr
-			}
-			require.EqualError(t, err, testCase.expected.Error())
-			require.NotZero(t, triggers, "the trigger ran before the failure, so the arm served the branch")
-			require.Equal(t, testCase.lookups, lookups, "the arm built every window after the trigger from the cache")
 		})
 	}
 }

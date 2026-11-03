@@ -35,8 +35,11 @@ func NewClauseBasedPlanner(stats *Statistics, options PlannerOptions) *ClauseBas
 // Plan creates an optimized query plan under the caller's bindings. Every
 // plan is served from the cache and stored in it, under the query, the rule
 // set, the options, the symbols bound when the plan is made and the
-// invocations held, so a plan is made once per distinct text, rule set and
-// bound set. Each plan made is reported through the handler as
+// invocations held. The cache serves a plan only where the planner's sources
+// answer each question the plan's get-else rewrites asked as they answered
+// when it was made. So a plan is made once per distinct text, rule set and
+// bound set, and again where a source's answer has changed. Each plan made is
+// reported through the handler as
 // PlannerPlanMade, with the query, the bound symbols, the held set and
 // planning's time; a plan the cache serves is reported not at all. The
 // handler (may be nil) is request-scoped annotation state, threaded through
@@ -134,9 +137,12 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings query.Bin
 	clauses := q.Where
 
 	// Step 1: Optimize Datalog through the algebra IR, then return to Datalog
-	// before physical phase planning.
+	// before physical phase planning. The get-else scan rewrite asks the
+	// sources through this planning call's record, which the plan carries.
+	asked := &askedAnswers{options: p.options}
 	if p.options.EnableAlgebraOptimizer {
 		options := p.options
+		options.MatchAnswersLookup = asked.answer
 		if len(initialBindings) > 0 {
 			options.EnableJoinProjectInsertion = false
 		}
@@ -271,7 +277,12 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings query.Bin
 		return nil, err
 	}
 
-	plan := &RealizedPlan{Query: q, Phases: realizedPhases, Evaluations: evaluations}
+	plan := &RealizedPlan{
+		Query:         q,
+		Phases:        realizedPhases,
+		Evaluations:   evaluations,
+		SourceAnswers: append(asked.asked, evaluationAnswers(evaluations)...),
+	}
 	if p.options.CollectRosters {
 		plan.Rosters = query.CollectRosters(q)
 	}

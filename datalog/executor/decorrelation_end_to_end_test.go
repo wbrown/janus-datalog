@@ -1,9 +1,10 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -41,7 +42,7 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 	}
 
 	// Create matcher
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	// Query with two subqueries that should be decorrelated:
 	// - Both have the same correlation signature (?s, ?hour)
@@ -73,10 +74,10 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			// Create executor with decorrelation enabled
-			executor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+			executor := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			// Execute the query
 			result, err := executor.Execute(q)

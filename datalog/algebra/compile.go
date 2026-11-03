@@ -187,9 +187,10 @@ func compileExpression(expr *query.Expression, current *Node) *Node {
 	return mapNode
 }
 
-// compileSubquery produces a LateralJoin (correlated) or Join (uncorrelated).
-// A call passing % carries the rule set % is bound to in scope, so a pass
-// that compiles the inner query compiles it under that rule set.
+// compileSubquery produces a LateralJoin whose correlation variables are the
+// outer variables the call passes, none for an uncorrelated call. A call
+// passing % carries the rule set % is bound to in scope, so a pass that
+// compiles the inner query compiles it under that rule set.
 func compileSubquery(sp *query.SubqueryPattern, current *Node, scope query.Bindings) *Node {
 	bindingSyms := sp.Binding.BoundVariables()
 
@@ -437,9 +438,9 @@ func compileOrFallbackWithVars(oj *query.OrDefaultJoinClause, current *Node, sco
 		// Algebraically: Union(B1(R), B2(R - B1_entities))
 		// Branch 1 sees the full outer relation. Branch 2 sees only tuples
 		// that branch 1 did NOT match (anti-join complement).
-		// compileOrFallbackExclusive returns a Union node (not joined with
-		// current). We join it here so the decompiler emits outer clauses
-		// separately from the OR.
+		// compileOrFallbackExclusive returns a LateralUnion node (not joined
+		// with current). We join it here so the decompiler emits outer
+		// clauses separately from the OR.
 		union, err := compileOrFallbackExclusive(oj, current, branchScope)
 		if err != nil {
 			return nil, err
