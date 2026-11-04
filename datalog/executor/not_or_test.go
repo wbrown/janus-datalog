@@ -2095,10 +2095,9 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 			        :where (not-join [?goal] [?x :event/goal ?goal])
 			               [?goal :entity/name ?name]]`,
 		},
-		// The missing? analogue on a capable matcher is pinned in the storage
-		// package (TestLeadingMissingWithInBoundEntity, PatternMatcher). Its
-		// behavior on THIS lookup-less matcher is pinned separately below —
-		// red — by TestMissingOnLookupLessMatcherFailsLoudly.
+		// The missing? analogue is pinned in the storage package
+		// (TestLeadingMissingWithInBoundEntity), and over a matcher that cannot
+		// look up by TestMissingOnLookupLessMatcherFailsLoudly below.
 	}
 
 	for _, tc := range cases {
@@ -2253,6 +2252,59 @@ func TestMissingOnASliceSourceAnswersAlikeBareAndAnnotated(t *testing.T) {
 				}
 				if len(tuples) != 1 || tuples[0][0] != "beta" {
 					t.Fatalf("missing? holds of slice:1, so its name beta is the one answer; got %v", tuples)
+				}
+			})
+		}
+	}
+}
+
+// TestMissingOnLookupLessMatcherFailsLoudly pins the loud-failure contract
+// for database-function predicates on a matcher without entity lookup
+// (BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md). A custom source
+// looks no attribute up, so [(missing? $ ?goal :goal/flag)] cannot be answered
+// over it and the query fails, where over the same slice's database
+// TestMissingOnASliceSourceAnswersAlikeBareAndAnnotated answers beta. Bare,
+// the executor reads the matcher's capability; annotated, the annotation
+// wrapper does. Both fail, since registering an observer never changes what a
+// query answers.
+func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
+	goalB := datalog.NewIdentity("slice:1")
+	matcher := customSource{sliceDatabase(t, []string{"alpha", "beta"}, storage.AttributeSchema[string]{
+		datalog.NewKeyword(":entity/name"): func(name string) any { return name },
+	})}
+	goalSym := datalog.NewSymbol("?goal")
+
+	q, err := parser.ParseQuery(`[:find ?name
+		:in $ ?goal
+		:where [(missing? $ ?goal :goal/flag)]
+		       [?goal :entity/name ?name]]`)
+	if err != nil {
+		t.Fatalf("failed to parse query: %v", err)
+	}
+
+	handlers := []struct {
+		name    string
+		handler annotations.Handler
+	}{
+		{"bare", nil},
+		{"annotated", func(annotations.Event) {}},
+	}
+
+	for _, mode := range OptimizerModes {
+		for _, tc := range handlers {
+			t.Run(mode.Name()+"/"+tc.name, func(t *testing.T) {
+				opts := mode.PlannerOptions()
+				opts.Handler = tc.handler
+				executor := NewExecutorWithOptions(matcher, nil, opts)
+				inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
+
+				result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
+				var tuples [][]interface{}
+				if err == nil {
+					tuples, err = CollectTuples(result, nil)
+				}
+				if err == nil {
+					t.Fatalf("missing? on a matcher without entity lookup answered %v with no error; want a loud error", tuples)
 				}
 			})
 		}

@@ -315,3 +315,75 @@ func TestALimitOverAProductAnswersAMembersFailurePastItsTuples(t *testing.T) {
 		require.Equal(t, 1, calls, "a limit over a product of members evaluating nothing pulls the tuple it keeps")
 	})
 }
+
+// A join reads both of its sides, so its result evaluates when either side
+// does (joinProperties). A limit over a hash join or a symmetric hash join of
+// an expression's result with a held relation answers a failure the
+// expression raises past the tuple the limit keeps, with the expression's
+// result on either side. So does the existence verdict over each join. The
+// held relation holds a tuple at the failing tuple's key, so the failure is
+// at an assignment where every other clause holds. A limit over a join of
+// sides evaluating nothing keeps the early stop.
+func TestAnEarlyReaderReadsAJoinOfAnEvaluatingSideToItsEnd(t *testing.T) {
+	a, b, c := datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")
+	plus := &query.Expression{
+		Function: &query.ArithmeticFunction{
+			Op:   datalog.SymAdd,
+			Args: []query.Term{query.VariableTerm{Symbol: a}, query.ConstantTerm{Value: int64(1)}},
+		},
+		Binding: b,
+	}
+	// The failing value comes last, past the one tuple an early reader keeps.
+	evaluated := func() Relation {
+		values := NewMaterializedRelation([]query.Symbol{a}, []Tuple{{int64(1)}, {int64(2)}, {"x"}})
+		return evaluateExpressionWithLookup(values, plus, nil, nil)
+	}
+	holding := func() Relation {
+		return NewMaterializedRelation([]query.Symbol{a, c}, []Tuple{{int64(1), int64(7)}, {int64(2), int64(7)}, {"x", int64(7)}})
+	}
+	on := []query.Symbol{a}
+	opts := ExecutorOptions{}
+	unit := NewUnitRelation(opts)
+
+	joins := []struct {
+		name string
+		join func() Relation
+	}{
+		{"a hash join with the expression's result on the left", func() Relation {
+			return HashJoinWithOptions(evaluated(), holding(), on, opts)
+		}},
+		{"a hash join with the expression's result on the right", func() Relation {
+			return HashJoinWithOptions(holding(), evaluated(), on, opts)
+		}},
+		{"a symmetric hash join with the expression's result on the left", func() Relation {
+			return SymmetricHashJoinWithOptions(evaluated(), holding(), on, opts)
+		}},
+		{"a symmetric hash join with the expression's result on the right", func() Relation {
+			return SymmetricHashJoinWithOptions(holding(), evaluated(), on, opts)
+		}},
+	}
+	for _, j := range joins {
+		t.Run("a limit over "+j.name, func(t *testing.T) {
+			_, err := CollectTuples(NewLimitRelation(j.join(), 1), nil)
+			require.ErrorContains(t, err, "is not a number")
+		})
+		t.Run("the existence verdict over "+j.name, func(t *testing.T) {
+			_, err := existenceVerdict([]Relation{j.join()}, nil, unit)
+			require.ErrorContains(t, err, "is not a number")
+		})
+	}
+
+	t.Run("a limit over a join of sides evaluating nothing", func(t *testing.T) {
+		calls := 0
+		tuples := make([]Tuple, 100)
+		for i := range tuples {
+			tuples[i] = Tuple{int64(i)}
+		}
+		stream := NewStreamingRelation([]query.Symbol{a}, &countingSliceIterator{tuples: tuples, nextCalls: &calls})
+		held := NewMaterializedRelation([]query.Symbol{a, c}, []Tuple{{int64(0), int64(7)}})
+		kept, err := CollectTuples(NewLimitRelation(HashJoinWithOptions(stream, held, on, opts), 1), nil)
+		require.NoError(t, err)
+		require.Len(t, kept, 1)
+		require.Equal(t, 1, calls, "a limit over a join of sides evaluating nothing pulls the tuple it keeps")
+	})
+}

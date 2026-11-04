@@ -64,3 +64,28 @@ func TestWrapMatcher_LooksUpAndTypesDefaultsAsTheMatcherItWraps(t *testing.T) {
 	d, one, skills := skillsDatabase(t)
 	requireAnswersLookupsAsTheMatcherItWraps(t, executor.WrapMatcher(d.Matcher(), func(annotations.Event) {}), one, skills)
 }
+
+// requireRefusesLookupsOverAMatcherThatCannotLookUp asserts that wrapped, a
+// wrapper over a custom source whose database holds :t/a for lookup:one,
+// answers an entity lookup with an error and finds nothing, and answers the
+// lookup of its source $ with an error.
+func requireRefusesLookupsOverAMatcherThatCannotLookUp(t *testing.T, wrapped executor.PatternMatcher) {
+	t.Helper()
+	lookup, ok := wrapped.(executor.EntityLookupMatcher)
+	require.True(t, ok, "%T is an entity lookup matcher whatever it wraps", wrapped)
+
+	_, found, err := lookup.LookupAttribute(datalog.NewIdentity("lookup:one"), datalog.NewKeyword(":t/a"))
+	require.Error(t, err, "a lookup over a matcher that cannot look up is an error, never an absence")
+	require.False(t, found)
+
+	_, err = lookup.LookupSource(datalog.SymDollar)
+	require.Error(t, err, "the lookup of $ over a matcher that cannot look up is an error")
+}
+
+// An annotation wrapper over a matcher that cannot look an attribute up
+// answers each lookup with an error, never (nil, false, nil), which reads as
+// the attribute being absent.
+func TestWrapMatcher_LookupOverAMatcherThatCannotLookUpIsAnError(t *testing.T) {
+	requireRefusesLookupsOverAMatcherThatCannotLookUp(t,
+		executor.WrapMatcher(customSource{valueDatabase(t, "held")}, func(annotations.Event) {}))
+}

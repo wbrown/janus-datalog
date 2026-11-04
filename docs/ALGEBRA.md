@@ -350,19 +350,36 @@ R ⋈_LeftOuter(x, defaults) Aggregate(x, F)(S)
 
 **Proof of equivalence:**
 
-The left side executes S(x) once per tuple in R, filtering S to rows where the
-correlation variable matches, then aggregating. The result is one aggregate row
-per R tuple (or defaults if S has no matches for that x value).
+Let G be the variables S's `:find` writes beside its aggregates, none or more.
 
-The right side executes S once for ALL values of x, groups by x, aggregates per
-group. This produces one row per distinct x value. The LeftOuterJoin matches each
-R tuple to its group by x. Tuples in R with no matching group get defaults.
+The left side executes S(x) once per tuple in R, over S's tuples at the x that
+tuple carries, and aggregates them per value of G. For each tuple in R it
+answers one tuple per value of G that S holds at that x, or the defaults where
+S holds none.
 
-Both produce the same output: for each tuple in R, the aggregate of S rows
-matching on x, or defaults if none match.
+The right side executes S once for ALL values of x, and aggregates per value of
+x and G. It answers one tuple per value of x and G that S holds. The
+LeftOuterJoin matches each tuple in R to the tuples of its x, and a tuple in R
+whose x has none takes the defaults.
+
+So both answer, for each tuple in R, the aggregates of S's tuples at its x per
+value of G, or the defaults where S holds none.
+
+Without defaults, the left side answers no tuple for a tuple in R whose x S
+holds no tuple at, since an aggregate over no tuples is no tuple. The rewrite
+then joins R to the Aggregate by an InnerJoin, which answers none for it
+either. `TestACorrelatedAggregateAnswersAValueWithNoTuplesAlikeOnBothOptimizerPaths`
+(storage) pins both forms on both optimizer paths.
 
 **Key insight:** LeftOuterJoin, not InnerJoin. InnerJoin drops R tuples without
 matches. The original LateralJoin with defaults preserves them.
+
+**Where the two sides fail differently:** the right side folds every group of
+S, including the groups no tuple in R reaches. So a fold that fails on a value
+at such a group, a sum or an avg over a value that is no number, fails the
+rewritten query, where the left side answers. The proof shows that the two
+sides answer the same tuples, not that they fail alike
+(`docs/bugs/BUG_OPTIMIZER_PATHS_ANSWER_DIFFERENTLY_WHEN_A_CORRELATED_SUBQUERY_FAILS_ON_A_VALUE.md`).
 
 **Decompilation of the result:**
 
@@ -503,11 +520,18 @@ The right side executes S once for ALL values of x. Since x was a parameter that
 filtered the WHERE clauses (e.g., `[?t :task/root ?s]` with ?s bound), removing
 it from `:in` makes ?s a free variable. The WHERE clauses still reference ?s, so
 the results include ALL ?s values. Adding ?s to `:find` makes it an output relation attribute.
-The LeftOuterJoin matches each R tuple to its S' rows by x. Non-matching R tuples
+The LeftOuterJoin matches each R tuple to its S' tuples by x. Non-matching R tuples
 get defaults.
 
-Both produce the same output: for each tuple in R, the S rows where x matches, or
+Both produce the same output: for each tuple in R, the S tuples where x matches, or
 defaults if none match.
+
+**Where the two sides fail differently:** the right side evaluates S's clauses
+at every value of x, including the values no tuple in R carries. So a clause
+that fails on a value at such an x, an expression over an operand that is no
+number among them, fails the rewritten query, where the left side answers. The
+proof shows that the two sides answer the same tuples, not that they fail alike
+(`docs/bugs/BUG_OPTIMIZER_PATHS_ANSWER_DIFFERENTLY_WHEN_A_CORRELATED_SUBQUERY_FAILS_ON_A_VALUE.md`).
 
 **Key insight for nested correlation (argmax pattern):**
 
@@ -607,13 +631,13 @@ entity E's attribute A in S. If found, bind the value to `?result`.
 If not found, bind the default value. This is a point lookup per tuple.
 
 The right side scans the (E, A) datoms of S, producing a relation with
-[E, ?result]. The LeftOuterJoin matches each R tuple to its scanned row by
+[E, ?result]. The LeftOuterJoin matches each R tuple to its scanned tuple by
 E. An R tuple without a match (the entity lacks the attribute) takes the
 default branch, the get-else itself.
 
 The two agree only where the scan answers, per entity, the one value the
 lookup answers, which is the source precondition. Without it they differ:
-on a cardinality-many attribute the scan answers each member as a row of its
+on a cardinality-many attribute the scan answers each member as a tuple of its
 own where the lookup answers the set, and on a history handle the scan
 answers every version. `docs/proposals/GET_ELSE_SCAN_REWRITE_PROOF.md`
 proves the rewrite under the precondition, asked of the source the scan reads

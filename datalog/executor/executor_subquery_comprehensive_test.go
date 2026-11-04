@@ -420,24 +420,17 @@ func TestSubqueryInFilter(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-			result, err := exec.Execute(q)
+			tuples, err := CollectTuples(exec.Execute(q))
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}
 
 			// Average is 90000, so Alice (90000) is not included, but Charlie (95000) is
-			if result.Size() != 1 {
-				t.Errorf("Expected 1 result, got %d", result.Size())
-				for i := 0; i < result.Size(); i++ {
-					t.Logf("Result %d: %v", i, result.Get(i))
-				}
+			if len(tuples) != 1 {
+				t.Fatalf("Expected 1 result, got %d: %v", len(tuples), tuples)
 			}
-
-			if result.Size() > 0 {
-				tuple := result.Get(0)
-				if name := tuple[0].(string); name != "Charlie" {
-					t.Errorf("Expected Charlie, got %s", name)
-				}
+			if name := tuples[0][0].(string); name != "Charlie" {
+				t.Errorf("Expected Charlie, got %s", name)
 			}
 		})
 	}

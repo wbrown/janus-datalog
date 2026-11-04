@@ -535,6 +535,10 @@ type aggregateAccumulator struct {
 type aggregateOps struct {
 	update func(*aggregateAccumulator, interface{}) error
 	result func(*aggregateAccumulator) (interface{}, error)
+	// failsOnAValue is whether the fold can fail on a resolved value. Sum's
+	// and avg's can: update refuses a value that is no number, and result
+	// refuses a NaN. Count's, min's and max's refuse no resolved value.
+	failsOnAValue bool
 }
 
 // resolveAggregate maps an interned aggregate function symbol to its
@@ -545,9 +549,9 @@ func resolveAggregate(fn query.Symbol) (aggregateOps, error) {
 	case datalog.SymCount:
 		return aggregateOps{update: updateCount, result: resultCount}, nil
 	case datalog.SymSum:
-		return aggregateOps{update: updateSum, result: resultSum}, nil
+		return aggregateOps{update: updateSum, result: resultSum, failsOnAValue: true}, nil
 	case datalog.SymAvg:
-		return aggregateOps{update: updateSum, result: resultAvg}, nil
+		return aggregateOps{update: updateSum, result: resultAvg, failsOnAValue: true}, nil
 	case datalog.SymMin:
 		return aggregateOps{update: updateMin, result: resultMin}, nil
 	case datalog.SymMax:

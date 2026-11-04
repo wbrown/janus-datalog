@@ -238,7 +238,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 ### Claims Requiring Qualification
 - ⚠️ **js/wasm `datalog/storage` run**: the package's js/wasm run, as the external reviewer measured it, rose from **258 s** at `5697a7d` to **613 s** at `5b152c9`, past `go test`'s ten-minute default. The rise is `TestRules_ConcurrentQueriesDeriveWhatSerialQueriesDerive`, introduced at `12e8930`: a 40-node graph of 53 edges and, per optimizer leg, four serial queries then sixteen goroutines each running twenty closure or complement queries, about two thousand fixpoint evaluations across the legs. The test alone takes **1m11s** natively at its birth commit, **1m3s** natively on the tree before its reduction, and **3m19s** in total under js/wasm; no commit between `5697a7d` and `5b152c9` made it slower (measured 2026-10-15, Apple M5). The test now runs sixteen goroutines each over the four shapes once, in a staggered order, in place of twenty runs each, the repetitions past the fourth having added evaluations and no case, and the package's js/wasm run took **337.5 s** on that tree, under the default. On the round-3 tree it takes **485 s**, its largest test `TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation` at 112 s (measured 2026-10-23, Apple M5). At `8565cdd` it takes **705 s**, `make test-wasm-storage` under its `-timeout 45m` (measured 2026-10-26, Apple M5).
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
-- ⚠️ **In-memory indexing**: "49-4802×" not reproducible (optimizations became pervasive, both paths now fast)
+- ⚠️ **In-memory indexing**: "49-4802×" not reproducible, both paths having run alike once the optimization became pervasive. The executor's in-memory matcher is gone (Recent Optimizations, "In-Memory Indexing").
 - ⚠️ **Streaming joins**: On the production-shaped complex checkpoint,
   `EnableStreamingJoins=true` is **8.04% slower**, uses **3.78% more memory**,
   and performs **8.34% more allocations** than the materialized default
@@ -342,8 +342,8 @@ EnableIteratorComposition: true  // Lazy evaluation (default)
 EnableTrueStreaming: true        // No auto-materialization (default)
 ```
 
-### 1. In-Memory Indexing (COMPLETE - PERVASIVE OPTIMIZATION)
-**Status**: ✅ IndexedMemoryMatcher with hash indices
+### 1. In-Memory Indexing (COMPLETE - PERVASIVE OPTIMIZATION, SUPERSEDED)
+**Status**: Superseded. The executor holds no in-memory matcher: an in-memory source is a memory database (`docs/reference/MULTI_SOURCE.md`, "Memory database"), whose matches are the storage matcher's. So `IndexedMemoryMatcher` and its hash indices are gone. The text below is the record of the mechanism at its completion.
 **Performance**: Hash indices now used throughout (test suite 7s, down from timeouts)
 **Commit**: Latest
 
@@ -844,7 +844,7 @@ algebra optimizer (`EnableAlgebraOptimizer: true`); there is no
 `EnableConditionalAggregateRewriting` option (removed 2026-05).
 
 ### 15. Interned-Pointer Index Keys & L85 Cache Removal (COMPLETE - May 2026)
-**Status**: ✅ In-memory indices and entity-dedup sets key on interned pointers; the `Identity.l85` cache was removed
+**Status**: ✅ Entity-dedup sets key on interned pointers, and the `Identity.l85` cache was removed. The in-memory matcher's indices and `index_key_bench_test.go`, the benchmark below, are gone with the matcher (Recent Optimizations, "In-Memory Indexing"). The benchmark is the record of the change at its completion.
 
 **What changed**:
 - The in-memory matcher's entity/EA indices and the storage `PatternMatcher` entity-dedup set
@@ -1858,7 +1858,7 @@ All items below are **measured** and **active** in production code:
 10. ✅ **Predicate pushdown** - **1.58-2.78× faster** (scales with dataset size), **up to 91.5% memory reduction** (verified 2025-10-25)
 11. ✅ **Streaming execution** - **2.22× on low-selectivity filters, 52% memory reduction** (verified 2025-10-25)
 12. ✅ **Hash join pre-sizing** - **24-32% faster, 24-30% less memory**
-13. ✅ **In-memory indexing** - Hash indices now default path throughout codebase
+13. ⚠️ **In-memory indexing** - Hash indices were the default path of the executor's in-memory matcher; superseded, the matcher gone (Recent Optimizations, "In-Memory Indexing")
 14. ✅ **Relation collapsing algorithm** - **Prevents catastrophic Cartesian products**
 15. ✅ **Conditional aggregate rewriting** - **7.7× faster, 5.2× less memory** for correlated aggregate subqueries (verified 2026-01-16)
 16. ✅ **CRDT storage** - **~25-35µs writes**, **O(1) LWW resolution**, conflict-free replication (verified 2026-01-31)

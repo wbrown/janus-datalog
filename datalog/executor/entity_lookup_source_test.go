@@ -12,10 +12,10 @@ import (
 // A scan-sharing matcher's lookup is the lookup of the matcher it wraps: over
 // a slice source, the slice's fact.
 func TestScanSharingMatcher_LookupIsTheLookupOfTheMatcherItWraps(t *testing.T) {
-	rows := sliceDatabase(t, []string{"subject"}, storage.AttributeSchema[string]{
+	slice := sliceDatabase(t, []string{"subject"}, storage.AttributeSchema[string]{
 		datalog.NewKeyword(":t/name"): func(name string) any { return name },
 	})
-	m := NewScanSharingMatcher(rows, NewScanRegistry(), nil)
+	m := NewScanSharingMatcher(slice, NewScanRegistry(), nil)
 	value, found, err := m.LookupAttribute(datalog.NewIdentity("slice:0"), datalog.NewKeyword(":t/name"))
 	require.NoError(t, err)
 	require.True(t, found)

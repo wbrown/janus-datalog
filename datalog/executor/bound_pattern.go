@@ -130,6 +130,22 @@ func (it *patternJoinIterator) Next() bool {
 	return it.join.Next()
 }
 
+// failedTuple answers the windowed join's failed tuple, when the join answers
+// one (failedTupleIterator), so a reader of the pattern's result decides it at
+// its key as a reader of the join would.
+func (it *patternJoinIterator) failedTuple() (Tuple, []int, bool) {
+	failing, ok := it.join.(failedTupleIterator)
+	if !ok {
+		return nil, nil, false
+	}
+	return failing.failedTuple()
+}
+
+// resume resumes the windowed join past the tuple failedTuple answered.
+func (it *patternJoinIterator) resume() {
+	it.join.(failedTupleIterator).resume()
+}
+
 // Tuple returns the join's current tuple.
 func (it *patternJoinIterator) Tuple() Tuple {
 	return it.join.Tuple()

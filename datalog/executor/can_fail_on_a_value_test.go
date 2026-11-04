@@ -91,6 +91,55 @@ func TestCanFailOnAValue(t *testing.T) {
 	}
 }
 
+// A subquery's :find aggregate fails on a value where its fold refuses one:
+// sum and avg refuse a value that is no number, and count, min and max refuse
+// no resolved value. A subquery whose :find sums or averages carries the mark
+// whether or not its call passes a variable, so every reader that stops early,
+// a :limit 0 among them, reads its result to its end.
+func TestCanFailOnAValueReadsASubquerysFoldingAggregates(t *testing.T) {
+	g, m, v, s := datalog.NewSymbol("?g"), datalog.NewSymbol("?m"), datalog.NewSymbol("?v"), datalog.NewSymbol("?s")
+	members := []query.Clause{
+		&query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: m}, query.Constant{Value: datalog.NewKeyword(":mem/grp")}, query.Variable{Name: g},
+		}},
+		&query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: m}, query.Constant{Value: datalog.NewKeyword(":mem/v")}, query.Variable{Name: v},
+		}},
+	}
+	subquery := func(fn query.Symbol, correlated bool) *query.SubqueryPattern {
+		inputs := []query.PatternElement{query.Constant{Value: datalog.SymDollar}}
+		if correlated {
+			inputs = append(inputs, query.Variable{Name: g})
+		}
+		return &query.SubqueryPattern{
+			Query:   &query.Query{Find: []query.FindElement{query.FindAggregate{Function: fn, Arg: v}}, Where: members},
+			Inputs:  inputs,
+			Binding: query.RelationBinding{Variables: []query.Symbol{s}},
+		}
+	}
+	cases := []struct {
+		name   string
+		clause *query.SubqueryPattern
+		fails  bool
+	}{
+		{"a correlated sum", subquery(datalog.SymSum, true), true},
+		{"a correlated avg", subquery(datalog.SymAvg, true), true},
+		{"an uncorrelated sum", subquery(datalog.SymSum, false), true},
+		{"an uncorrelated avg", subquery(datalog.SymAvg, false), true},
+		{"a correlated count", subquery(datalog.SymCount, true), false},
+		{"a correlated min", subquery(datalog.SymMin, true), false},
+		{"a correlated max", subquery(datalog.SymMax, true), false},
+		{"an uncorrelated count", subquery(datalog.SymCount, false), false},
+		{"an uncorrelated min", subquery(datalog.SymMin, false), false},
+		{"an uncorrelated max", subquery(datalog.SymMax, false), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.fails, canFailOnAValue([]query.Clause{c.clause}, nil))
+		})
+	}
+}
+
 // A predicate or an expression run over a relation can fail on a value as
 // canFailOnAValue judges it, except a database function whose entity is one
 // of the relation's identity symbols, read as a predicate or under the scalar

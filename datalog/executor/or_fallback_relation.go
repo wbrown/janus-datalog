@@ -979,8 +979,9 @@ func (it *OrFallbackIterator) answer() bool {
 			continue
 		}
 		// An output of a failed window tuple holds no value where its failing
-		// evaluation would have filled one, and it is never emitted: Next ends
-		// the iterator with the tuple's failure. So it is not deduplicated.
+		// evaluation would have filled one, and it is never emitted as a
+		// tuple: Next answers it as the form's failed tuple. So it is not
+		// deduplicated.
 		if it.seen != nil && it.reader.failureAt(it.answering) == nil {
 			_, hash, held := it.seen.Find(it.currentTuple)
 			if held {

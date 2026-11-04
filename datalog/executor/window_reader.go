@@ -45,11 +45,12 @@ type windowReader struct {
 	err       error
 }
 
-// windowFailure is a failed tuple of a window: its position in the window
-// and the failure its evaluation met.
+// windowFailure is a failed tuple of a window: its position in the window,
+// the failure its evaluation met, and the positions it holds no value at.
 type windowFailure struct {
-	pos int
-	err error
+	pos     int
+	err     error
+	unknown []int
 }
 
 // newWindowReader is a reader over subject for form, copying each tuple when
@@ -81,28 +82,39 @@ func (w *windowReader) failureAt(pos int) error {
 	return nil
 }
 
-// carriedFailure is the tuple the subject's failure arose on, when the
-// subject answers one (failedTupleIterator) that holds a value at each
-// position the form reads; the subject is then resumed past it. Any other
-// failure is the reader's.
-func (w *windowReader) carriedFailure() (Tuple, bool) {
+// unknownAt is the positions the window's failed tuple at pos holds no value
+// at, and nil for a tuple that did not fail.
+func (w *windowReader) unknownAt(pos int) []int {
+	for _, failure := range w.failures {
+		if failure.pos == pos {
+			return failure.unknown
+		}
+	}
+	return nil
+}
+
+// carriedFailure is the tuple the subject's failure arose on, with the
+// positions it holds no value at, when the subject answers one
+// (failedTupleIterator) that holds a value at each position the form reads;
+// the subject is then resumed past it. Any other failure is the reader's.
+func (w *windowReader) carriedFailure() (Tuple, []int, bool) {
 	failing, ok := w.subject.(failedTupleIterator)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	tuple, unknown, ok := failing.failedTuple()
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	for _, pos := range unknown {
 		for _, read := range w.readPos {
 			if pos == read {
-				return nil, false
+				return nil, nil, false
 			}
 		}
 	}
 	failing.resume()
-	return tuple, true
+	return tuple, unknown, true
 }
 
 // next reads the next window of the subject, up to size tuples, into the
@@ -124,14 +136,14 @@ func (w *windowReader) next() bool {
 				w.exhausted = true
 				break
 			}
-			tuple, carried := w.carriedFailure()
+			tuple, unknown, carried := w.carriedFailure()
 			if !carried {
 				w.exhausted = true
 				w.err = err
 				return false
 			}
 			w.reportTuple(tuple)
-			w.failures = append(w.failures, windowFailure{pos: len(w.window), err: err})
+			w.failures = append(w.failures, windowFailure{pos: len(w.window), err: err, unknown: unknown})
 			w.window = append(w.window, tuple)
 			continue
 		}

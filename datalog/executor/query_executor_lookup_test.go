@@ -60,3 +60,33 @@ func TestExecutor_DatabaseFunctionOverASliceSourceAnswersItsFacts(t *testing.T) 
 	}), nil)
 	require.Equal(t, true, executeOne(t, exec, `[:find ?m :where [?e :t/name "one"] [(missing? $ ?e :t/a) ?m]]`))
 }
+
+// customSource is a source a caller writes, as docs/reference/MULTI_SOURCE.md
+// describes under "Implementing Custom Sources": a PatternMatcher and nothing
+// else, matching each pattern against the database it reads. It looks no
+// attribute up.
+type customSource struct{ d *storage.Database }
+
+func (s customSource) Match(q *query.Query, bindings executor.Relations) (executor.Relation, error) {
+	return s.d.Match(q, bindings)
+}
+
+// An executor whose matcher cannot look an entity's attribute up refuses each
+// database function, naming it, and never answers it as absent. The source's
+// database holds :t/a for the entity, so an answer of absence would differ
+// from the refusal.
+func TestExecutor_DatabaseFunctionOverAMatcherThatCannotLookUpIsAnError(t *testing.T) {
+	exec := executor.NewExecutor(customSource{valueDatabase(t, "held")}, nil)
+	for _, c := range []struct{ function, text string }{
+		{"missing?", `[:find ?e :where [?e :t/name "one"] [(missing? $ ?e :t/a)]]`},
+		{"get-else", `[:find ?v :where [?e :t/name "one"] [(get-else $ ?e :t/a "none") ?v]]`},
+		{"get-some", `[:find ?v :where [?e :t/name "one"] [(get-some $ ?e :t/a) ?v]]`},
+	} {
+		t.Run(c.function, func(t *testing.T) {
+			q, err := parser.ParseQuery(c.text)
+			require.NoError(t, err)
+			tuples, err := executor.CollectTuples(exec.Execute(q))
+			require.ErrorContains(t, err, c.function, "the query answered %v with no error", tuples)
+		})
+	}
+}

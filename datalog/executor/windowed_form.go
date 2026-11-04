@@ -50,18 +50,19 @@ type framing struct {
 
 // canFailOnAValue reports whether running clauses can raise an evaluation
 // failure on a resolved value: an expression's function or a database-function
-// predicate's over a variable, a registered predicate function, or a
-// transaction range over a value naming no transaction, at any depth of the
-// header forms, in a subquery's body, or in a rule body an invocation reaches
-// through rules. A database function fails on an entity value that is no
-// identity. A function reading no variable answers alike on every tuple, so it
-// fails on the first tuple or on none. A data pattern fails on no value, and
-// neither do the comparisons, which order every value, a string prefix, which
-// answers a typed non-match, or a GroundPredicate or MissingPredicate. A form
-// whose body can fail evaluates as its result is pulled, window by window, so
-// its result carries Evaluates (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md,
-// T11). The clause taxonomy is closed, so a clause kind this does not name
-// panics, as WalkClauses does.
+// predicate's over a variable, a registered predicate function, a transaction
+// range over a value naming no transaction, or a subquery's fold that can
+// refuse a value (subqueryFoldCanFail), at any depth of the header forms, in a
+// subquery's body, or in a rule body an invocation reaches through rules. A
+// database function fails on an entity value that is no identity. A function
+// reading no variable answers alike on every tuple, so it fails on the first
+// tuple or on none. A data pattern fails on no value, and neither do the
+// comparisons, which order every value, a string prefix, which answers a typed
+// non-match, or a GroundPredicate or MissingPredicate. A form whose body can
+// fail evaluates as its result is pulled, window by window, so its result
+// carries Evaluates (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T11). The
+// clause taxonomy is closed, so a clause kind this does not name panics, as
+// WalkClauses does.
 func canFailOnAValue(clauses []query.Clause, rules *query.RuleSet) bool {
 	reached := map[query.Symbol]bool{}
 	var fails func(clauses []query.Clause) bool
@@ -81,7 +82,7 @@ func canFailOnAValue(clauses []query.Clause, rules *query.RuleSet) bool {
 			case *query.FunctionPredicate, *query.TxRangePredicate:
 				found = true
 			case *query.SubqueryPattern:
-				found = found || fails(c.Query.Where)
+				found = found || subqueryFoldCanFail(c) || fails(c.Query.Where)
 			case *query.RuleInvocation:
 				if rules != nil && !reached[c.Name] {
 					reached[c.Name] = true
@@ -97,6 +98,30 @@ func canFailOnAValue(clauses []query.Clause, rules *query.RuleSet) bool {
 		return found
 	}
 	return fails(clauses)
+}
+
+// subqueryFoldCanFail reports whether a subquery's :find holds an aggregate
+// whose fold can fail on a resolved value, a sum or an avg
+// (aggregateOps.failsOnAValue). Such a subquery's result carries Evaluates
+// whatever its call passes. So a :limit 0 reads it to its end
+// (LimitRelation.take), as it reads the uncorrelated subquery Rule 1 makes of
+// a correlated one. An aggregate resolveAggregate does not bind is refused
+// before execution (query.ValidateQuery), so meeting one here panics.
+func subqueryFoldCanFail(c *query.SubqueryPattern) bool {
+	for _, element := range c.Query.Find {
+		aggregate, ok := element.(query.FindAggregate)
+		if !ok {
+			continue
+		}
+		ops, err := resolveAggregate(aggregate.Function)
+		if err != nil {
+			panic(fmt.Sprintf("BUG: %v in a subquery's :find past validation", err))
+		}
+		if ops.failsOnAValue {
+			return true
+		}
+	}
+	return false
 }
 
 // canFailOnAValueOver reports whether running one predicate or expression
@@ -253,6 +278,12 @@ type windowedIterator struct {
 	currentTuple Tuple
 	done         bool
 	err          error
+
+	// failed is the output the form answered for a failed window tuple, and
+	// failedUnknown the positions it holds no value at, until a reader
+	// resumes the form past it. err holds the tuple's failure meanwhile.
+	failed        Tuple
+	failedUnknown []int
 }
 
 // continuationsFor is the context a windowed form's iterator runs under and
@@ -332,18 +363,19 @@ func newWindowedIterator(executor *DefaultQueryExecutor, ctx *Context, f framing
 // Next answers the next tuple from the window in hand under the form's
 // policy, and reads the next window when the one in hand is answered,
 // ending at the subject's end or on a failure. An output the form answers
-// for a failed window tuple ends it with that tuple's failure: the form holds
-// at the tuple's key, as the subject's clauses hold at the tuple
-// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract).
+// for a failed window tuple stops it with that tuple's failure, and the form
+// answers the output as its failed tuple: the form holds at the tuple's key,
+// as the subject's clauses hold at the tuple
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract). Next
+// answers nothing more until the failure is resumed past.
 func (it *windowedIterator) Next() bool {
 	for {
-		if it.done {
+		if it.done || it.err != nil {
 			return false
 		}
 		if it.policy.answer() {
 			if err := it.reader.failureAt(it.answering); err != nil {
-				it.err = err
-				it.done = true
+				it.failed, it.failedUnknown, it.err = it.currentTuple, it.reader.unknownAt(it.answering), err
 				return false
 			}
 			return true
@@ -352,6 +384,21 @@ func (it *windowedIterator) Next() bool {
 			return false
 		}
 	}
+}
+
+// failedTuple answers the output the form answered for a failed window
+// tuple, with the positions it holds no value at. Each form's result lays
+// out its subject's symbols first, so those are the subject tuple's
+// positions. It answers false when the form's failure arose on no output,
+// a branch's build.
+func (it *windowedIterator) failedTuple() (Tuple, []int, bool) {
+	return it.failed, it.failedUnknown, it.failed != nil
+}
+
+// resume drops the failed output and its failure, and Next answers on from
+// the window in hand.
+func (it *windowedIterator) resume() {
+	it.failed, it.failedUnknown, it.err = nil, nil, nil
 }
 
 // tupleToAnswer is the window's tuple at windowPos, recorded as the one whose

@@ -13,7 +13,7 @@ Both defects fixed where their invariants live; each half also fixed as its clas
 ## Reproducers (committed red by owner ruling; now green)
 
 - `datalog/executor/not_or_test.go` / `TestMissingOnLookupLessMatcherFailsLoudly` — both modes × bare/annotated contexts; the two contexts failed through the two distinct defects and both now yield the loud error.
-- `datalog/executor/relation_ops_error_propagation_test.go` / `TestMatchTreatsErroredEmptyBindingAsError` — the genuine irreducible route (failed stream → `Sort` → errored-empty materialized → binding), erroring at the Match fallback.
+- `datalog/executor/match_errored_binding_test.go` / `TestMatchTreatsErroredEmptyBindingAsError` — the genuine irreducible route (failed stream → `Sort` → errored-empty materialized → binding), erroring at the Match fallback.
 - `TestHashJoinSurfacesErroredEmptySide` — pins the verified-correct join behavior.
 - The converted error-propagation suite asserts the eager family's in-band returns directly.
 

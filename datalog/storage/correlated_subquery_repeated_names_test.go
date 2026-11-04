@@ -60,3 +60,42 @@ func TestACorrelatedSubqueryAnswersAlikeWhereItsFindNamesItsInputOrItsBindingRep
 		})
 	}
 }
+
+// A correlated aggregating subquery answers no tuple for an outer tuple whose
+// correlation value S holds no tuple at, since an aggregate over no tuples is
+// no tuple. Without defaults Rule 1's rewrite joins each outer tuple to the
+// group of its value, and a value with no group answers no tuple there either
+// (docs/ALGEBRA.md, Rule 1). Under an or-default-join both paths answer the
+// default for it. g1 has two members, and g2 has none.
+func TestACorrelatedAggregateAnswersAValueWithNoTuplesAlikeOnBothOptimizerPaths(t *testing.T) {
+	g1, g2, m1, m2 := named("g1"), named("g2"), named("m1"), named("m2")
+	facts := []fact{
+		{g1, ":grp/name", "g1"}, {g2, ":grp/name", "g2"},
+		{m1, ":mem/grp", g1.id}, {m2, ":mem/grp", g1.id},
+	}
+	subquery := `[(q [:find (count ?m) :in $ ?g :where [?m :mem/grp ?g]] $ ?g) [[?c]]]`
+	cases := []struct {
+		name, text string
+		want       [][]interface{}
+	}{
+		{"without defaults",
+			`[:find ?n ?c :where [?g :grp/name ?n] ` + subquery + `]`,
+			[][]interface{}{{"g1", int64(2)}}},
+		{"under an or-default-join",
+			`[:find ?n ?c :where [?g :grp/name ?n] (or-default-join [[?g] ?c] ` + subquery + ` [(ground 0) ?c])]`,
+			[][]interface{}{{"g1", int64(2)}, {"g2", int64(0)}}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			commitFacts(t, d, facts)
+			for _, c := range cases {
+				t.Run(c.name, func(t *testing.T) {
+					tuples, err := executor.CollectTuples(d.Query(c.text))
+					require.NoError(t, err)
+					require.ElementsMatch(t, c.want, tuples, "g2, whose group holds no member, answers no tuple without defaults and the default under the fallback")
+				})
+			}
+		})
+	}
+}

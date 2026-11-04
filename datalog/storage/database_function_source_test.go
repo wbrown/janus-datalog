@@ -192,6 +192,42 @@ func TestDatabaseFunction_OnASliceSourceAnswersItsFacts(t *testing.T) {
 	}
 }
 
+// customSource is a source a caller writes, as docs/reference/MULTI_SOURCE.md
+// describes under "Implementing Custom Sources": a PatternMatcher and nothing
+// else. It embeds the interface, so it matches each pattern against the
+// database it holds and looks no attribute up.
+type customSource struct{ executor.PatternMatcher }
+
+// A database function on a source that cannot look an entity's attribute up
+// is an error naming the source, never an answer of absence, whether the
+// function names the source or a subquery's call passes the source as its $.
+// The source's database holds :t/a for "one", so an answer of absence would
+// differ from the error.
+func TestDatabaseFunction_OnASourceThatCannotLookUpIsAnError(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d, src := twoSourceFixture(t, mode, DatabaseOptions{})
+			cache := sourceNamed("$cache", customSource{src})
+			for _, c := range []struct{ name, text string }{
+				{"missing?", `[:find ?n :in $ $cache :where [$cache ?e :t/name ?n] [(missing? $cache ?e :t/a)]]`},
+				{"get-else", `[:find ?n ?v :in $ $cache :where [$cache ?e :t/name ?n] [(get-else $cache ?e :t/a "none") ?v]]`},
+				{"get-some", `[:find ?n ?v :in $ $cache :where [$cache ?e :t/name ?n] [(get-some $cache ?e :t/a) ?v]]`},
+				{"missing? in a subquery passed the source as its $",
+					`[:find ?n ?m :in $ $cache :where [$cache ?e :t/name ?n] [(q [:find ?x :in $ ?e :where [(missing? $ ?e :t/a) ?x]] $cache ?e) [[?m]]]]`},
+				{"get-else in a subquery passed the source as its $",
+					`[:find ?n ?v :in $ $cache :where [$cache ?e :t/name ?n] [(q [:find ?x :in $ ?e :where [(get-else $ ?e :t/a "none") ?x]] $cache ?e) [[?v]]]]`},
+				{"get-some in a subquery passed the source as its $",
+					`[:find ?n ?v :in $ $cache :where [$cache ?e :t/name ?n] [(q [:find ?x :in $ ?e :where [(get-some $ ?e :t/a) ?x]] $cache ?e) [[?v]]]]`},
+			} {
+				t.Run(c.name, func(t *testing.T) {
+					tuples, err := executor.CollectTuples(d.Query(c.text, cache))
+					require.ErrorContains(t, err, "$cache", "the query answered %v with no error", tuples)
+				})
+			}
+		})
+	}
+}
+
 // The vocabulary check reads a database function's attributes on the source
 // the function names.
 func TestDatabaseFunction_AttributesAreCheckedOnTheSourceItNames(t *testing.T) {

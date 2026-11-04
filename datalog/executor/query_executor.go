@@ -1278,8 +1278,8 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 	}
 	atMostOne := subqueryAnswersAtMostOne(subq.Query, bound, carriedSet)
 	properties := orProperties(subject.Properties(), bound, nil, symbols, atMostOne)
-	// The body runs per window as the result is pulled.
-	properties.Evaluates = properties.Evaluates || canFailOnAValue(subq.Query.Where, ctx.Rules())
+	// The body and the :find's folds run per window as the result is pulled.
+	properties.Evaluates = properties.Evaluates || canFailOnAValue([]query.Clause{subq}, ctx.Rules())
 
 	f := framing{
 		form:        "subquery",

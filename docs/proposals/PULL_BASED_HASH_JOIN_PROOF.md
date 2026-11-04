@@ -3,7 +3,7 @@
 ## Sources
 
 - The code: `datalog/executor/join.go` (`HashJoin`, `HashJoinWithOptions`, `hashJoinIterator`, `combineTuplesIndexed`, `SemiJoin`, `AntiJoin`, `crossProduct`, `emitJoinStrategyAnnotation`), `datalog/executor/join_index.go` (`JoinIndex.Add`, `JoinIndex.Probe`, `JoinIndex.Len`), `datalog/executor/tuple_set.go` (`NewTupleSet`), `datalog/executor/relation.go` (the `Relation` and `Iterator` interfaces, `copyTuple`, `collectTuplesInto`, `ForEach`, `CollectTuples`, `CachingIterator`, `StreamingRelation.Iterator`, `StreamingRelation.Size`, `StreamingRelation.RequiresCopy`, `StreamingRelation.Materialize`, `MaterializedRelation.Join`, `StreamingRelation.Join`, `NewProductRelation`, `ProductRelation.Size`), `datalog/executor/relations.go` (`Relations.Collapse`, `reportJoin`), `datalog/executor/query_executor.go` (`DefaultQueryExecutor.Execute`, `renderConstantFindSymbols`, `existenceVerdict`, `executePattern`, `tryFuseAttributeFetchBundle`, `executeExpression`, `executePredicate`, `executeSubquery`, `findOuterRelation`, `applyFindPulls`, `replaceConsumedGroups`), `datalog/executor/executor.go` (`ExecuteWithRelations`, `ExecuteRealized`, `executeRealizedPlan`, `runPhases`, `declaredTupleCount`, `executePhase`), `datalog/executor/executor_utils.go` (`BindQueryInputs`), `datalog/executor/scope.go` (`requiredRun`, `scopeResult`, `materialized`, `hasTuple`, `executeOrJoinClause`, `executeOrDefaultJoinClause`, `executeNotJoinClause`), `datalog/executor/bound_pattern.go` (`streamsThrough`, `executeBoundPattern`, `patternJoinIterator`), `datalog/executor/bound_invocation.go` (`executeBoundInvocation`), `datalog/executor/rules.go` (`executeRuleInvocation`, `invocationIterator`, `seedRelation`), `datalog/executor/windowed_form.go` (`newWindowedIterator`), `datalog/executor/window_reader.go` (`windowReader`), `datalog/executor/or_fallback_relation.go` (`OrFallbackRelation`), `datalog/executor/relation_ops.go` (`materializeRelationsForPattern`, `filterWithPredicateAndLookup`, `evaluateExpressionWithLookup`, `unionRelations`), `datalog/executor/theta_join.go` (`thetaJoinPair`, `crossJoinWithExpression`), `datalog/executor/expression_binding.go` (`bindingTuples`, `bindingAlignment.apply`), `datalog/executor/buffered_iterator.go` (`BufferedIterator`), `datalog/executor/iterator_composition.go` (`ProjectIterator`, `PredicateFilterIterator`, `FunctionEvaluatorIterator`, `DedupIterator`), `datalog/executor/limit_relation.go` (`LimitRelation.take`), `datalog/executor/aggregation.go` (`StreamingAggregateRelation.fold`), `datalog/executor/phase_boundary.go` (`materializePhaseBoundary`), `datalog/executor/symmetric_hash_join.go` (`ChooseJoinStrategy`), `datalog/storage/convenience.go` (`Database.Query`), `datalog/storage/database.go` (`DefaultPlannerOptions`).
-- The code P9 to P13 read: `datalog/executor/windowed_form.go` (`canFailOnAValue`, `canFailOnAValueOver`, `expressionFailsOnNoValueOver`, `entityIsAnIdentity`, `windowedIterator.Next`, `tupleToAnswer`), `datalog/executor/window_reader.go` (`carriedFailure`, `failureAt`), `datalog/executor/iterator_composition.go` (`failedTupleIterator`), `datalog/executor/relation.go` (`CountingIterator`, `ProductIterator`, `productEvaluates`), `datalog/executor/relation_properties.go` (`RelationProperties`, `AnswerIdentities`, `joinProperties`, `orProperties`), `datalog/executor/theta_join.go` (`thetaJoinWithPredicate`), `datalog/executor/subquery.go`, `datalog/executor/not_join.go`, `datalog/query/database_function.go` (`toIdentity`), `datalog/storage/matcher.go` (`typedPositionBindingCheck`), `datalog/storage/matcher_relations.go`, `datalog/storage/hash_join_matcher.go`, `datalog/storage/convenience.go` (`sessionMatcher`).
+- The code P9 to P13 read: `datalog/executor/windowed_form.go` (`canFailOnAValue`, `subqueryFoldCanFail`, `canFailOnAValueOver`, `expressionFailsOnNoValueOver`, `entityIsAnIdentity`, `windowedIterator.Next`, `windowedIterator.failedTuple`, `windowedIterator.resume`, `tupleToAnswer`), `datalog/executor/window_reader.go` (`carriedFailure`, `failureAt`, `unknownAt`, `windowFailure`), `datalog/executor/iterator_composition.go` (`failedTupleIterator`), `datalog/executor/bound_pattern.go` (`patternJoinIterator.failedTuple`, `patternJoinIterator.resume`), `datalog/executor/aggregation.go` (`aggregateOps`, `resolveAggregate`), `datalog/executor/relation.go` (`CountingIterator`, `ProductIterator`, `productEvaluates`), `datalog/executor/relation_properties.go` (`RelationProperties`, `AnswerIdentities`, `joinProperties`, `orProperties`), `datalog/executor/theta_join.go` (`thetaJoinWithPredicate`), `datalog/executor/subquery.go`, `datalog/executor/not_join.go`, `datalog/executor/or_fallback_relation.go` (`NewOrFallbackRelation`), `datalog/query/database_function.go` (`toIdentity`), `datalog/storage/matcher.go` (`typedPositionBindingCheck`), `datalog/storage/matcher_relations.go`, `datalog/storage/hash_join_matcher.go`, `datalog/storage/convenience.go` (`sessionMatcher`).
 - The proof this one stands on: `docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md`. Its §1 defines a set, a key, the join and the combined tuple. Its P2 states the one equality E. Its L2 enumerates each matching pair once in both hash arms.
 - The design record: `docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md`. Its law that `Materialize` guarantees replayability and not eager realization. Its "Materialization That Should Remain" list, with hash build state on it. Its mandatory gates.
 - The scope design: `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md`.
@@ -33,6 +33,7 @@ Every name below is the code's, given a symbol for the proof.
   - A reading that raises the failure wherever a plan evaluates the function depends on which clause binds the function's inputs first, so two plans of one query answer differently, against that goal.
   - Under the contract, an assignment where some clause does not hold fails no query, whatever another clause raises there. That is the conjunction's reading, commutative and associative over the clauses, so every plan answers alike.
   - `TestAJoinWithAnEmptySideAnswersEmptyThoughTheOtherSideFails` (storage) pins it.
+  - The engine departs from the contract in shapes §7 lists.
 - The **pattern join iterator** is `patternJoinIterator`: the windowed join of a subject with a pattern. At its first pull it reads whether the pattern alone has a match, through the matcher and `hasTuple`, and it answers the windowed join's tuples only where the pattern has one.
 - The **identity symbols** of a relation are `RelationProperties.Identities`: the symbols whose every value is an identity, as a data pattern's entity position binds them.
 - The **evaluating mark** is `RelationProperties.Evaluates`. It says that reading the relation evaluates, as tuples are pulled, a function that can fail on a value, which `canFailOnAValue` decides:
@@ -40,6 +41,7 @@ Every name below is the code's, given a symbol for the proof.
   - a predicate function or a transaction range in a lazy filter
   - a database-function predicate whose function reads a variable, which fails on an entity value that is no identity
   - a windowed form's body holding one of these
+  - a subquery whose `:find` sums or averages, whatever its call passes, since sum and avg fail on a value that is no number and on a NaN sum (`aggregateOps.failsOnAValue`, `subqueryFoldCanFail`)
 - For one predicate or expression over a relation, `canFailOnAValueOver` decides the mark from the relation's identity symbols.
   - A database function whose entity is an identity symbol fails on no value, read as a predicate or under an expression's scalar form (`expressionFailsOnNoValueOver`).
   - An expression's tuple, collection and relation forms read the value's shape, and fail on a value of another shape whatever the entity (`bindingTuples`).
@@ -134,7 +136,7 @@ Every name below is the code's, given a symbol for the proof.
     - `evaluateExpressionWithLookup`, unless the expression fails on no value over its relation's identity symbols (`expressionFailsOnNoValueOver`)
     - `EvaluateFunction` on the stream and on the lazy sequence, when `canFailOnAValueOver` says the function can fail over the relation's identity symbols
     - `FilterWithPredicate` on the stream and on the lazy sequence, when `canFailOnAValueOver` says the predicate can fail over them
-    - `executeSubquery`, when its body can fail on a value
+    - `executeSubquery`, when its body can fail on a value or its `:find` sums or averages (`subqueryFoldCanFail`)
     - `executeNotJoinClause`, when its body can fail on a value
     - `NewOrFallbackRelation`, when a branch can fail on a value
     - `executeBoundInvocation`, when the invoked rules can fail on a value
@@ -161,10 +163,13 @@ Every name below is the code's, given a symbol for the proof.
   - `tryFuseAttributeFetchBundle` reads its input group whole at the clause, and declines a group carrying the mark.
 - **P13 (the failed tuple and the window).**
   - `PredicateFilterIterator` and `FunctionEvaluatorIterator` answer their failed tuple and resume past it (`failedTuple`, `resume`). The filter's failed tuple has a value at every position. The evaluator's has the source tuple's values, and no value at each binding symbol that extends them.
-  - `CountingIterator`, a stream's iterator unless the stream caches, answers the failed tuple of the iterator it counts. No other iterator answers one.
+  - `CountingIterator`, a stream's iterator unless the stream caches, answers the failed tuple of the iterator it counts.
+  - A windowed form's iterator answers the output it answered for a marked window tuple (`windowedIterator.failedTuple`), and `patternJoinIterator` answers its windowed join's. No other iterator answers one: `hashJoinIterator` and `CachingIterator` answer none.
   - `newWindowedIterator` gives the window reader the positions the form reads of a subject tuple: the required run's, the key's, and those of the find variables the subject carries.
-  - `windowReader.next` takes a failed tuple holding a value at each of those positions into the window, marked with its failure, and resumes the subject (`carriedFailure`). Any other failure of the subject ends the reader with the failure.
-  - Each form records the window tuple whose outputs it answers (`tupleToAnswer`): the subquery, which also serves the bound pattern and the bound invocation, the not-join and the fallback. `windowedIterator.Next` ends the form with a marked tuple's failure when the form answers an output for it.
+  - `windowReader.next` takes a failed tuple holding a value at each of those positions into the window, marked with its failure and the positions it holds no value at (`windowFailure`), and resumes the subject (`carriedFailure`). Any other failure of the subject ends the reader with the failure.
+  - Each form records the window tuple whose outputs it answers (`tupleToAnswer`): the subquery, which also serves the bound pattern and the bound invocation, the not-join and the fallback.
+  - When the form answers an output for a marked tuple, `windowedIterator.Next` stops with the tuple's failure, and `failedTuple` answers the output with the positions the tuple holds no value at (`unknownAt`). `resume` drops the failure, and `Next` answers on from the window in hand.
+  - Each form's result lays out its subject's symbols first. The subquery's and the fallback's results are the subject's symbols, then the ones it lacks (`executeSubquery`, `NewOrFallbackRelation`). The bound pattern's are the subject's, then the pattern's other variables (`executeBoundPattern`). The not-join answers the subject tuple. So a failed output's unknown positions are its subject tuple's.
   - A form's result carries its subject's evaluating mark: the subquery's and the fallback's through `orProperties`, and the not-join's as its subject's properties.
   - The fallback deduplicates no output of a marked tuple.
 
@@ -195,11 +200,11 @@ Every name below is the code's, given a symbol for the proof.
 - The existence verdict reads an evaluating group to its end once every group has shown a tuple, and reads no group past its first tuple when one has none.
 - A group's failure in place of a first tuple, an evaluating group's or one the group keeps from reading its source, is the query's error only when no group is empty, neither a group the verdict decides nor a group the find reads.
 - A product's member failing in place of a first tuple fails the product only when no member is empty.
-- A relation that carries no mark keeps the early stop.
+- A relation that carries no mark keeps the early stop. A `:limit 0` stops before its first tuple (§7).
 
 **T12 (a clause-level reader of a relation that can fail).** A filter or theta reader whose result can fail on a value raises none of its evaluation failures at its clause, and the fusion bundle reads no group carrying the evaluating mark. Each answers a stream carrying the mark, or leaves one to the pattern's windowed route, so the failure surfaces where the stream is driven.
 
-**T13 (a windowed form's failed subject tuple).** Let a windowed form's subject fail at a tuple its iterator answers, the tuple holding a value at every position the form reads. The form reads its subject past the tuple. It raises the failure only where it answers an output for the tuple, and drops the tuple with its failure where it answers none.
+**T13 (a windowed form's failed subject tuple).** Let a windowed form's subject fail at a tuple its iterator answers, the tuple holding a value at every position the form reads. The form reads its subject past the tuple. It raises the failure only where it answers an output for the tuple, and drops the tuple with its failure where it answers none. Where it raises the failure, it answers the output as its failed tuple, so a windowed form over its result decides the output in turn.
 
 ## 4. Lemmas
 
@@ -265,13 +270,13 @@ By L6 a join whose build is empty raises none of its probe side's failures. It l
 
 By P10 the readers that stop before a relation's end are `LimitRelation.take`, `existenceVerdict` and a product's first pull, and a relation carries the evaluating mark wherever its reading evaluates, as tuples are pulled, a function that can fail on a value.
 
-A relation without the mark evaluates nothing that can fail past its first tuple. Its tuples come from scans, from held relations, and from evaluations of three kinds:
+Any other relation without the mark evaluates nothing that can fail past its first tuple. Its tuples come from scans, from held relations, and from evaluations of three kinds:
 
 - a predicate that fails on no value
 - a function reading no variable, an expression's or a database-function predicate's, which fails on every tuple alike
 - a database function whose entity is an identity symbol, read as a predicate or under an expression's scalar form, which fails on no value (P11)
 
-So a prefix of it raises every evaluation failure it holds, and the early stop answers what a read to its end answers.
+So a prefix of one tuple or more raises every evaluation failure it holds, and the early stop answers what a read to its end answers. A `:limit 0` reads no tuple of it, so a failure at its first tuple is not raised (§7).
 
 A relation with the mark is read to its end by both readers. A limit keeps its first tuples and reads the rest of the source, so a failure past them is the limit's error.
 
@@ -297,7 +302,7 @@ So no clause-level reader raises an evaluation failure at its clause where its r
 
 By P13 the reader takes such a tuple into its window, marked with its failure, and resumes the subject, so it reads on to the subject's later tuples. The tuple holds a value at the required run's positions and the key's, so its key enters the window's run, and each branch is built over the window's keys (P5). The form answers outputs for a window tuple from its branches' results at the tuple's key, read against the positions it reads, all of which the tuple holds. So its answer for the failed tuple is its answer for an assignment extending the tuple's values.
 
-Where the form answers an output, its clause holds at such an assignment, and every clause that built the subject's tuple holds there too. `Next` ends the form with the failure. The failure reaches the form's reader with the subject's mark (P13), so the readers that stop early read it (T11).
+Where the form answers an output, its clause holds at such an assignment, and every clause that built the subject's tuple holds there too. `Next` stops with the failure, and the form answers the output as its failed tuple, its unknown positions the subject tuple's (P13). The failure reaches the form's reader with the subject's mark, so the readers that stop early read it (T11). A windowed form reading this form's result carries the output into its window where the output holds a value at each position it reads, and decides it at its own key, by this lemma.
 
 Where the form answers none, its clause holds at no assignment extending the tuple, so the failure fails no query, and the tuple is dropped. ∎
 
@@ -365,7 +370,12 @@ The change carries these tests, each pinning the theorem named, mapped to the re
   - `TestALimitOverEvaluateFunctionAnswersAFailurePastItsTuples` (executor, new). On the stream and the lazy sequence, a limit over a failing function's result answers the failure, and over a function reading no variable it pulls the one tuple it keeps.
   - `TestALimitOverFilterWithPredicateReadsAsThePredicateCanFail` (executor, new). On the stream and the lazy sequence, a limit over a transaction range answers its failure past the kept tuple, and over a comparison it pulls the one tuple it keeps.
   - `TestCanFailOnAValue` (executor, new). Each clause kind's verdict, through header forms, a subquery's body and the rule bodies an invocation reaches. A clause that can fail keeps the verdict when a function reading no variable follows it.
+  - `TestCanFailOnAValueReadsASubquerysFoldingAggregates` (executor, new). A subquery whose `:find` sums or averages can fail on a value, whether or not its call passes a variable. One whose `:find` counts or takes a min or a max cannot.
+  - `TestAnAggregatingSubqueryWhoseAggregateFailsOnAValueFailsTheQueryThroughEveryReader` (storage, new). Under sum and avg, a limit, the existence verdict, a not-join body, an or-join branch and `QueryOneInto` over a correlated subquery whose aggregate fails at a group an outer tuple reaches fail the query, on both optimizer paths.
+  - `TestACorrelatedAggregateFailingAtOneGroupAnswersByTheFailureContractOnBothOptimizerPaths` (storage, new). Under sum and avg, a `:limit 0` over a correlated subquery whose aggregate fails at a group an outer tuple reaches fails the query, on both optimizer paths.
+  - `TestACorrelatedSubqueryWhoseBodyFailsAtOneKeyAnswersByTheFailureContractOnBothOptimizerPaths` (storage, new). A correlated subquery whose body fails at a key an outer tuple reaches fails the query, read whole or through a `:limit 0`, on both optimizer paths.
   - `TestALimitOverAProductAnswersAMembersFailurePastItsTuples` (executor, new). A limit over a product, or over its projection, answers a member's failure past the tuple it keeps, the evaluating member first or second, and over members evaluating nothing it pulls the one tuple it keeps.
+  - `TestAnEarlyReaderReadsAJoinOfAnEvaluatingSideToItsEnd` (executor, new). A limit and the existence verdict over a hash join or a symmetric hash join of an expression's result with a held relation answer the expression's failure past the tuple they keep, the expression's result on either side (`joinProperties`). A limit over a join of sides evaluating nothing pulls the one tuple it keeps.
   - `TestAFailureWhereEveryOtherClauseHoldsFailsTheQueryWhereverItStands` (storage, new). Two groups the find does not read, an order-by with a limit, a limit over a find spanning the failing group and another, a correlated subquery, an or-join and a not-join run over the group, and an or-join and an or-default-join with no required run, on both optimizer paths.
   - `TestAMissingFailureWhereEveryOtherClauseHoldsFailsTheQueryFromAWindowedBody` (storage, new). A `missing?` over a value naming no entity fails the query from a not-join body, an or-join branch and a correlated subquery's body run over a group the find does not read, on both optimizer paths.
   - `TestReviewEval_AFailureWhereEveryOtherClauseHoldsFailsTheQuery`, `TestReviewEval_AFailureDoesNotDependOnTheOrderAScanYields` and `TestRefuteEval_AFailureWhereEveryOtherClauseHoldsFailsEveryReadEntry` (storage), and `TestReviewEval_CLIAFailureWhereEveryOtherClauseHoldsIsTheQuerysError` (cmd/datalog).
@@ -382,12 +392,14 @@ The change carries these tests, each pinning the theorem named, mapped to the re
     - a predicate and an expression over a failing group and a group with a tuple, before an empty pattern
   - `TestReviewEval_AFailureBesideAnEmptyClauseFailsNoQuery` (storage). A missing? predicate before an empty pattern, or on its input, and a get-else and a get-some expression before an empty pattern, answer empty on both optimizer paths. Its missing? case before the empty pattern pins the fusion bundle's decline of a group carrying the mark.
   - `TestThetaJoinPair_PropagatesPredicateEvalError` (executor) reads the failure where the result is driven (P8).
+  - `TestSubqueryInFilter` (executor) counts the tuples it collects in place of reading the final relation's size. Its filter reads an averaging subquery's result, which carries the mark, so the filter answers a stream (P12, P8).
 - A windowed form's failed subject tuple (T13, L14):
   - `TestAFilterAnswersTheTupleItsFailureAroseOnAndResumesPastIt`, `TestAnEvaluatorAnswersTheTupleItsFailureAroseOnAndResumesPastIt` and `TestAStreamsIteratorAnswersItsSourcesFailedTupleAndResumesIt` (executor, new). The filter, the evaluator and a stream's iterator over the evaluator each answer the tuple their own failure arose on and resume past it. The filter and the evaluator answer none for their source's failure.
   - `TestWindowReader_CarriesAFailedTupleTheFormReadsOnlyWhereItHoldsValues` (executor, new). The reader carries a failed tuple into its window and reads on where the form reads only the tuple's known positions, and ends with the failure where the form reads the failing binding's position.
   - `TestABranchFormDecidesItsSubjectsFailedTupleAtItsKey` (executor, new). A union and a fallback drop a failed tuple and answer the subject's other tuples where no branch holds at its key, and answer the failure where a branch does.
   - `TestAFailureBesideAClauseHoldingNowhereFailsNoQuery` (storage, new). On both optimizer paths, a correlated subquery over a failing group answers each numeric key's tuple where its body holds at no key of the failing tuple, and the failure where its body holds at that key. A not-join whose body holds at the failing tuple's key answers each numeric key's tuple.
   - `TestReviewEval_AFailureBesideAnEmptyClauseFailsNoQuery` (storage). An arithmetic expression and a missing? predicate before an empty correlated subquery answer empty on both optimizer paths.
+  - `TestAFormOverAnotherFormsOutputDecidesAFailedTupleAtItsKey` (storage, new). On both optimizer paths, a not-join, a subquery, an or-join, an or-default-join or a pattern holding at the failing tuple, then a subquery, a not-join or a pattern holding nowhere there, answer the numeric items. Where the second clause holds there, the failure is the query's error.
 - The identity symbols (§1, P11):
   - `TestRelationPropertiesCarryIdentities` (executor, new). Each derivation of properties keeps, renames, drops or joins the identity symbols as P11 states.
   - `TestAPatternsAnswerCarriesItsEntityVariableAmongItsIdentities` (storage, new). Each storage match arm whose pattern has an entity variable states it among its answer's identity symbols, on every backend.
@@ -435,11 +447,14 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - `relation.go`: the held constructors, the stream's `EvaluateFunction` and `FilterWithPredicate`, and `ProductRelation.Properties` decide the mark (P10). `ProductRelation.Properties` takes every member's identity symbols (P11).
 - `lazy_seq_relation.go`: `EvaluateFunction` and `FilterWithPredicate` decide the mark (P10).
 - `relation_ops.go`, `evaluateExpressionWithLookup`: sets the mark unless the expression fails on no value over its relation's identity symbols (P10).
-- `windowed_form.go`, `canFailOnAValue`: decides whether running clauses can fail on a value (§1), every clause kind named.
+- `windowed_form.go`, `canFailOnAValue`: decides whether running clauses can fail on a value (§1), every clause kind named, and a subquery's folds through `subqueryFoldCanFail`.
+- `windowed_form.go`, `subqueryFoldCanFail`: a subquery whose `:find` holds an aggregate whose fold can fail on a value, whatever its call passes (§1).
+- `aggregation.go`, `aggregateOps`: gains `failsOnAValue`, which `resolveAggregate` sets for sum and avg (§1).
 - `windowed_form.go`, `canFailOnAValueOver`, `expressionFailsOnNoValueOver` and `entityIsAnIdentity`: decide whether one predicate or expression can fail on a value over a relation's identity symbols (§1).
 - `datalog/storage/matcher_relations.go` and `datalog/storage/hash_join_matcher.go`: each match arm whose pattern has an entity variable states it among its answer's identity symbols (P11).
 - `bound_pattern.go`, `executeBoundPattern`, and `query_executor.go`, `tryFuseAttributeFetchBundle`: state their entity variable among their answer's identity symbols (P11).
 - `executeSubquery` (`query_executor.go`), `executeNotJoinClause` (`scope.go`), `NewOrFallbackRelation` (`or_fallback_relation.go`) and `executeBoundInvocation` (`bound_invocation.go`): set the mark (P10).
+- `query_executor.go`, `executeSubquery`: asks `canFailOnAValue` of the subquery clause, so its mark reads the body and the `:find`'s folds (P10).
 - `limit_relation.go`, `LimitRelation.take`: reads as T11 states.
 - `query_executor.go`, `existenceVerdict`: decides as T11 states and L12 proves. It takes the groups the find reads beside the groups it decides, and reads them only with a failure to raise (P10).
 - `relation.go`, `ProductIterator.Next` and `ProductIterator.Error`: the first pull reads every member to its first tuple, its end or its failure, and a member with no tuple and no failure ends the product with no failure (P10, T11).
@@ -452,8 +467,10 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - `query_executor.go`, `tryFuseAttributeFetchBundle`: declines a group carrying the mark (P12).
 - `iterator_composition.go`, `failedTupleIterator`: `PredicateFilterIterator` and `FunctionEvaluatorIterator` answer their failed tuple and resume past it (P13).
 - `relation.go`, `CountingIterator`: answers the failed tuple of the iterator it counts, and resumes it (P13).
-- `window_reader.go`, `windowReader`: carries a failed tuple holding a value at each position the form reads into its window, marked with its failure, and reads on (P13).
+- `window_reader.go`, `windowReader`: carries a failed tuple holding a value at each position the form reads into its window, marked with its failure and the positions it holds no value at (`windowFailure.unknown`, `unknownAt`), and reads on (P13).
 - `windowed_form.go`, `newWindowedIterator`, `windowedIterator.Next` and `tupleToAnswer`: the positions the form reads, and the failure raised where the form answers an output for a marked tuple (T13).
+- `windowed_form.go`, `windowedIterator.failedTuple` and `resume`: the output answered for a marked tuple, with the tuple's unknown positions, and the resumption past it (P13, T13).
+- `bound_pattern.go`, `patternJoinIterator.failedTuple` and `resume`: its windowed join's (P13).
 - `or_fallback_relation.go`, `OrFallbackIterator.answer`: deduplicates no output of a marked tuple (P13).
 
 ## 7. What the proof does not cover
@@ -471,4 +488,11 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - A build side's failure beside a probe side whose tuples carry no key the failing build tuple could hold. The join raises the failure once the probe side holds a tuple (T5), whatever key the tuple carries, since the failure carries no key.
 - Two groups the existence verdict decides, or two members of a product, each failing in place of a first tuple. The verdict and the product raise the first failure, and whether the other group holds at any assignment past its own failure is not read.
 - A failed subject tuple whose unknown positions include one the form reads, such as a subquery whose input is the failing expression's output. The reader ends with the failure before the form runs at any key (P13).
-- A failed subject tuple under a subject that is a join of several groups, or a stream marked for caching. `hashJoinIterator` and `CachingIterator` answer no failed tuple, so the reader ends with the failure (P13).
+- A failed subject tuple under a subject that is a join of several groups or a stream marked for caching. `hashJoinIterator` and `CachingIterator` answer no failed tuple (P13), so the reader ends with the failure, though the form may hold at no assignment extending the tuple (`docs/bugs/BUG_A_FAILED_TUPLE_RAISES_AT_AN_OPERATOR_THAT_DOES_NOT_CARRY_IT.md`).
+- A `:limit 0` over a relation without the evaluating mark whose first pull fails, such as a function reading no variable (L12). `LimitRelation.take` opens no iterator of a source without the mark when its limit is 0, so the failure is not raised, where a read of one tuple raises it. That was read in `LimitRelation.take` and not run.
+- A correlated subquery that fails on a value at a key no outer tuple reaches, with the algebra optimizer on (`docs/bugs/BUG_OPTIMIZER_PATHS_ANSWER_DIFFERENTLY_WHEN_A_CORRELATED_SUBQUERY_FAILS_ON_A_VALUE.md`).
+  - Rule 1 rewrites a subquery whose `:find` aggregates into one aggregate over every value of the correlation variable (`docs/ALGEBRA.md`, Rule 1).
+  - Rule 4 rewrites a subquery whose body holds a filtering clause into one subquery over every value of it (`docs/ALGEBRA.md`, Rule 4).
+  - Each rewritten call passes no variable, so its form runs it once, over the unit relation, at the first window (`docs/ALGEBRA.md`, OR-Fallback Branch Caching). There it folds every group and evaluates the body at every key.
+  - So a failure at a key no outer tuple reaches fails the query, where with the optimizer off the correlated subquery evaluates only the keys an outer tuple reaches.
+  - The bug record holds the reproducer of both shapes, and its table records what each optimizer path answers.
