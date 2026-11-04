@@ -20,7 +20,7 @@ func TestCreatePhasesGreedyRefusalSaysWhetherAnythingBindsAWaitedVariable(t *tes
 		t.Run(c.name, func(t *testing.T) {
 			q, err := parser.ParseQuery(c.text)
 			require.NoError(t, err)
-			_, err = createPhasesGreedy(q.Where, physicalFindSymbols(q.Find), map[query.Symbol]bool{}, query.Bindings{})
+			_, err = createPhasesGreedy(q.Where, query.FindSymbols(q.Find), map[query.Symbol]bool{}, query.Bindings{})
 			require.Error(t, err, "no order places every clause")
 			require.Contains(t, err.Error(), "cannot order clauses: ")
 			for _, waits := range c.waits {

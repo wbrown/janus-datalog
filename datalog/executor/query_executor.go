@@ -360,7 +360,7 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 		// boundary in ExecuteRealized, after sort/strip/limit — never
 		// inside relational flow. See
 		// docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
-		findSymbols := extractFindSymbols(q.Find)
+		findSymbols := query.FindSymbols(q.Find)
 
 		// Check if all :find symbols are available across the groups
 		// If symbols span multiple groups, we need to Product() them first

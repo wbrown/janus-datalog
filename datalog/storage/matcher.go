@@ -41,6 +41,10 @@ type PatternMatcher struct {
 	// matcher built outside a database refuses nothing.
 	refuseUnknown bool
 	cache         *Cache // CRDT resolution cache for O(1) access to resolved views
+	// vocabulary is the set the database's refusal admits, the attributes its
+	// store declares with the engine's words, read only where refuseUnknown is
+	// set.
+	vocabulary map[datalog.Keyword]struct{}
 }
 
 // temporalMode is which view of the store a handle reads: the current view,
@@ -167,8 +171,9 @@ func (m *PatternMatcher) History() *PatternMatcher {
 }
 
 // withMode is a copy of this matcher reading the given view. The copy shares
-// the store, the read session, the schema, the cache and the tuple-builder
-// population, which is initialized here before it is shared.
+// the store, the read session, the schema, the refusal and the set it admits,
+// the cache and the tuple-builder population, which is initialized here before
+// it is shared.
 func (m *PatternMatcher) withMode(mode temporalMode, asOf datalog.ElementID) *PatternMatcher {
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
@@ -187,6 +192,7 @@ func (m *PatternMatcher) withMode(mode temporalMode, asOf datalog.ElementID) *Pa
 		schema:         m.schema,
 		refuseUnknown:  m.refuseUnknown,
 		cache:          m.cache,
+		vocabulary:     m.vocabulary,
 	}
 }
 

@@ -233,9 +233,10 @@ type RealizedPlan struct {
 	Evaluations map[*query.RuleInvocation]*InvocationEvaluation
 
 	// SourceAnswers is each question the get-else scan rewrite asked the
-	// sources while this plan and the body plans its evaluations embed were
-	// made, with the answer each got. The plan cache serves the plan only
-	// where the requesting planner's sources answer every one alike.
+	// sources while this plan, the body plans its evaluations embed, and the
+	// scope plans each evaluation's magic-sets rewrite read were made, with
+	// the answer each got. The plan cache serves the plan only where the
+	// requesting planner's sources answer every one alike.
 	SourceAnswers []SourceAnswer
 }
 

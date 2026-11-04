@@ -13,11 +13,15 @@ import (
 // Magic is a rule set rewritten for one invocation with bound arguments.
 // Rules derives Predicate, the invoked predicate adorned with the binding
 // pattern, from Seed, the predicate the invocation's bound values fill, so
-// evaluating Rules derives only the tuples those values reach.
+// evaluating Rules derives only the tuples those values reach. SourceAnswers
+// is the questions the scope plans the rewrite read asked, each with its
+// answer: the rewritten rules hold those plans' clauses, which their get-else
+// rewrites decided.
 type Magic struct {
-	Rules     *query.RuleSet
-	Predicate query.Symbol
-	Seed      query.Symbol
+	Rules         *query.RuleSet
+	Predicate     query.Symbol
+	Seed          query.Symbol
+	SourceAnswers []SourceAnswer
 }
 
 // Rewrite rewrites the set for an invocation of name whose positions bound
@@ -130,7 +134,7 @@ func Rewrite(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []bool,
 			return &Magic{Rules: rs, Predicate: name}, nil
 		}
 		if !again {
-			return &Magic{Rules: rewritten, Predicate: predicate, Seed: seed}, nil
+			return &Magic{Rules: rewritten, Predicate: predicate, Seed: seed, SourceAnswers: w.answers}, nil
 		}
 	}
 }
@@ -177,7 +181,8 @@ type adornedPredicate struct {
 // the predicates the evaluation derives whole, read whole at every site
 // (A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md), and enqueued the
 // original names of the adorned predicates the walk queued, which Rewrite
-// reads against the whole predicates of the set the walk built.
+// reads against the whole predicates of the set the walk built. answers holds
+// the questions of every scope plan the walk read.
 type magicRewriter struct {
 	rs       *query.RuleSet
 	planner  QueryPlanner
@@ -190,6 +195,7 @@ type magicRewriter struct {
 	sites    []nonMonotoneSite
 	whole    map[query.Symbol]bool
 	enqueued map[query.Symbol]bool
+	answers  []SourceAnswer
 }
 
 // nonMonotoneSite is an invocation under a non-monotone form, named by the
@@ -304,12 +310,14 @@ func (w *magicRewriter) includeOriginal(name query.Symbol) {
 // planned is a scope's clauses in the planner's order: the scope planned
 // through the planner under the set being rewritten, with every invocation
 // held, since the rewrite decides each site itself, read as the rewrite
-// reads a plan.
+// reads a plan. The walk keeps the questions the plan asked, since the
+// rewritten set holds its clauses.
 func (w *magicRewriter) planned(required []query.Symbol, find []query.FindElement, clauses []query.Clause) ([]query.Clause, error) {
 	plan, err := w.planner.PlanScope(Scope{Required: required, Find: find, Clauses: clauses}, query.Bindings{Rules: w.rs, Held: query.HeldEvery}, w.handler)
 	if err != nil {
 		return nil, err
 	}
+	w.answers = append(w.answers, plan.SourceAnswers...)
 	return plannedClauses(plan), nil
 }
 

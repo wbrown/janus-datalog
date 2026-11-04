@@ -275,3 +275,87 @@ func TestHashJoinRaisesABuildFailureOnlyWhereTheProbeSideHoldsATuple(t *testing.
 		})
 	}
 }
+
+// Every join strategy answers a side's failure only where the other side
+// holds a tuple or a failure: beside an empty side the join answers no tuple
+// and no failure, and beside a side with a tuple it answers the failure,
+// whether the failing side is the left or the right and whether it fails at
+// its first tuple or past it (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md,
+// the failure contract). The hash join and the symmetric hash join, which
+// EnableSymmetricHashJoin selects over two streams, answer each case alike.
+func TestEveryJoinStrategyAnswersASideFailureOnlyWhereTheOtherSideHoldsATuple(t *testing.T) {
+	x := []query.Symbol{datalog.NewSymbol("?x")}
+	failing := []struct {
+		name string
+		side func() Relation
+	}{
+		{"failing at its first tuple", func() Relation { return newFailingStream(0, Tuple{int64(1)}, Tuple{int64(2)}) }},
+		{"failing past its first tuple", func() Relation { return newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)}) }},
+	}
+	strategies := []struct {
+		name string
+		opts ExecutorOptions
+	}{
+		{"hash join", ExecutorOptions{}},
+		{"symmetric hash join", ExecutorOptions{EnableSymmetricHashJoin: true}},
+	}
+	for _, strategy := range strategies {
+		for _, f := range failing {
+			t.Run(strategy.name+"/the left side "+f.name+" beside an empty right side", func(t *testing.T) {
+				tuples, err := CollectTuples(HashJoinWithOptions(f.side(), streamOf("?x"), x, strategy.opts), nil)
+				require.NoError(t, err, "no assignment holds the empty side, so no failure is raised")
+				require.Empty(t, tuples)
+			})
+			t.Run(strategy.name+"/the right side "+f.name+" beside an empty left side", func(t *testing.T) {
+				tuples, err := CollectTuples(HashJoinWithOptions(streamOf("?x"), f.side(), x, strategy.opts), nil)
+				require.NoError(t, err, "no assignment holds the empty side, so no failure is raised")
+				require.Empty(t, tuples)
+			})
+			t.Run(strategy.name+"/the left side "+f.name+" beside a right side with a tuple", func(t *testing.T) {
+				_, err := CollectTuples(HashJoinWithOptions(f.side(), streamOf("?x", Tuple{int64(1)}), x, strategy.opts), nil)
+				require.ErrorIs(t, err, errInjectedIterator)
+			})
+			t.Run(strategy.name+"/the right side "+f.name+" beside a left side with a tuple", func(t *testing.T) {
+				_, err := CollectTuples(HashJoinWithOptions(streamOf("?x", Tuple{int64(1)}), f.side(), x, strategy.opts), nil)
+				require.ErrorIs(t, err, errInjectedIterator)
+			})
+		}
+		t.Run(strategy.name+"/both sides failing", func(t *testing.T) {
+			_, err := CollectTuples(HashJoinWithOptions(newFailingStream(0, Tuple{int64(1)}), newFailingStream(0, Tuple{int64(1)}), x, strategy.opts), nil)
+			require.ErrorIs(t, err, errInjectedIterator)
+		})
+		t.Run(strategy.name+"/both sides holding tuples", func(t *testing.T) {
+			tuples, err := CollectTuples(HashJoinWithOptions(streamOf("?x", Tuple{int64(1)}, Tuple{int64(2)}), streamOf("?x", Tuple{int64(2)}), x, strategy.opts), nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(2)}}, tuples)
+		})
+	}
+}
+
+// A join of two sides answers no failure where a side ended with no tuple and
+// no failure, and otherwise the first side's failure, else the second's.
+func TestJoinFailureIsTheFirstSidesFailureUnlessASideEndedEmpty(t *testing.T) {
+	first, second := errors.New("the first side's failure"), errors.New("the second side's failure")
+	cases := []struct {
+		name          string
+		first, second sideRead
+		want          error
+	}{
+		{"both sides yielded and neither failed", sideRead{yielded: true}, sideRead{yielded: true}, nil},
+		{"the first side ended empty beside a failing second side", sideRead{}, sideRead{err: second}, nil},
+		{"the second side ended empty beside a failing first side", sideRead{yielded: true, err: first}, sideRead{}, nil},
+		{"the first side failed in place of a tuple beside a second side that yielded", sideRead{err: first}, sideRead{yielded: true}, first},
+		{"the second side failed beside a first side that yielded", sideRead{yielded: true}, sideRead{yielded: true, err: second}, second},
+		{"both sides failed", sideRead{err: first}, sideRead{err: second}, first},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := joinFailure(c.first, c.second)
+			if c.want == nil {
+				require.NoError(t, got)
+				return
+			}
+			require.ErrorIs(t, got, c.want)
+		})
+	}
+}

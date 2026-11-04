@@ -69,8 +69,8 @@ func TestOpenFactsHoldsEachEntitysVectorWhole(t *testing.T) {
 	vectors, err := executor.CollectTuples(d.Query(`[:find ?e ?v :where [?e :facts/tags ?v]]`))
 	require.NoError(t, err)
 	require.ElementsMatch(t, [][]interface{}{
-		{one, []interface{}{int64(1), int64(2)}},
-		{two, []interface{}{int64(2), int64(1), int64(3)}},
+		{one, []int64{1, 2}},
+		{two, []int64{2, 1, 3}},
 	}, vectors, "each entity answers its one vector, its elements in their order")
 }
 
@@ -114,4 +114,48 @@ func TestOpenFactsRefusesVectorFactsThatCannotBothHold(t *testing.T) {
 			require.ErrorContains(t, err, tc.refusal)
 		})
 	}
+}
+
+// Scalar facts at an attribute the given schema declares cardinality-vector
+// are the entity's vector, in the facts' order, as Transaction.Add appends
+// them. At an ordered set, a value the vector already holds is written once.
+func TestOpenFactsAppendsScalarFactsToADeclaredVector(t *testing.T) {
+	one := datalog.NewIdentity("facts:one")
+	steps, prefs := kw(":facts/steps"), kw(":facts/prefs")
+	given, err := schema.NewBuilder().
+		Attribute(":facts/steps").Type(schema.TypeString).Vector().Add().
+		Attribute(":facts/prefs").Type(schema.TypeString).OrderedSet().Add().
+		Build()
+	require.NoError(t, err)
+	facts := []datalog.Datom{
+		{E: one, A: steps, V: "a"},
+		{E: one, A: prefs, V: "x"},
+		{E: one, A: steps, V: "b"},
+		{E: one, A: prefs, V: "y"},
+		{E: one, A: steps, V: "a"},
+		{E: one, A: prefs, V: "x"},
+	}
+	d, err := OpenFacts(facts, DatabaseOptions{Schema: given})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, d.Close()) }()
+
+	for _, c := range []struct {
+		query string
+		want  []string
+	}{
+		{`[:find ?v :where [_ :facts/steps ?v]]`, []string{"a", "b", "a"}},
+		{`[:find ?v :where [_ :facts/prefs ?v]]`, []string{"x", "y"}},
+	} {
+		got, err := executor.CollectTuples(d.Query(c.query))
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{c.want}}, got, c.query)
+	}
+}
+
+// A fact at one of the engine's words is refused, as Transaction.Add refuses
+// it: the engine alone writes them.
+func TestOpenFactsRefusesTheEnginesWords(t *testing.T) {
+	one := datalog.NewIdentity("facts:one")
+	_, err := OpenFacts([]datalog.Datom{{E: one, A: kw(":db/ident"), V: kw(":facts/name")}}, DatabaseOptions{})
+	require.ErrorContains(t, err, "the engine alone writes it")
 }

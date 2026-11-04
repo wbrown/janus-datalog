@@ -16,24 +16,17 @@ import (
 const StreamingAggregationThreshold = 100
 
 // ExecuteAggregations applies aggregation operations to a relation.
-// This is the main entry point for aggregation logic.
+// This is the main entry point for aggregation logic. Its result is the
+// relation over the find's elements in written order (aggregationLayout).
 func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relation {
 	// Acquired once: Options() is an interface dispatch returning the struct by
 	// value, and every path below — the early error returns included — needs it.
 	opts := rel.Options()
 
-	// Separate variables and aggregates
-	var groupByVars []query.Symbol
-	var aggregates []query.FindAggregate
-
-	for _, elem := range findElements {
-		switch e := elem.(type) {
-		case query.FindVariable:
-			groupByVars = append(groupByVars, e.Symbol)
-		case query.FindAggregate:
-			aggregates = append(aggregates, e)
-		}
-	}
+	// The find's group keys, each a variable or a pull's entity variable, and
+	// its aggregates, with the position each takes in a result tuple.
+	layout := newAggregationLayout(findElements)
+	groupByVars, aggregates := layout.groupByVars, layout.aggregates
 
 	// With no aggregate the find is a projection onto its variables. A find
 	// over a symbol the relation lacks is the query's error, carried by the
@@ -50,8 +43,7 @@ func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relatio
 
 	for _, groupBy := range groupByVars {
 		if SymbolIndex(rel, groupBy) < 0 {
-			result := NewMaterializedRelationWithOptions(
-				aggregateResultSymbols(groupByVars, aggregates), nil, opts)
+			result := NewMaterializedRelationWithOptions(layout.symbols, nil, opts)
 			result.err = fmt.Errorf("group-by symbol %s is not present in source relation", groupBy)
 			return result
 		}
@@ -61,14 +53,12 @@ func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relatio
 	// group-by symbols.
 	for _, agg := range aggregates {
 		if SymbolIndex(rel, agg.Arg) < 0 {
-			result := NewMaterializedRelationWithOptions(
-				aggregateResultSymbols(groupByVars, aggregates), nil, opts)
+			result := NewMaterializedRelationWithOptions(layout.symbols, nil, opts)
 			result.err = fmt.Errorf("aggregate argument symbol %s is not present in source relation", agg.Arg)
 			return result
 		}
 		if agg.IsConditional() && SymbolIndex(rel, agg.Predicate) < 0 {
-			result := NewMaterializedRelationWithOptions(
-				aggregateResultSymbols(groupByVars, aggregates), nil, opts)
+			result := NewMaterializedRelationWithOptions(layout.symbols, nil, opts)
 			result.err = fmt.Errorf("aggregate predicate symbol %s is not present in source relation", agg.Predicate)
 			return result
 		}
@@ -112,17 +102,17 @@ func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relatio
 	var result Relation
 	switch {
 	case useStreaming:
-		// If no group-by variables, pass empty slice (single global group)
-		// The fold happens when this relation is consumed, after this call
-		// returns; it reports through the options it inherits from rel, which is
-		// where the handler came from here too.
-		result = NewStreamingAggregateRelation(rel, groupByVars, aggregates)
+		// With no group key the fold is one global group. The fold happens
+		// when this relation is consumed, after this call returns; it reports
+		// through the options it inherits from rel, which is where the handler
+		// came from here too.
+		result = NewStreamingAggregateRelation(rel, findElements)
 	case len(groupByVars) == 0:
 		// Batch aggregation with no group-by is a single aggregation.
-		result = executeSingleAggregation(rel, aggregates)
+		result = executeSingleAggregation(rel, layout)
 	default:
-		// Otherwise, group by the variables and aggregate within groups
-		result = executeGroupedAggregation(rel, groupByVars, aggregates)
+		// Otherwise, group by the keys and aggregate within groups
+		result = executeGroupedAggregation(rel, layout)
 	}
 
 	// Emit aggregation annotation with find clause details, through the same
@@ -155,16 +145,37 @@ func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relatio
 	return result
 }
 
-// aggregateResultSymbols is the output schema of an aggregation: the group-by
-// symbols followed by one symbol per aggregate, named by its display form.
-func aggregateResultSymbols(groupByVars []query.Symbol, aggregates []query.FindAggregate) []query.Symbol {
-	symbols := make([]query.Symbol, 0, len(groupByVars)+len(aggregates))
-	symbols = append(symbols, groupByVars...)
-	for _, agg := range aggregates {
-		// Use String() method which handles conditional vs unconditional formatting
-		symbols = append(symbols, datalog.NewSymbol(agg.String()))
+// aggregationLayout is an aggregating :find read once. Its group keys are the
+// find's variables and the entity variables of its pulls, and its aggregates
+// are the find's aggregates, each list in written order. Its symbols are the
+// result's, query.FindSymbols of the find, and keyAt and aggregateAt are the
+// positions each key and each aggregate takes in a result tuple, so a result
+// is the relation over the find's elements as written.
+type aggregationLayout struct {
+	groupByVars []query.Symbol
+	aggregates  []query.FindAggregate
+	symbols     []query.Symbol
+	keyAt       []int
+	aggregateAt []int
+}
+
+// newAggregationLayout reads the layout of an aggregating :find.
+func newAggregationLayout(find []query.FindElement) aggregationLayout {
+	layout := aggregationLayout{symbols: query.FindSymbols(find)}
+	for at, element := range find {
+		switch e := element.(type) {
+		case query.FindVariable:
+			layout.groupByVars = append(layout.groupByVars, e.Symbol)
+			layout.keyAt = append(layout.keyAt, at)
+		case query.FindPull:
+			layout.groupByVars = append(layout.groupByVars, e.Variable)
+			layout.keyAt = append(layout.keyAt, at)
+		case query.FindAggregate:
+			layout.aggregates = append(layout.aggregates, e)
+			layout.aggregateAt = append(layout.aggregateAt, at)
+		}
 	}
-	return symbols
+	return layout
 }
 
 // isStreamingEligible checks if all aggregates can be computed in streaming
@@ -196,9 +207,12 @@ func shouldUseStreaming(rel Relation) bool {
 	return true
 }
 
-// executeSingleAggregation computes aggregates over the entire relation
-func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (result Relation) {
-	resultSymbols := aggregateResultSymbols(nil, aggregates)
+// executeSingleAggregation computes aggregates over the entire relation. Its
+// find holds aggregates alone, so a result tuple holds the i-th aggregate at
+// position i.
+func executeSingleAggregation(rel Relation, layout aggregationLayout) (result Relation) {
+	aggregates := layout.aggregates
+	resultSymbols := layout.symbols
 
 	// Resolve each aggregate's behavior once, before any iteration.
 	ops, opsErr := resolveAggregates(aggregates)
@@ -321,13 +335,11 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 	return result
 }
 
-// executeGroupedAggregation performs aggregation with grouping
-func executeGroupedAggregation(
-	rel Relation,
-	groupByVars []query.Symbol,
-	aggregates []query.FindAggregate,
-) (result Relation) {
-	resultSymbols := aggregateResultSymbols(groupByVars, aggregates)
+// executeGroupedAggregation performs aggregation with grouping. A result
+// tuple holds each group key and each aggregate at its find position.
+func executeGroupedAggregation(rel Relation, layout aggregationLayout) (result Relation) {
+	groupByVars, aggregates := layout.groupByVars, layout.aggregates
+	resultSymbols := layout.symbols
 
 	// Resolve each aggregate's behavior once, before any iteration.
 	ops, opsErr := resolveAggregates(aggregates)
@@ -441,12 +453,14 @@ func executeGroupedAggregation(
 			continue // Skip this group - no values passed predicates
 		}
 
-		resultTuple := make(Tuple, len(groupByVars)+len(aggregates))
+		resultTuple := make(Tuple, len(resultSymbols))
 
-		// Add group-by values
-		copy(resultTuple, group.key)
+		// Add group-by values, each at its find position
+		for j, at := range layout.keyAt {
+			resultTuple[at] = group.key[j]
+		}
 
-		// Add aggregate results
+		// Add aggregate results, each at its find position
 		for i := range aggregates {
 			v, aggValErr := foldAggregateValues(ops[i], group.values[i])
 			if aggValErr != nil && aggregateErr == nil {
@@ -459,7 +473,7 @@ func executeGroupedAggregation(
 			if v == nil && aggregateErr == nil {
 				aggregateErr = fmt.Errorf("aggregate %s folded no values for a group while sibling aggregates did; nil is not a datalog value", aggregates[i].String())
 			}
-			resultTuple[len(groupByVars)+i] = v
+			resultTuple[layout.aggregateAt[i]] = v
 		}
 
 		resultTuples = append(resultTuples, resultTuple)
@@ -676,10 +690,11 @@ func foldAggregateValues(op aggregateOps, values []interface{}) (interface{}, er
 // This reduces memory usage from O(tuples) to O(groups) and eliminates intermediate
 // materialization of all values before aggregation.
 type StreamingAggregateRelation struct {
-	source      Relation
-	groupByVars []query.Symbol
-	aggregates  []query.FindAggregate
-	options     ExecutorOptions
+	source Relation
+	// The find's group keys, its aggregates, the result's symbols and the
+	// position of each key and each aggregate in a result tuple.
+	aggregationLayout
+	options ExecutorOptions
 
 	// The groups, one tuple each, folded from the source on first read and
 	// held for every read after.
@@ -687,22 +702,23 @@ type StreamingAggregateRelation struct {
 	groups   *MaterializedRelation
 }
 
-// NewStreamingAggregateRelation creates a streaming aggregate relation
-func NewStreamingAggregateRelation(source Relation, groupByVars []query.Symbol, aggregates []query.FindAggregate) *StreamingAggregateRelation {
+// NewStreamingAggregateRelation creates a streaming aggregate relation over
+// source under an aggregating find. Its result is the relation over the
+// find's elements in written order.
+func NewStreamingAggregateRelation(source Relation, find []query.FindElement) *StreamingAggregateRelation {
 	// Extract options from source relation
 	opts := source.Options()
 
 	return &StreamingAggregateRelation{
-		source:      source,
-		groupByVars: groupByVars,
-		aggregates:  aggregates,
-		options:     opts,
+		source:            source,
+		aggregationLayout: newAggregationLayout(find),
+		options:           opts,
 	}
 }
 
-// Symbols returns the output symbols
+// Symbols returns the output symbols, the find's in written order
 func (r *StreamingAggregateRelation) Symbols() []query.Symbol {
-	return aggregateResultSymbols(r.groupByVars, r.aggregates)
+	return r.symbols
 }
 
 func (r *StreamingAggregateRelation) Properties() RelationProperties {
@@ -956,12 +972,15 @@ func (r *StreamingAggregateRelation) fold() (result *MaterializedRelation) {
 			continue
 		}
 
-		resultTuple := make(Tuple, len(r.groupByVars)+len(r.aggregates))
+		resultTuple := make(Tuple, len(r.symbols))
 
-		// Add group-by values
-		copy(resultTuple, group.key)
+		// Add group-by values, each at its find position
+		for j, at := range r.keyAt {
+			resultTuple[at] = group.key[j]
+		}
 
-		// Add aggregate results (one per aggregate accumulator)
+		// Add aggregate results (one per aggregate accumulator), each at its
+		// find position
 		for i := range r.aggregates {
 			v, resultErr := ops[i].result(&group.states[i])
 			if resultErr != nil && aggregateErr == nil {
@@ -973,7 +992,7 @@ func (r *StreamingAggregateRelation) fold() (result *MaterializedRelation) {
 			if v == nil && aggregateErr == nil {
 				aggregateErr = fmt.Errorf("aggregate %s folded no values while sibling aggregates did; nil is not a datalog value", r.aggregates[i].String())
 			}
-			resultTuple[len(r.groupByVars)+i] = v
+			resultTuple[r.aggregateAt[i]] = v
 		}
 
 		resultTuples = append(resultTuples, resultTuple)

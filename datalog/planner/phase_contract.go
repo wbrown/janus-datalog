@@ -3,7 +3,6 @@ package planner
 import (
 	"fmt"
 
-	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -30,7 +29,7 @@ func (plan *RealizedPlan) Validate() error {
 				phaseNumber, phase.Available, input)
 		}
 
-		output := physicalFindSymbols(phase.Query.Find)
+		output := query.FindSymbols(phase.Query.Find)
 		if !samePhysicalSchema(phase.Provides, output) {
 			return fmt.Errorf("phase %d provides schema %v does not match query output schema %v",
 				phaseNumber, phase.Provides, output)
@@ -183,21 +182,6 @@ func terminalSymbols(q *query.Query) []query.Symbol {
 					add(symbol)
 				}
 			}
-		}
-	}
-	return symbols
-}
-
-func physicalFindSymbols(find []query.FindElement) []query.Symbol {
-	symbols := make([]query.Symbol, 0, len(find))
-	for _, element := range find {
-		switch value := element.(type) {
-		case query.FindVariable:
-			symbols = append(symbols, value.Symbol)
-		case query.FindAggregate:
-			symbols = append(symbols, datalog.NewSymbol(value.String()))
-		case query.FindPull:
-			symbols = append(symbols, value.Variable)
 		}
 	}
 	return symbols

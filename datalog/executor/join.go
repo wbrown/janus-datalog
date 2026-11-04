@@ -168,19 +168,36 @@ func (it *hashJoinIterator) Close() error {
 	return nil
 }
 
-// Error answers a failure of the build side only where the probe side yielded
-// a tuple or failed: an empty probe side holds at no assignment, so no
-// failure is raised there (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the
-// failure contract). Otherwise it answers the probe side's failure.
+// sideRead is what a join read of one of its sides: whether the side yielded
+// a tuple, and the failure it ended with.
+type sideRead struct {
+	yielded bool
+	err     error
+}
+
+// joinFailure is the failure a join of two sides answers: none where a side
+// ended with no tuple and no failure, since an empty side holds at no
+// assignment, and otherwise the first side's failure, else the second's
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract).
+func joinFailure(first, second sideRead) error {
+	if (!first.yielded && first.err == nil) || (!second.yielded && second.err == nil) {
+		return nil
+	}
+	if first.err != nil {
+		return first.err
+	}
+	return second.err
+}
+
+// Error answers the join's failure under the failure contract (joinFailure).
+// The build side yielded a tuple, since the iterator exists only for a build
+// that holds one, and the probe side yielded one once a probe tuple was read.
 func (it *hashJoinIterator) Error() error {
 	var probeErr error
 	if it.probeIt != nil {
 		probeErr = it.probeIt.Error()
 	}
-	if it.buildErr != nil && (it.currentProbeTuple != nil || probeErr != nil) {
-		return it.buildErr
-	}
-	return probeErr
+	return joinFailure(sideRead{yielded: true, err: it.buildErr}, sideRead{yielded: it.currentProbeTuple != nil, err: probeErr})
 }
 
 // emitProbeAnnotation reports the probe's counters. Its callers guard on
@@ -543,9 +560,8 @@ func hashJoinWithSet(
 	// failure contract).
 	if buildCount == 0 {
 		if buildErr != nil {
-			if has, probeErr := hasTuple(probeRel); !has && probeErr == nil {
-				buildErr = nil
-			}
+			has, probeErr := hasTuple(probeRel)
+			buildErr = joinFailure(sideRead{err: buildErr}, sideRead{yielded: has, err: probeErr})
 		}
 		if opts.Handler != nil {
 			opts.Handler(annotations.Event{

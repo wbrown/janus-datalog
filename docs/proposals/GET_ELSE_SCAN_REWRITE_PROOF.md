@@ -124,6 +124,8 @@ The change carries these tests, each pinning the theorem named.
 - `TestExplainAndAnalyzePlanWithTheQuerysSources` (storage): `Explain` and `Analyze` planning with the query's `WithSources` (G2, G3).
 - `TestGetElseScanRewrite_AsksTheSourceTheGetElseReads` (algebra): the pass declining a get-else whose source answers false, and asking with the source the get-else reads (G1, T4).
 - `TestThePlanCacheServesAPlanOnlyWhereTheSourcesAnswerAsWhenItWasMade`, `TestThePlanCacheReadsTheAnswersOfTheBodyPlansAPlanEmbeds` and `TestAPlannerGivenNoAnswerDeclinesTheGetElseRewrite` (planner): one plan cache serving a plan only where the requesting planner's sources answer as they did when it was made, the questions of the body plans it embeds among them, and a planner given no answer declining the rewrite (G1, G3).
+- `TestThePlanCacheReadsTheAnswersOfTheScopePlansARewriteReads` (planner): a plan recording the questions of the scope plans a magic-sets rewrite reads, a rule's body, a form's branch and a subquery's inner query, so one plan cache does not serve it to a planner whose sources answer otherwise (G3, T6).
+- The `TestRefuteGate_` and `TestGateReview_` families (storage, db): a bound invocation whose body holds a get-else, its text run on a database and then on its history handle or after `SetSchema`, through each entry point (G3, T6).
 - `TestADatabasePassedAsANamedSourceAnswersWhetherAMatchAnswersItsLookup` (storage): a database passed as a named source answering the gate through its matcher (T1).
 
 ## 7. The change the proof licenses
@@ -133,7 +135,7 @@ The change carries these tests, each pinning the theorem named.
 - `datalog/executor/interfaces.go`, `AttributeFetchFusable`'s doc: a true answer states F.
 - `datalog/planner`, `PlannerOptions`: the sources' answer, which `executor.NewExecutorWithOptions` sets from its matcher's `CanFuseAttributeFetch`. A planner given none declines every get-else rewrite (G1, and G3 within one execution).
 - `datalog/algebra`, `GetElseScanRewritePass` and `DefaultPasses`: take the answer. The pass declines a get-else whose source answers false and records the reason (G1, T4).
-- `datalog/planner`: each pair a planning call asks is recorded on the plan with those of the body plans it embeds, and the plan cache's `madeUnder` asks the requesting planner's sources each recorded pair (G3).
+- `datalog/planner`: each pair a planning call asks is recorded on the plan with those of the body plans it embeds and of the scope plans its evaluations' magic-sets rewrites read, whose clauses the rewritten rule bodies hold, and the plan cache's `madeUnder` asks the requesting planner's sources each recorded pair (G3).
 - `datalog/algebra/rewrite_decorrelate.go`, Rule 1: the inner query's clauses and `:in` sources are renamed by the call's substitution before the inner query is compiled, as `ReadSubqueryFrame` renames a framed scope's clauses (G2).
 - `datalog/storage`, `Explain`, `ExplainAlgebra` and `Analyze`: plan with the query's `WithSources`, through the router `Query` builds (G2, G3).
 - `docs/ALGEBRA.md`, Rule 5: the source precondition, the rewritten clause as `decompileLeftOuterJoin` emits it, and a pointer to this proof.

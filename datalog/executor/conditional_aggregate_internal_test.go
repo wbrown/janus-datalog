@@ -163,11 +163,7 @@ func TestConditionalAggregateEmptyBesideNonEmptyIsError(t *testing.T) {
 			[]query.Symbol{filter, value},
 			[]Tuple{{false, 10.0}, {false, 20.0}},
 		)
-		var aggregates []query.FindAggregate
-		for _, fe := range findElements() {
-			aggregates = append(aggregates, fe.(query.FindAggregate))
-		}
-		_, err := CollectTuples(NewStreamingAggregateRelation(rel, nil, aggregates), nil)
+		_, err := CollectTuples(NewStreamingAggregateRelation(rel, findElements()), nil)
 		require.Error(t, err, "streaming: count folded values, conditional min folded none: emission must error")
 	})
 }
@@ -184,10 +180,10 @@ func TestStreamingAggregationDropsAllEmptyGroups(t *testing.T) {
 		[]query.Symbol{filter, value},
 		[]Tuple{{false, 10.0}, {false, 20.0}, {false, 30.0}},
 	)
-	aggregates := []query.FindAggregate{
-		{Function: datalog.SymMin, Arg: value, Predicate: filter},
+	find := []query.FindElement{
+		query.FindAggregate{Function: datalog.SymMin, Arg: value, Predicate: filter},
 	}
-	tuples, err := CollectTuples(NewStreamingAggregateRelation(rel, nil, aggregates), nil)
+	tuples, err := CollectTuples(NewStreamingAggregateRelation(rel, find), nil)
 	require.NoError(t, err)
 	assert.Empty(t, tuples, "all-empty group must be dropped, not emitted as nils")
 }

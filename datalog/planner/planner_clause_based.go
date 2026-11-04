@@ -243,7 +243,7 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings query.Bin
 			}
 		}
 
-		phaseProvides := physicalFindSymbols(phaseFind)
+		phaseProvides := query.FindSymbols(phaseFind)
 		var phaseKeep []query.Symbol
 		if !isLastPhase {
 			phaseKeep = append([]query.Symbol(nil), phaseProvides...)

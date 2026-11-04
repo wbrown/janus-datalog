@@ -26,7 +26,7 @@ type Scope struct {
 // Outputs is the symbols the scope's find binds beyond the required run, a
 // variable's own and an aggregate's by its display form.
 func (s Scope) Outputs() []query.Symbol {
-	return physicalFindSymbols(s.Find)
+	return query.FindSymbols(s.Find)
 }
 
 // Header is the required run followed by the outputs: the symbols the

@@ -110,6 +110,64 @@ func TestThePlanCacheReadsTheAnswersOfTheBodyPlansAPlanEmbeds(t *testing.T) {
 	require.Equal(t, [2]int{1, 0}, [2]int{lookups, rewritten}, "the body planned under a false answer keeps the get-else")
 }
 
+// A plan carries the answers of the scope plans its evaluation's rewrite
+// read. The rewrite of an invocation's set takes a rule's body, a form's
+// branch beside an adorned invocation and a subquery's inner query beside one
+// from scope plans, and a scope whose get-else it turned into a scan asked a
+// question. The plan made under a true answer records the question, and one
+// plan cache does not serve it to a planner whose sources answer otherwise.
+func TestThePlanCacheReadsTheAnswersOfTheScopePlansARewriteReads(t *testing.T) {
+	cases := []struct {
+		name  string
+		rules string
+		query string
+	}{
+		{"a body",
+			`[[(ga ?e ?v) [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]]`,
+			`[:find ?e ?v :in $ % :where [?e :t/name _] (ga ?e ?v)]`},
+		{"a branch beside an adorned invocation",
+			`[[(ga ?e ?v) [?e :t/name _] (or-join [[?e] ?v] (and (gb ?e) [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]))]
+			  [(gb ?e) [?e :t/kind _]]]`,
+			`[:find ?e ?v :in $ % :where [?e :t/name _] (ga ?e ?v)]`},
+		{"a subquery beside an adorned invocation",
+			`[[(ga ?e ?v) [?e :t/name _] [(q [:find ?v :in $ % ?x :where (gb ?x) [?x :t/name _] [(get-else $ ?x :t/a "none") ?v]] $ % ?e) [[?v]]]]
+			  [(gb ?x) [?x :t/kind _]]]`,
+			`[:find ?e ?v :in $ % :where [?e :t/name _] (ga ?e ?v)]`},
+		{"a free invocation reaching a required predicate",
+			`[[(ga ?e ?v) [?e :t/name _] (gr ?e ?v)]
+			  [(gr [?e] ?v) [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]]`,
+			`[:find ?e ?v :in $ % :where (ga ?e ?v)]`},
+	}
+	question := SourceAnswer{Source: datalog.SymDollar, Attr: datalog.NewKeyword(":t/a"), Answer: true}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rules, err := parser.ParseRules(c.rules)
+			require.NoError(t, err)
+			parsed, err := parser.ParseQuery(c.query)
+			require.NoError(t, err)
+			q, err := query.Prepare(parsed, rules)
+			require.NoError(t, err)
+			bindings := query.Bindings{Rules: rules}
+			cache := NewPlanCache(10, 0)
+			answeringYes := NewClauseBasedPlanner(nil, PlannerOptions{Cache: cache, EnableAlgebraOptimizer: true, MatchAnswersLookup: answeringTrue})
+			answeringNo := NewClauseBasedPlanner(nil, PlannerOptions{Cache: cache, EnableAlgebraOptimizer: true, MatchAnswersLookup: answeringFalse})
+
+			made, err := answeringYes.Plan(q, bindings, nil)
+			require.NoError(t, err)
+			rewritten := false
+			for _, evaluation := range made.Evaluations {
+				rewritten = rewritten || evaluation.Rewritten
+			}
+			require.True(t, rewritten, "the invocation evaluates a rewritten set")
+			require.Contains(t, made.SourceAnswers, question, "the plan records the question its rewrite's scope plan asked")
+
+			requested, err := answeringNo.Plan(q, bindings, nil)
+			require.NoError(t, err)
+			require.NotSame(t, made, requested, "the cache serves the plan only where the sources answer the rewrite's scope plans as when it was made")
+		})
+	}
+}
+
 // The options answer through their MatchAnswersLookup, and false for every
 // source when they carry none.
 func TestPlannerOptionsAnswerThroughTheirMatchAnswersLookup(t *testing.T) {
@@ -131,8 +189,9 @@ func TestPlannerOptionsAnswerRecordedQuestionsAlikeWhenEachAgrees(t *testing.T) 
 		"a question the options answer otherwise")
 }
 
-// The answers of the body plans evaluations embed are every recorded question
-// of each stratum's plain, delta and lower bodies.
+// The answers evaluations embed are every recorded question of each
+// stratum's plain, delta and lower bodies, and every question of the scope
+// plans each evaluation's rewrite read.
 func TestEvaluationAnswersCollectEveryBodyPlansQuestions(t *testing.T) {
 	question := func(attr string) SourceAnswer {
 		return SourceAnswer{Source: datalog.SymDollar, Attr: datalog.NewKeyword(attr), Answer: true}
@@ -141,13 +200,16 @@ func TestEvaluationAnswersCollectEveryBodyPlansQuestions(t *testing.T) {
 		return PlannedBody{Plan: &RealizedPlan{SourceAnswers: []SourceAnswer{question(attr)}}}
 	}
 	evaluations := map[*query.RuleInvocation]*InvocationEvaluation{
-		{}: {Strata: []PlannedStratum{{Bodies: Bodies{
-			Plain: []PlannedBody{body(":t/plain")},
-			Delta: []PlannedBody{body(":t/delta")},
-			Lower: []PlannedBody{body(":t/lower")},
-		}}}},
+		{}: {
+			Magic: &Magic{SourceAnswers: []SourceAnswer{question(":t/rewrite")}},
+			Strata: []PlannedStratum{{Bodies: Bodies{
+				Plain: []PlannedBody{body(":t/plain")},
+				Delta: []PlannedBody{body(":t/delta")},
+				Lower: []PlannedBody{body(":t/lower")},
+			}}},
+		},
 	}
 	require.ElementsMatch(t,
-		[]SourceAnswer{question(":t/plain"), question(":t/delta"), question(":t/lower")},
+		[]SourceAnswer{question(":t/rewrite"), question(":t/plain"), question(":t/delta"), question(":t/lower")},
 		evaluationAnswers(evaluations))
 }

@@ -199,24 +199,6 @@ func TestRealizedPlanRejectsSymbolDroppedBeforeNonAdjacentUse(t *testing.T) {
 	require.Contains(t, err.Error(), "requires unavailable symbol ?entity")
 }
 
-func TestPhysicalFindSymbolsPreserveTypedOutputOrder(t *testing.T) {
-	entity := datalog.NewSymbol("?entity")
-	value := datalog.NewSymbol("?value")
-
-	require.Equal(t,
-		[]query.Symbol{
-			entity,
-			datalog.NewSymbol("(sum ?value)"),
-			entity,
-		},
-		physicalFindSymbols([]query.FindElement{
-			query.FindVariable{Symbol: entity},
-			query.FindAggregate{Function: datalog.SymSum, Arg: value},
-			query.FindPull{Variable: entity, Pattern: &query.PullPattern{}},
-		}),
-	)
-}
-
 func TestClauseBasedPlannerEmitsPhysicalPhaseContracts(t *testing.T) {
 	queries := map[string]string{
 		"simple": `[:find ?entity ?name
@@ -258,7 +240,7 @@ func assertPlanContract(t *testing.T, plan *RealizedPlan) {
 	require.NotEmpty(t, plan.Phases, "the plan runs at least one phase")
 	final := plan.Phases[len(plan.Phases)-1]
 	assert.Equal(t,
-		append(physicalFindSymbols(plan.Query.Find), query.RetainedSortSymbols(plan.Query)...),
+		append(query.FindSymbols(plan.Query.Find), query.RetainedSortSymbols(plan.Query)...),
 		final.Provides,
 		"the final phase answers the query's :find and its retained sort symbols")
 }

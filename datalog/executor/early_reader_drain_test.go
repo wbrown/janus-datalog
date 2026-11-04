@@ -151,8 +151,8 @@ func TestTheExistenceVerdictReadsAFailureARelationKeepsBehindItsSize(t *testing.
 	}{
 		{"an aggregate whose fold of an expression's result failed", "is not a number", func(t *testing.T) Relation {
 			values := NewMaterializedRelation([]query.Symbol{a}, []Tuple{{int64(1)}, {"x"}})
-			aggregate := NewStreamingAggregateRelation(evaluateExpressionWithLookup(values, plus, nil, nil), nil,
-				[]query.FindAggregate{{Function: datalog.SymCount, Arg: b}})
+			aggregate := NewStreamingAggregateRelation(evaluateExpressionWithLookup(values, plus, nil, nil),
+				[]query.FindElement{query.FindAggregate{Function: datalog.SymCount, Arg: b}})
 			require.Equal(t, 1, aggregate.Size(), "the fold holds the group before the failure")
 			return aggregate
 		}},

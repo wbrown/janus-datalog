@@ -378,7 +378,7 @@ func (e *Executor) ExecuteRealized(ctx *Context, plan *planner.RealizedPlan, inp
 			// deduplicates (set semantics), keeping each duplicate's first
 			// occurrence in sorted order.
 			if len(retained) > 0 {
-				result, err = result.Project(extractFindSymbols(plan.Query.Find))
+				result, err = result.Project(query.FindSymbols(plan.Query.Find))
 				if err != nil {
 					return nil, err
 				}
@@ -392,21 +392,13 @@ func (e *Executor) ExecuteRealized(ctx *Context, plan *planner.RealizedPlan, inp
 	// pulled maps are not datalog values, so they are produced here, at the
 	// terminal boundary — after sort, strip, and limit — for exactly the
 	// tuples the query returns. Entity bindings are Identity values through
-	// every relational operation above. Aggregate find clauses do not apply
-	// pulls. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
+	// every relational operation above. Under an aggregating find a pull's
+	// entity is a group key at the pull's place (aggregationLayout), and the
+	// pull renders there. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
 	if hasPulls(plan.Query.Find) {
-		hasAggregates := false
-		for _, elem := range plan.Query.Find {
-			if elem.IsAggregate() {
-				hasAggregates = true
-				break
-			}
-		}
-		if !hasAggregates {
-			result, err = applyFindPulls(e.matcher, e.entityResolver, result, plan.Query.Find)
-			if err != nil {
-				return nil, err
-			}
+		result, err = applyFindPulls(e.matcher, e.entityResolver, result, plan.Query.Find)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return result, nil

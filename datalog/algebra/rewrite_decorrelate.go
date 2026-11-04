@@ -35,27 +35,29 @@ func DecorrelationPass(sink *RewriteSink) Pass {
 	}
 }
 
-// decorrelateTransform is the transform function for LateralJoin nodes.
-// It receives the node's children as already-transformed values.
-// If decorrelation is possible, it returns a rewritten algebra Node.
-// Otherwise it returns the original node unchanged.
+// makeDecorrelateTransform is the transform the pass runs at each LateralJoin
+// node, its children already transformed. It answers the rewritten node where
+// the rewrite applies, and the node with its rewritten children where the
+// rewrite declines. A rewrite it decided on and could not build, its
+// decorrelated inner query failing to compile, optimize or decompile, is its
+// error, which the pass returns (ALGEBRA.md, Phase 6).
 func makeDecorrelateTransform(sink *RewriteSink) parse.TransformFunc {
-	return func(ctx *parse.TransformContext, node *parse.Node, children ...interface{}) interface{} {
+	return func(ctx *parse.TransformContext, node *parse.Node, children ...interface{}) (interface{}, error) {
 		return decorrelateTransform(ctx, node, sink, children...)
 	}
 }
 
-func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *RewriteSink, children ...interface{}) interface{} {
+func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *RewriteSink, children ...interface{}) (interface{}, error) {
 	if node.TransformedValue == nil {
-		return node
+		return node, nil
 	}
 	algNode, ok := node.TransformedValue.(*Node)
 	if !ok {
-		return node
+		return node, nil
 	}
 	lj, ok := algNode.Data.(*LateralJoin)
 	if !ok {
-		return node
+		return node, nil
 	}
 
 	// Decorrelation inside a Union is semantically incorrect: it moves the
@@ -63,7 +65,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	// with the ground branch. The ground branch lacks the correlation var,
 	// causing a cross-product when the Union result is joined with the outer.
 	if ctx.Parent != nil && ctx.Parent.Rule == RuleUnion {
-		return rebuildWithChildren(node, children)
+		return rebuildWithChildren(node, children), nil
 	}
 
 	// Ask the sink before building the payload. The subject and the correlation
@@ -104,12 +106,12 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 
 	if !shouldDecorrelate(lj) {
 		decline("pure DataPattern query — indexed lookup is faster")
-		return rebuildWithChildren(node, children)
+		return rebuildWithChildren(node, children), nil
 	}
 
 	if len(lj.CorrelationVars) == 0 {
 		decline("no correlation variables")
-		return rebuildWithChildren(node, children)
+		return rebuildWithChildren(node, children), nil
 	}
 
 	// The outer relation, recovered from the children. The decorrelated
@@ -125,7 +127,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		for _, cv := range lj.CorrelationVars {
 			if !query.ContainsSymbol(outerNode.Symbols(), cv) {
 				decline(fmt.Sprintf("correlation variable %s is bound by the enclosing scope, not the outer relation", cv))
-				return rebuildWithChildren(node, children)
+				return rebuildWithChildren(node, children), nil
 			}
 		}
 	}
@@ -133,7 +135,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	correlations, declineReason := correlationParameters(lj.InnerQuery, lj.Inputs)
 	if declineReason != "" {
 		decline(declineReason)
-		return rebuildWithChildren(node, children)
+		return rebuildWithChildren(node, children), nil
 	}
 	innerParams := make([]query.Symbol, len(correlations))
 	for i, c := range correlations {
@@ -147,27 +149,12 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	plans, declineReason := classifyCorrelationParams(lj.InnerQuery, innerParams)
 	if declineReason != "" {
 		decline(declineReason)
-		return rebuildWithChildren(node, children)
-	}
-
-	if observing {
-		sink.Record(RewriteRecord{
-			Pass:    decorrelationPassName,
-			Action:  RewriteApplied,
-			Subject: lj.InnerQuery,
-		}, annotations.AlgebraDecorrelateApply, map[string]interface{}{
-			"correlation_vars": lj.CorrelationVars,
-			"inner_params":     innerParams,
-			"has_aggregates":   lj.InnerQuery.Aggregates(),
-		})
+		return rebuildWithChildren(node, children), nil
 	}
 
 	// Decorrelate: remove correlation params from :in, add the classified
 	// group-by symbols to :find, consume translated correlation equalities.
 	decorrelated := decorrelateQuery(lj.InnerQuery, plans, correlations)
-	if decorrelated == nil {
-		return node
-	}
 
 	// Output symbols: correlation vars (OUTER names) + original binding vars.
 	originalBindingSyms := lj.Binding.(query.BindingForm).BoundVariables()
@@ -178,17 +165,24 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	var innerResultNode *Node
 
 	if lj.InnerQuery.Aggregates() {
-		// Rule 1: aggregate decorrelation — compile inner, wrap in Aggregate
-		var groupBy []query.Symbol
+		// Rule 1: aggregate decorrelation — compile inner, wrap in Aggregate.
+		// output names the decorrelated :find's elements by position. The
+		// Aggregate's bindings name its group keys and then its functions, so
+		// each key and each function takes the name output wrote at its
+		// element's position.
+		var groupBy, keyNames, functionNames []query.Symbol
 		var aggFns []query.FindAggregate
-		for _, elem := range decorrelated.Find {
+		for i, elem := range decorrelated.Find {
 			switch e := elem.(type) {
 			case query.FindVariable:
 				groupBy = append(groupBy, e.Symbol)
+				keyNames = append(keyNames, output[i])
 			case query.FindAggregate:
 				aggFns = append(aggFns, e)
+				functionNames = append(functionNames, output[i])
 			}
 		}
+		bindings := append(keyNames, functionNames...)
 
 		// The inner query compiles in its own scope: its :in, and the rule set
 		// the call's % binds, which the lateral join carries. It compiles
@@ -198,9 +192,9 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		underCall, inputs := underCallSources(decorrelated,
 			query.CallSources(&query.SubqueryPattern{Query: lj.InnerQuery, Inputs: lj.Inputs}),
 			callSourceArguments(lj.Inputs, decorrelated.In))
-		innerNode, compileErr := Compile(underCall, lj.Rules)
-		if compileErr != nil || innerNode == nil {
-			return node
+		innerNode, err := Compile(underCall, lj.Rules)
+		if err != nil {
+			return nil, fmt.Errorf("decorrelate the subquery %s: compile its decorrelated form: %w", lj.InnerQuery, err)
 		}
 
 		innerResultNode = &Node{
@@ -208,8 +202,8 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			Data: &Aggregate{
 				GroupBy:   groupBy,
 				Functions: aggFns,
-				Bindings:  cloneSymbols(output),
-				Output:    uniqueSymbols(output),
+				Bindings:  bindings,
+				Output:    uniqueSymbols(bindings),
 				In:        underCall.In,
 				Inputs:    inputs,
 			},
@@ -220,28 +214,28 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		// Compile the inner WHERE, recursively optimize to decorrelate nested
 		// subqueries (e.g., the max subquery in the argmax pattern), then
 		// decompile back to produce optimized WHERE clauses.
-		innerNode, compileErr := Compile(decorrelated, lj.Rules)
-		if compileErr != nil || innerNode == nil {
-			return rebuildWithChildren(node, children)
+		innerNode, err := Compile(decorrelated, lj.Rules)
+		if err != nil {
+			return nil, fmt.Errorf("decorrelate the subquery %s: compile its decorrelated form: %w", lj.InnerQuery, err)
 		}
 
 		// Recursively optimize the inner tree — decorrelates nested LateralJoins
 		innerOptimizer := NewOptimizer(DecorrelationPass(nil))
-		optimizedInner, optErr := innerOptimizer.Optimize(innerNode)
-		if optErr == nil && optimizedInner != nil {
-			innerNode = optimizedInner
+		innerNode, err = innerOptimizer.Optimize(innerNode)
+		if err != nil {
+			return nil, fmt.Errorf("decorrelate the subquery %s: optimize its decorrelated form: %w", lj.InnerQuery, err)
 		}
 
 		// Decompile the optimized inner tree back to WHERE clauses
-		optimizedWhere, decompErr := Decompile(innerNode)
-		if decompErr != nil {
-			return rebuildWithChildren(node, children)
+		optimizedWhere, err := Decompile(innerNode)
+		if err != nil {
+			return nil, fmt.Errorf("decorrelate the subquery %s: decompile its decorrelated form: %w", lj.InnerQuery, err)
 		}
 
 		// Diagnostic detail accompanying the applied rewrite: the optimized
-		// inner WHERE. Event-only — the applied record above is the decision —
-		// so the guard is Emitting, not Recording: a collect-only sink discards
-		// this payload, and rendering the clause list to build it is the argument
+		// inner WHERE. Event-only — the applied record is the decision — so the
+		// guard is Emitting, not Recording: a collect-only sink discards this
+		// payload, and rendering the clause list to build it is the argument
 		// preparation the guard exists to skip.
 		if sink.Emitting() {
 			sink.Emit(annotations.AlgebraDecorrelateInnerOptimized, map[string]interface{}{
@@ -271,8 +265,22 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		}
 	}
 
+	// The rewrite is built, past every step that can fail, so the applied
+	// record names a rewrite the tree holds.
+	if observing {
+		sink.Record(RewriteRecord{
+			Pass:    decorrelationPassName,
+			Action:  RewriteApplied,
+			Subject: lj.InnerQuery,
+		}, annotations.AlgebraDecorrelateApply, map[string]interface{}{
+			"correlation_vars": lj.CorrelationVars,
+			"inner_params":     innerParams,
+			"has_aggregates":   lj.InnerQuery.Aggregates(),
+		})
+	}
+
 	if outerNode == nil {
-		return wrapAsParseNode(innerResultNode)
+		return wrapAsParseNode(innerResultNode), nil
 	}
 
 	joinKind := InnerJoin
@@ -285,13 +293,13 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		Data: &Join{
 			Kind:        joinKind,
 			JoinSymbols: lj.CorrelationVars,
-			Output:      mergeSymbols(outerNode.Symbols(), output),
+			Output:      mergeSymbols(outerNode.Symbols(), innerResultNode.Symbols()),
 			Defaults:    lj.Defaults,
 		},
 		Children: []*Node{outerNode, innerResultNode},
 	}
 
-	return wrapAsParseNode(joinNode)
+	return wrapAsParseNode(joinNode), nil
 }
 
 // callSourceArguments is what a decorrelated call passes: the written call's

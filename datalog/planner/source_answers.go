@@ -46,11 +46,13 @@ func (a *askedAnswers) answer(source query.Symbol, attr datalog.Keyword) bool {
 	return answer
 }
 
-// evaluationAnswers is the recorded questions of every body plan the
-// evaluations embed, each stratum's plain, delta and lower bodies.
+// evaluationAnswers is the recorded questions of every plan the evaluations
+// embed: the scope plans each evaluation's rewrite read, and each stratum's
+// plain, delta and lower bodies.
 func evaluationAnswers(evaluations map[*query.RuleInvocation]*InvocationEvaluation) []SourceAnswer {
 	var recorded []SourceAnswer
 	for _, evaluation := range evaluations {
+		recorded = append(recorded, evaluation.Magic.SourceAnswers...)
 		for _, stratum := range evaluation.Strata {
 			for _, kind := range [][]PlannedBody{stratum.Bodies.Plain, stratum.Bodies.Delta, stratum.Bodies.Lower} {
 				for _, body := range kind {
