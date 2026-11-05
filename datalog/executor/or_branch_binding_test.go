@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // A branch of an or unifies with the enclosing scope on every free variable
@@ -50,14 +51,14 @@ func TestOrBranchReadsAVariableTheEnclosingScopeBinds(t *testing.T) {
 			[]datalog.Identity{tagged},
 		},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range OptimizerModes {
 		for _, c := range cases {
-			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
-				exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions())
-				rel, err := exec.ExecuteWithRelations(NewContext(), mustParse(t, c.text), nil)
+			t.Run(mode.Name()+"/"+c.name, func(t *testing.T) {
+				exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, mode.PlannerOptions())
+				rel, err := exec.ExecuteWithRelations(NewContext(), MustParse(t, c.text), nil)
 				require.NoError(t, err)
 				var tuples []Tuple
-				require.NoError(t, collectTuplesInto(&tuples, rel))
+				require.NoError(t, CollectTuplesInto(&tuples, rel))
 				var got []datalog.Identity
 				for _, tuple := range tuples {
 					got = append(got, tuple[0].(datalog.Identity))

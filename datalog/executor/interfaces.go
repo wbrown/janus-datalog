@@ -33,30 +33,43 @@ type PredicateAwareMatcher interface {
 // to lookup specific entity attributes during expression evaluation.
 type EntityLookupMatcher interface {
 	PatternMatcher
-	// LookupAttribute retrieves the value of an attribute for an entity.
+	// LookupAttribute retrieves the value of an attribute for an entity, from
+	// the default source.
 	// An absent attribute returns (nil, false, nil); storage and decode failures
 	// return a non-nil error and must never masquerade as absence.
 	LookupAttribute(
 		entity datalog.Identity,
 		attr datalog.Keyword,
 	) (value interface{}, found bool, err error)
+	// LookupSource returns the lookup of the source a query names, $ for the
+	// default source: a matcher that is one source returns itself under any
+	// name, and a router returns the lookup of the source named. A source it
+	// does not hold, or one without the capability, is an error naming it.
+	LookupSource(source query.Symbol) (EntityLookupMatcher, error)
 }
 
-// AttributeFetchFusable reports whether a same-entity fetch of attr on a
-// source can be fused into a per-tuple LookupAttribute binding instead of a
-// separate pattern match + hash join. Fusion is valid only when the source's
-// LookupAttribute returns the single value a matched pattern would, which
-// requires both:
-//   - the attribute is CardinalityOne (CardinalityMany/Vector must expand on
-//     the join path), and
-//   - the matcher is NOT in history mode (history exposes every raw version,
-//     so a one-value attach would drop superseded datoms).
+// AttributeFetchFusable reports whether a source's match of attr answers, for
+// every entity, the one value its LookupAttribute answers: the pattern
+// [source ?e attr ?v] matches at an entity e the one tuple (e, v) when the
+// lookup at e finds v, and no tuple when it finds none. A source answers true
+// only where that holds. It does not hold at a cardinality-many attribute,
+// whose match answers each member as a tuple of its own, nor in a history
+// view, whose match answers every version the lookup resolves past.
 //
-// The matcher owns both facts (schema + temporal mode), so the decision lives
-// there rather than being reconstructed by the executor. The source is the
-// symbol the query names it by, $ for the default source; a matcher that is
-// one source answers for itself under any name, and a router answers from
-// the source named, a source without the capability answering false.
+// A true answer is read by:
+//   - attribute-fetch fusion, which binds a same-entity fetch through the
+//     lookup in place of a pattern match and a join
+//   - the or-fallback's judgment that a pattern branch answers at most one
+//     tuple per key
+//   - the or-fallback's build of such a branch from the EA cache
+//   - the planner's get-else rewrite, which replaces a lookup with a match
+//     (docs/proposals/GET_ELSE_SCAN_REWRITE_PROOF.md)
+//
+// The matcher owns its schema and its view, so the decision lives there. The
+// source is the symbol the query names it by, $ for the default source; a
+// matcher that is one source answers for itself under any name, and a router
+// answers from the source named, a source without the capability answering
+// false.
 type AttributeFetchFusable interface {
 	CanFuseAttributeFetch(source query.Symbol, attr datalog.Keyword) bool
 }

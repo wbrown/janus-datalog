@@ -459,6 +459,32 @@ func TestRefreshSchemasRepairsAggregateGroupPrefix(t *testing.T) {
 		"schema refresh must not mutate the input aggregate")
 }
 
+// An aggregate's output names each symbol its positional bindings name once,
+// in the order the bindings first name it. A name the bindings write twice is
+// one symbol, and the call the aggregate decompiles to unifies the two outputs
+// it names, so the bindings keep both positions.
+func TestAnAggregateWhoseBindingsRepeatANameOutputsTheNameOnce(t *testing.T) {
+	group := datalog.NewSymbol("?group")
+	value := datalog.NewSymbol("?value")
+	result := datalog.NewSymbol("?total")
+	aggregate := &Node{
+		Op:       RuleAggregate,
+		Children: []*Node{algebraTestScan(group, value)},
+		Data: &Aggregate{
+			GroupBy:   []query.Symbol{group, value},
+			Functions: []query.FindAggregate{{Function: datalog.SymSum, Arg: value}},
+			Bindings:  []query.Symbol{group, group, result},
+			Output:    []query.Symbol{group, group, result},
+		},
+	}
+
+	refreshed, err := RefreshSchemas(aggregate)
+	require.NoError(t, err, "an aggregate whose bindings repeat a name outputs the name once")
+	require.Equal(t, []query.Symbol{group, result}, refreshed.Symbols())
+	require.Equal(t, []query.Symbol{group, group, result}, refreshed.Data.(*Aggregate).Bindings,
+		"the bindings keep each position the call unifies")
+}
+
 func TestAnalyzeUnionNormalizesOuterKeysAndBranchLocalSymbols(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	value := datalog.NewSymbol("?value")
@@ -507,7 +533,7 @@ func TestDefaultPassesPreserveAnalyzedSchemaAndAreIdempotent(t *testing.T) {
 	beforeAnalysis, err := Analyze(root)
 	require.NoError(t, err)
 
-	optimizer := NewOptimizer(DefaultPasses(nil)...)
+	optimizer := NewOptimizer(DefaultPasses(nil, everySourceAnswers)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	require.Equal(t, before, root.String(), "optimization must not mutate the input tree")

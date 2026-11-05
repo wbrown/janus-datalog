@@ -155,7 +155,11 @@ func openBackendDB(t testing.TB, backend Backend, opts DatabaseOptions) *Databas
 	if err != nil {
 		t.Fatalf("failed to create %s database: %v", backend.Name, err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close the %s database: %v", backend.Name, err)
+		}
+	})
 	return db
 }
 

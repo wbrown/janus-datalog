@@ -23,7 +23,7 @@ type notJoinIterator struct {
 // answered.
 func (it *notJoinIterator) answer() bool {
 	for it.windowPos < len(it.reader.window) {
-		tuple := it.reader.window[it.windowPos]
+		tuple := it.tupleToAnswer()
 		it.windowPos++
 		if len(it.branchCache[0].Probe(tuple)) > 0 {
 			continue

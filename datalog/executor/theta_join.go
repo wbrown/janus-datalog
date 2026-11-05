@@ -9,13 +9,21 @@ import (
 // avoiding the StreamingRelation.Iterator() panic by using BufferedIterator for the inner.
 // env is the query scope's environment relation; see filterWithPredicateAndLookup.
 //
-// Eager: errors are knowable synchronously and return in-band.
+// A join whose result can fail as it is read, a relation evaluating or the
+// predicate failing on a value, is the lazy filter over the product of the
+// relations, so its failure surfaces where a reader that sees every other
+// clause reads it (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure
+// contract). Any other join is eager: errors are knowable synchronously and
+// return in-band.
 func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, lookup query.EntityLookup, env Relation, opts ExecutorOptions) (Relation, error) {
 	if len(relevantRels) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, opts), nil
 	}
 	if len(relevantRels) == 1 {
 		return filterWithPredicateAndLookup(relevantRels[0], pred, lookup, env)
+	}
+	if productEvaluates(relevantRels) || canFailOnAValue([]query.Clause{pred}, nil) {
+		return filterWithPredicateAndLookup(NewProductRelation(relevantRels), pred, lookup, env)
 	}
 
 	// For 2 relations: streaming nested-loop theta-join
@@ -147,13 +155,21 @@ outerLoop:
 // avoiding the StreamingRelation.Iterator() panic.
 // env is the query scope's environment relation; see evaluateExpressionWithLookup.
 //
-// Eager: errors are knowable synchronously and return in-band.
+// The expression evaluates as its result is pulled, so an evaluation failure
+// surfaces when it is driven. A cross-join over a relation that evaluates is
+// the expression over the lazy product of the relations, so a relation's
+// failure surfaces there too, where a reader that sees every other clause
+// reads it (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure
+// contract). Any other cross-join's failure returns in-band.
 func crossJoinWithExpression(relevantRels []Relation, expr *query.Expression, lookup query.EntityLookup, env Relation, opts ExecutorOptions) (Relation, error) {
 	if len(relevantRels) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, opts), nil
 	}
 	if len(relevantRels) == 1 {
-		return evaluateExpressionWithLookup(relevantRels[0], expr, lookup, env)
+		return evaluateExpressionWithLookup(relevantRels[0], expr, lookup, env), nil
+	}
+	if productEvaluates(relevantRels) {
+		return evaluateExpressionWithLookup(NewProductRelation(relevantRels), expr, lookup, env), nil
 	}
 
 	// Cross-join all relations first (no predicate filter)
@@ -169,5 +185,5 @@ func crossJoinWithExpression(relevantRels []Relation, expr *query.Expression, lo
 	}
 
 	// Evaluate expression on the combined relation
-	return evaluateExpressionWithLookup(joined, expr, lookup, env)
+	return evaluateExpressionWithLookup(joined, expr, lookup, env), nil
 }

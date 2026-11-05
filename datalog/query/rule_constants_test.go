@@ -49,7 +49,7 @@ func TestNewRuleSetRefusesAConstantOutsideTheDomain(t *testing.T) {
 			)},
 			{"a get-else default", defineRule("r", []string{"?x"},
 				scan,
-				&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: attr, Default: c.value}, Binding: x},
+				&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: attr, Default: ConstantTerm{Value: c.value}}, Binding: x},
 			)},
 			{"a subquery argument", defineRule("r", []string{"?e"},
 				scan,

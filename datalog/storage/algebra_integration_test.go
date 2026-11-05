@@ -33,29 +33,29 @@ func setupAlgebraTestDB(t testing.TB, mode optimizerMode) *Database {
 	s1 := datalog.NewIdentity("scenario:1")
 	s2 := datalog.NewIdentity("scenario:2")
 	s3 := datalog.NewIdentity("scenario:3")
-	tx.Add(s1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/scenario"))
-	tx.Add(s2, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/scenario"))
-	tx.Add(s3, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/scenario"))
-	tx.Add(s1, datalog.NewKeyword(":scenario/title"), "First")
-	tx.Add(s2, datalog.NewKeyword(":scenario/title"), "Second")
-	tx.Add(s3, datalog.NewKeyword(":scenario/title"), "Third")
-	tx.Add(s1, datalog.NewKeyword(":entity/tag"), "alpha")
-	tx.Add(s2, datalog.NewKeyword(":entity/tag"), "beta")
-	tx.Add(s3, datalog.NewKeyword(":entity/tag"), "gamma")
+	require.NoError(t, tx.Add(s1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/scenario")))
+	require.NoError(t, tx.Add(s2, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/scenario")))
+	require.NoError(t, tx.Add(s3, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/scenario")))
+	require.NoError(t, tx.Add(s1, datalog.NewKeyword(":scenario/title"), "First"))
+	require.NoError(t, tx.Add(s2, datalog.NewKeyword(":scenario/title"), "Second"))
+	require.NoError(t, tx.Add(s3, datalog.NewKeyword(":scenario/title"), "Third"))
+	require.NoError(t, tx.Add(s1, datalog.NewKeyword(":entity/tag"), "alpha"))
+	require.NoError(t, tx.Add(s2, datalog.NewKeyword(":entity/tag"), "beta"))
+	require.NoError(t, tx.Add(s3, datalog.NewKeyword(":entity/tag"), "gamma"))
 	// s3 is soft-deleted
-	tx.Add(s3, datalog.NewKeyword(":entity/deleted"), true)
+	require.NoError(t, tx.Add(s3, datalog.NewKeyword(":entity/deleted"), true))
 
 	// Tasks for s1 and s2 (s3 has none)
 	for i := 0; i < 3; i++ {
-		t := datalog.NewIdentity("task:1:" + string(rune('a'+i)))
-		tx.Add(t, datalog.NewKeyword(":task/root"), s1)
-		tx.Add(t, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete"))
-		tx.Add(t, datalog.NewKeyword(":task/token-count"), int64(100+i*10))
+		task := datalog.NewIdentity("task:1:" + string(rune('a'+i)))
+		require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/root"), s1))
+		require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+		require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/token-count"), int64(100+i*10)))
 	}
 	t1 := datalog.NewIdentity("task:2:a")
-	tx.Add(t1, datalog.NewKeyword(":task/root"), s2)
-	tx.Add(t1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete"))
-	tx.Add(t1, datalog.NewKeyword(":task/token-count"), int64(50))
+	require.NoError(t, tx.Add(t1, datalog.NewKeyword(":task/root"), s2))
+	require.NoError(t, tx.Add(t1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+	require.NoError(t, tx.Add(t1, datalog.NewKeyword(":task/token-count"), int64(50)))
 
 	_, err := tx.Commit()
 	require.NoError(t, err)
@@ -205,7 +205,7 @@ func TestAlgebraIntegration_OrFallbackWithSubquery(t *testing.T) {
 				require.NoError(t, err)
 				root, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
 				require.NoError(t, err)
-				opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
+				opt := algebra.NewOptimizer(algebra.DefaultPasses(nil, db.CanFuseAttributeFetch)...)
 				optimized, err := opt.Optimize(root)
 				require.NoError(t, err)
 				rewritten, err := algebra.Decompile(optimized)
@@ -266,12 +266,16 @@ func TestAlgebraIntegration_SubqueryWithNot(t *testing.T) {
 // TestAlgebraIntegration_SequentialQueries tests running multiple queries
 // in sequence on the same database (like the production profiler).
 func TestAlgebraIntegration_SequentialQueries(t *testing.T) {
+	s1, s2 := datalog.NewIdentity("scenario:1"), datalog.NewIdentity("scenario:2")
 	queries := []struct {
 		name string
 		q    string
+		want [][]interface{}
 	}{
-		{"entity_counts", "[:find ?type (count ?e) :where [?e :entity/type ?type]]"},
-		{"with_not", "[:find ?e ?tag :where [?e :entity/type :entity.type/scenario] [?e :entity/tag ?tag] (not [?e :entity/deleted true])]"},
+		{"entity_counts", "[:find ?type (count ?e) :where [?e :entity/type ?type]]",
+			[][]interface{}{{datalog.NewKeyword(":entity.type/scenario"), int64(3)}}},
+		{"with_not", "[:find ?e ?tag :where [?e :entity/type :entity.type/scenario] [?e :entity/tag ?tag] (not [?e :entity/deleted true])]",
+			[][]interface{}{{s1, "alpha"}, {s2, "beta"}}},
 		{"with_subquery", `[:find ?e ?count
 			:where [?e :entity/type :entity.type/scenario]
 			       (not [?e :entity/deleted true])
@@ -279,7 +283,8 @@ func TestAlgebraIntegration_SequentialQueries(t *testing.T) {
 			                :where [?t :task/root ?s] [?t :task/status :status/complete]
 			                       (not [?t :entity/deleted true])]
 			               $ ?e) [[?count]]]
-			           [(ground 0) ?count])]`},
+			           [(ground 0) ?count])]`,
+			[][]interface{}{{s1, int64(3)}, {s2, int64(1)}}},
 	}
 
 	for _, mode := range optimizerModes {
@@ -292,7 +297,7 @@ func TestAlgebraIntegration_SequentialQueries(t *testing.T) {
 					require.NoError(t, err, "query %s should not crash", tc.name)
 					results, err := executor.CollectTuples(rel, nil)
 					require.NoError(t, err)
-					t.Logf("%s: %d results", tc.name, len(results))
+					assert.ElementsMatch(t, tc.want, results)
 				})
 			}
 		})
@@ -410,7 +415,7 @@ func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
 				require.NoError(t, err)
 				root, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
 				require.NoError(t, err)
-				opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
+				opt := algebra.NewOptimizer(algebra.DefaultPasses(nil, db.CanFuseAttributeFetch)...)
 				optimized, err := opt.Optimize(root)
 				require.NoError(t, err)
 				rewritten, err := algebra.Decompile(optimized)

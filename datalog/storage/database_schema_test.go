@@ -83,12 +83,17 @@ func TestSchemaUnknownAttribute(t *testing.T) {
 
 			alice := datalog.NewIdentity("alice")
 
-			// Unknown attribute should be allowed (additive schema)
+			// Unknown attribute should be allowed (additive schema), and the
+			// value written under it reads back.
 			tx := db.NewTransaction()
 			err = tx.Add(alice, datalog.NewKeyword(":person/email"), "alice@example.com")
-			assert.NoError(t, err, "unknown attribute should be allowed")
+			require.NoError(t, err, "unknown attribute should be allowed")
 			_, err = tx.Commit()
-			assert.NoError(t, err)
+			require.NoError(t, err)
+
+			var emails []string
+			require.NoError(t, db.QueryInto(&emails, `[:find ?v :in $ ?e :where [?e :person/email ?v]]`, alice))
+			assert.Equal(t, []string{"alice@example.com"}, emails)
 		})
 	}
 }

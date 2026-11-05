@@ -604,6 +604,11 @@ func antiJoinFreeRequirements(left, right Analysis) []query.Symbol {
 	return uniqueSymbols(required)
 }
 
+// aggregateOutputSchema is an aggregate's output: each symbol its positional
+// bindings name, once, in the order they first name it. A name the bindings
+// write twice is one symbol, and the call the aggregate decompiles to unifies
+// the two outputs it names. It refuses bindings that are not one per group key
+// and aggregate function, or that hold nil.
 func aggregateOutputSchema(data *Aggregate) ([]query.Symbol, error) {
 	if len(data.Bindings) != len(data.GroupBy)+len(data.Functions) {
 		return nil, fmt.Errorf("aggregate binding arity %d does not match %d group keys and %d functions",
@@ -614,7 +619,7 @@ func aggregateOutputSchema(data *Aggregate) ([]query.Symbol, error) {
 			return nil, fmt.Errorf("aggregate output binding %d is nil", i)
 		}
 	}
-	return cloneSymbols(data.Bindings), nil
+	return uniqueSymbols(data.Bindings), nil
 }
 
 func validateUniqueSymbols(name string, symbols []query.Symbol) error {

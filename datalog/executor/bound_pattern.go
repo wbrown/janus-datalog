@@ -34,7 +34,8 @@ func streamsThrough(symbols []query.Symbol, groups Relations) bool {
 // variables as the outputs, framed through planner.WindowFraming as the
 // planner's walk frames it. The result's keys survive when the pattern
 // answers at most one tuple per subject tuple, a cardinality-one attribute
-// keyed by a required entity, as a fallback's do.
+// keyed by a required entity, as a fallback's do. Its identity symbols are
+// the subject's and the pattern's entity variable (AnswerIdentities).
 func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.DataPattern, groups Relations) (Relations, error) {
 	symbols := pattern.Symbols()
 	subject, consumed := e.findOuterRelation(symbols, groups)
@@ -52,6 +53,11 @@ func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.
 	}
 	atMostOne := patternAnswersAtMostOne(pattern, required, carriedSet, e.matcher)
 	properties := orProperties(subject.Properties(), outputs, nil, resultSyms, atMostOne)
+	for _, symbol := range AnswerIdentities(pattern) {
+		if !query.ContainsSymbol(properties.Identities, symbol) {
+			properties.Identities = append(properties.Identities, symbol)
+		}
+	}
 
 	f := framing{
 		form:      "pattern",
@@ -71,6 +77,95 @@ func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.
 		matchEmit:        matchEmit{outerSyms: outerSyms, outputSyms: resultSyms},
 	}
 	it.policy = formPolicy{answer: it.answer}
-	result := NewStreamingRelationWithProperties(resultSyms, it, e.options, properties)
+	ownFind := make([]query.FindElement, len(symbols))
+	for i, sym := range symbols {
+		ownFind[i] = query.FindVariable{Symbol: sym}
+	}
+	join := &patternJoinIterator{
+		matcher: e.matcher,
+		own:     &query.Query{Find: ownFind, Where: []query.Clause{pattern}},
+		join:    it,
+	}
+	result := NewStreamingRelationWithProperties(resultSyms, join, e.options, properties)
 	return replaceConsumedGroups(groups, consumed, result, e.options.Handler), nil
+}
+
+// patternJoinIterator answers the windowed join of a subject with a pattern.
+// At its first pull it reads whether the pattern has a match, the join's
+// other side: every match under the subject's bindings is one of the
+// pattern's own, so where it has none the join is empty, and the iterator
+// answers nothing and reads nothing of the subject
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). The read runs as the
+// result is pulled, so its scan failure surfaces when the result is driven,
+// as the join's do.
+type patternJoinIterator struct {
+	matcher PatternMatcher
+	own     *query.Query // the pattern alone, finding its variables
+	join    Iterator     // the windowed join
+	checked bool
+	empty   bool
+	err     error
+}
+
+// Next reads the pattern's own matches at the first pull, then answers the
+// join's next tuple where they hold one.
+func (it *patternJoinIterator) Next() bool {
+	if !it.checked {
+		it.checked = true
+		own, err := it.matcher.Match(it.own, nil)
+		if err != nil {
+			it.err = err
+			return false
+		}
+		has, err := hasTuple(own)
+		if err != nil {
+			it.err = err
+			return false
+		}
+		it.empty = !has
+	}
+	if it.err != nil || it.empty {
+		return false
+	}
+	return it.join.Next()
+}
+
+// failedTuple answers the windowed join's failed tuple, when the join answers
+// one (failedTupleIterator), so a reader of the pattern's result decides it at
+// its key as a reader of the join would.
+func (it *patternJoinIterator) failedTuple() (Tuple, []int, bool) {
+	failing, ok := it.join.(failedTupleIterator)
+	if !ok {
+		return nil, nil, false
+	}
+	return failing.failedTuple()
+}
+
+// resume resumes the windowed join past the tuple failedTuple answered.
+func (it *patternJoinIterator) resume() {
+	it.join.(failedTupleIterator).resume()
+}
+
+// Tuple returns the join's current tuple.
+func (it *patternJoinIterator) Tuple() Tuple {
+	return it.join.Tuple()
+}
+
+// RequiresCopy is the join's copy answer.
+func (it *patternJoinIterator) RequiresCopy() bool {
+	return it.join.RequiresCopy()
+}
+
+// Error returns the failure reading the pattern's own matches, else the
+// join's.
+func (it *patternJoinIterator) Error() error {
+	if it.err != nil {
+		return it.err
+	}
+	return it.join.Error()
+}
+
+// Close closes the join.
+func (it *patternJoinIterator) Close() error {
+	return it.join.Close()
 }

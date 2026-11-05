@@ -232,7 +232,11 @@ func TestDeltaFixpoint_EveryShapeAnswersTheNaiveFixpoint(t *testing.T) {
 					if err != nil {
 						return fmt.Errorf("free: %w", err)
 					}
-					if got := identityPairsOfErr(rel, 0, 1, nil); !pairSetsEqual(got, want) {
+					got, err := identityPairsOfErr(rel, 0, 1, nil)
+					if err != nil {
+						return fmt.Errorf("free: %w", err)
+					}
+					if !pairSetsEqual(got, want) {
 						return fmt.Errorf("free: got %d pairs, want %d", len(got), len(want))
 					}
 					for _, n := range fx.nodes {
@@ -241,14 +245,22 @@ func TestDeltaFixpoint_EveryShapeAnswersTheNaiveFixpoint(t *testing.T) {
 						if err != nil {
 							return fmt.Errorf("bound first at %s: %w", label(n), err)
 						}
-						if got, w := identityPairsOfErr(rel, -1, 0, &n), restrict(want, &n, nil); !pairSetsEqual(got, w) {
+						got, err := identityPairsOfErr(rel, -1, 0, &n)
+						if err != nil {
+							return fmt.Errorf("bound first at %s: %w", label(n), err)
+						}
+						if w := restrict(want, &n, nil); !pairSetsEqual(got, w) {
 							return fmt.Errorf("bound first at %s: got %v, want %v", label(n), renderPairs(names, got), renderPairs(names, w))
 						}
 						rel, err = d.Query(boundSecond, rules, n)
 						if err != nil {
 							return fmt.Errorf("bound second at %s: %w", label(n), err)
 						}
-						if got, w := identityPairsOfErr(rel, 0, -1, &n), restrict(want, nil, &n); !pairSetsEqual(got, w) {
+						got, err = identityPairsOfErr(rel, 0, -1, &n)
+						if err != nil {
+							return fmt.Errorf("bound second at %s: %w", label(n), err)
+						}
+						if w := restrict(want, nil, &n); !pairSetsEqual(got, w) {
 							return fmt.Errorf("bound second at %s: got %v, want %v", label(n), renderPairs(names, got), renderPairs(names, w))
 						}
 					}
@@ -256,14 +268,22 @@ func TestDeltaFixpoint_EveryShapeAnswersTheNaiveFixpoint(t *testing.T) {
 					if err != nil {
 						return fmt.Errorf("windowed: %w", err)
 					}
-					if got := identityPairsOfErr(rel, 0, 1, nil); !pairSetsEqual(got, want) {
+					got, err = identityPairsOfErr(rel, 0, 1, nil)
+					if err != nil {
+						return fmt.Errorf("windowed: %w", err)
+					}
+					if !pairSetsEqual(got, want) {
 						return fmt.Errorf("windowed: got %v, want %v", renderPairs(names, got), renderPairs(names, want))
 					}
 					rel, err = d.Query(negated, rules)
 					if err != nil {
 						return fmt.Errorf("negated: %w", err)
 					}
-					if got := identityPairsOfErr(rel, 0, 1, nil); !pairSetsEqual(got, complement) {
+					got, err = identityPairsOfErr(rel, 0, 1, nil)
+					if err != nil {
+						return fmt.Errorf("negated: %w", err)
+					}
+					if !pairSetsEqual(got, complement) {
 						return fmt.Errorf("negated: got %v, want %v", renderPairs(names, got), renderPairs(names, complement))
 					}
 					return nil
@@ -293,8 +313,8 @@ func TestDeltaFixpoint_EveryShapeAnswersTheNaiveFixpoint(t *testing.T) {
 }
 
 // identityPairsOfErr is identityPairsOf for a goroutine other than the
-// test's: a failure to read yields nil, which no case wants.
-func identityPairsOfErr(rel executor.Relation, x, y int, fixed *datalog.Identity) pairSet {
+// test's: it returns a failure to read as its error.
+func identityPairsOfErr(rel executor.Relation, x, y int, fixed *datalog.Identity) (pairSet, error) {
 	out := pairSet{}
 	err := executor.ForEach(rel, func(tuple executor.Tuple) error {
 		var p [2]datalog.Identity
@@ -312,13 +332,13 @@ func identityPairsOfErr(rel executor.Relation, x, y int, fixed *datalog.Identity
 		return nil
 	})
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return out
+	return out, nil
 }
 
 func pairSetsEqual(a, b pairSet) bool {
-	if a == nil || len(a) != len(b) {
+	if len(a) != len(b) {
 		return false
 	}
 	for p := range a {

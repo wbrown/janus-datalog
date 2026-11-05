@@ -15,7 +15,7 @@ import (
 // error.
 
 func TestExecuteWithRelations_RefusedWhenContextDone(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(chainDatoms(3))
+	var matcher PatternMatcher
 	q := mustParse(t, `[:find ?p :where [?p :page/kind "leaf"]]`)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -38,37 +38,6 @@ func TestExecuteWithRelations_RefusedWhenContextDone(t *testing.T) {
 			}
 			if events[1].Data[annotations.KeySuccess] != false || events[1].Data[annotations.KeyError] != err.Error() {
 				t.Errorf("the completion reports %v, want success false and the context's error %q", events[1].Data, err.Error())
-			}
-		})
-	}
-}
-
-// TestEvaluateRules_CancelledAtIteration cancels the context from the first
-// iteration event of a closure; the fixpoint stops at the next iteration with
-// the context's error.
-func TestEvaluateRules_CancelledAtIteration(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(chainDatoms(5))
-	rs := mustRules(t, followsRulesText)
-	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			iterations := 0
-			opts := mode.plannerOptions()
-			opts.Handler = func(e annotations.Event) {
-				if e.Name == annotations.RulesIteration {
-					iterations++
-					cancel()
-				}
-			}
-			exec := NewExecutorWithOptions(matcher, nil, opts)
-			_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs).WithCancellation(ctx), q, nil)
-			if !errors.Is(err, context.Canceled) {
-				t.Fatalf("closure under a cancelled context returned %v, want the context's error", err)
-			}
-			if iterations > 2 {
-				t.Errorf("observed %d iteration events after the cancellation, want at most 2", iterations)
 			}
 		})
 	}

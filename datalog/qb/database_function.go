@@ -8,30 +8,48 @@ import (
 // GetElseBuilder builds a get-else expression for retrieving an attribute
 // with a default value if the attribute is missing.
 type GetElseBuilder struct {
-	entity     *Var
-	attr       Attr
-	defaultVal interface{}
+	source      query.Symbol
+	entity      *Var
+	attr        Attr
+	defaultTerm query.Term
 }
 
 // GetElse creates a get-else expression for default values.
-// Returns the attribute value if it exists, or the default value if missing.
+// Returns the attribute value if it exists, or the default if missing. The
+// default is a value or a variable, read from each tuple's bindings.
 //
 // Example:
 //
 //	nickname := qb.NewVar("nickname")
 //	qb.GetElse(entity, PersonNickname, "Anonymous").As(nickname)
 //	// [(get-else $ ?entity :person/nickname "Anonymous") ?nickname]
+//
+//	fallback := qb.NewVar("fallback")
+//	qb.GetElse(entity, PersonNickname, fallback).As(nickname)
+//	// [(get-else $ ?entity :person/nickname ?fallback) ?nickname]
 func GetElse(entity *Var, attr Attr, defaultVal interface{}) *GetElseBuilder {
-	return &GetElseBuilder{entity: entity, attr: attr, defaultVal: datalog.NormalizeValue(defaultVal)}
+	return &GetElseBuilder{entity: entity, attr: attr, defaultTerm: toTerm(defaultVal)}
+}
+
+// GetElseFrom creates a get-else expression reading the named source.
+//
+// Example:
+//
+//	build := qb.Source("$build")
+//	qb.GetElseFrom(build, run, RunFailed, "").As(failed)
+//	// [(get-else $build ?run :run/failed "") ?failed]
+func GetElseFrom(source *sourceInput, entity *Var, attr Attr, defaultVal interface{}) *GetElseBuilder {
+	return &GetElseBuilder{source: source.sym, entity: entity, attr: attr, defaultTerm: toTerm(defaultVal)}
 }
 
 // As binds the result of get-else to a variable.
 func (g *GetElseBuilder) As(result *Var) *Expression {
 	return &Expression{
 		fn: &query.GetElseFunction{
+			Source:  g.source,
 			Entity:  query.VariableTerm{Symbol: g.entity.Symbol()},
 			Attr:    g.attr.Keyword(),
-			Default: g.defaultVal,
+			Default: g.defaultTerm,
 		},
 		binding: result,
 	}
@@ -40,6 +58,7 @@ func (g *GetElseBuilder) As(result *Var) *Expression {
 // MissingBuilder builds a missing? expression/predicate.
 // Can be used as a predicate (filter) or as an expression (bind bool).
 type MissingBuilder struct {
+	source query.Symbol
 	entity *Var
 	attr   Attr
 }
@@ -60,11 +79,23 @@ func Missing(entity *Var, attr Attr) *MissingBuilder {
 	return &MissingBuilder{entity: entity, attr: attr}
 }
 
+// MissingFrom creates a missing? check reading the named source.
+//
+// Example:
+//
+//	build := qb.Source("$build")
+//	qb.MissingFrom(build, run, RunFailed)
+//	// [(missing? $build ?run :run/failed)]
+func MissingFrom(source *sourceInput, entity *Var, attr Attr) *MissingBuilder {
+	return &MissingBuilder{source: source.sym, entity: entity, attr: attr}
+}
+
 // toClause implements Clause for predicate usage (no binding).
 // When used without .As(), Missing acts as a filter predicate.
 func (m *MissingBuilder) toClause() query.Clause {
 	return &query.DatabaseFunctionPredicate{
 		Function: &query.MissingFunction{
+			Source: m.source,
 			Entity: query.VariableTerm{Symbol: m.entity.Symbol()},
 			Attr:   m.attr.Keyword(),
 		},
@@ -75,6 +106,7 @@ func (m *MissingBuilder) toClause() query.Clause {
 func (m *MissingBuilder) As(result *Var) *Expression {
 	return &Expression{
 		fn: &query.MissingFunction{
+			Source: m.source,
 			Entity: query.VariableTerm{Symbol: m.entity.Symbol()},
 			Attr:   m.attr.Keyword(),
 		},
@@ -84,37 +116,50 @@ func (m *MissingBuilder) As(result *Var) *Expression {
 
 // GetSomeBuilder builds a get-some expression for fallback attribute chains.
 type GetSomeBuilder struct {
+	source query.Symbol
 	entity *Var
 	attrs  []Attr
 }
 
 // GetSome creates a get-some expression for fallback attributes.
-// Returns the first attribute that exists, useful for fallback chains.
+// Returns the first attribute the entity carries together with its value,
+// useful for fallback chains.
 //
 // Example:
 //
-//	displayName := qb.NewVar("displayName")
-//	qb.GetSome(entity, PersonNickname, PersonFullName, PersonEmail).As(displayName)
-//	// [(get-some $ ?entity :person/nickname :person/fullname :person/email) ?display-name]
+//	found, displayName := qb.NewVar("found"), qb.NewVar("displayName")
+//	qb.GetSome(entity, PersonNickname, PersonFullName, PersonEmail).As(found, displayName)
+//	// [(get-some $ ?entity :person/nickname :person/fullname :person/email) [?found ?display-name]]
 //
 // Returns the first available: nickname, then fullname, then email.
 func GetSome(entity *Var, attrs ...Attr) *GetSomeBuilder {
 	return &GetSomeBuilder{entity: entity, attrs: attrs}
 }
 
-// As binds the result of get-some to a variable.
-// Note: get-some actually returns a [attr value] pair in Datomic,
-// but we just bind the value.
-func (g *GetSomeBuilder) As(result *Var) *Expression {
+// GetSomeFrom creates a get-some expression reading the named source.
+//
+// Example:
+//
+//	build := qb.Source("$build")
+//	qb.GetSomeFrom(build, run, RunLabel, RunName).As(found, label)
+//	// [(get-some $build ?run :run/label :run/name) [?found ?label]]
+func GetSomeFrom(source *sourceInput, entity *Var, attrs ...Attr) *GetSomeBuilder {
+	return &GetSomeBuilder{source: source.sym, entity: entity, attrs: attrs}
+}
+
+// As binds the attribute get-some found, as its keyword, and that
+// attribute's value: Datomic's [?attr ?val].
+func (g *GetSomeBuilder) As(attr, value *Var) *TupleExpression {
 	keywords := make([]datalog.Keyword, len(g.attrs))
-	for i, attr := range g.attrs {
-		keywords[i] = attr.Keyword()
+	for i, a := range g.attrs {
+		keywords[i] = a.Keyword()
 	}
-	return &Expression{
+	return &TupleExpression{
 		fn: &query.GetSomeFunction{
+			Source: g.source,
 			Entity: query.VariableTerm{Symbol: g.entity.Symbol()},
 			Attrs:  keywords,
 		},
-		binding: result,
+		bindings: []*Var{attr, value},
 	}
 }

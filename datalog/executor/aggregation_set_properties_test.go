@@ -19,9 +19,12 @@ func TestGroupedAggregationPublishesGroupKey(t *testing.T) {
 			{"b", int64(3)},
 		},
 	)
-	aggregates := []query.FindAggregate{{Function: datalog.SymSum, Arg: value}}
+	find := []query.FindElement{
+		query.FindVariable{Symbol: group},
+		query.FindAggregate{Function: datalog.SymSum, Arg: value},
+	}
 
-	result := executeGroupedAggregation(input, []query.Symbol{group}, aggregates)
+	result := executeGroupedAggregation(input, newAggregationLayout(find))
 	require.Equal(t,
 		RelationProperties{Keys: [][]query.Symbol{{group}}},
 		result.Properties(),
@@ -50,8 +53,10 @@ func TestRealizedStreamingAggregationRetainsGroupKey(t *testing.T) {
 			[]query.Symbol{group, value},
 			base.Iterator(),
 		),
-		[]query.Symbol{group},
-		[]query.FindAggregate{{Function: datalog.SymSum, Arg: value}},
+		[]query.FindElement{
+			query.FindVariable{Symbol: group},
+			query.FindAggregate{Function: datalog.SymSum, Arg: value},
+		},
 	)
 	materialized := result.Materialize()
 	require.Equal(t,

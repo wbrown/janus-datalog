@@ -48,8 +48,9 @@ type hashJoinIterator struct {
 	workspace Tuple
 
 	// Current state - NOT safe for concurrent access: the current probe
-	// tuple's matches, held tuples from a drained index or ordinals from a
-	// kept one, their count, and the next to fill.
+	// tuple, nil until the probe side yields one; its matches, held tuples
+	// from a drained index or ordinals from a kept one, their count, and the
+	// next to fill.
 	currentProbeTuple Tuple
 	matches           []Tuple
 	ordinals          []int32
@@ -167,14 +168,36 @@ func (it *hashJoinIterator) Close() error {
 	return nil
 }
 
+// sideRead is what a join read of one of its sides: whether the side yielded
+// a tuple, and the failure it ended with.
+type sideRead struct {
+	yielded bool
+	err     error
+}
+
+// joinFailure is the failure a join of two sides answers: none where a side
+// ended with no tuple and no failure, since an empty side holds at no
+// assignment, and otherwise the first side's failure, else the second's
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract).
+func joinFailure(first, second sideRead) error {
+	if (!first.yielded && first.err == nil) || (!second.yielded && second.err == nil) {
+		return nil
+	}
+	if first.err != nil {
+		return first.err
+	}
+	return second.err
+}
+
+// Error answers the join's failure under the failure contract (joinFailure).
+// The build side yielded a tuple, since the iterator exists only for a build
+// that holds one, and the probe side yielded one once a probe tuple was read.
 func (it *hashJoinIterator) Error() error {
-	if it.buildErr != nil {
-		return it.buildErr
-	}
+	var probeErr error
 	if it.probeIt != nil {
-		return it.probeIt.Error()
+		probeErr = it.probeIt.Error()
 	}
-	return nil
+	return joinFailure(sideRead{yielded: true, err: it.buildErr}, sideRead{yielded: it.currentProbeTuple != nil, err: probeErr})
 }
 
 // emitProbeAnnotation reports the probe's counters. Its callers guard on
@@ -527,11 +550,19 @@ func hashJoinWithSet(
 	// Probe phase. An index holding no tuple matches no probe tuple
 	// (JoinIndex.Probe answers nil for every key, and a kept build of count
 	// zero bounds every probe at zero), so the join is empty whatever the probe
-	// side holds and the probe side is never opened: a stream among the
-	// probe sides keeps its one use
-	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). A drained build
-	// side's deferred error is in hand and the result carries it.
+	// side holds. A build that read no failure leaves the probe side unopened:
+	// a stream among the probe sides keeps its one use
+	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). A build that failed
+	// has its deferred error in hand, and the result carries it only where
+	// the probe side holds a tuple or a failure, so the probe side is read to
+	// its first tuple, its end or its failure, its one use: an empty probe
+	// side holds at no assignment, so the build's failure is not raised (the
+	// failure contract).
 	if buildCount == 0 {
+		if buildErr != nil {
+			has, probeErr := hasTuple(probeRel)
+			buildErr = joinFailure(sideRead{err: buildErr}, sideRead{yielded: has, err: probeErr})
+		}
 		if opts.Handler != nil {
 			opts.Handler(annotations.Event{
 				Name: annotations.JoinProbe,

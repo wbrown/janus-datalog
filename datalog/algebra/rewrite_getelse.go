@@ -2,6 +2,7 @@ package algebra
 
 import (
 	"github.com/wbrown/ebnf/parse"
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -9,8 +10,16 @@ import (
 // getElsePassName names the pass in rewrite records and event data.
 const getElsePassName = "get-else-scan-rewrite"
 
+// MatchAnswersLookup reports whether a match of attr on the source a query
+// names answers, per entity, the one value the source's lookup answers. A
+// source states it through the executor's AttributeFetchFusable, and the
+// planner hands the pass the executing sources' answer.
+type MatchAnswersLookup func(source query.Symbol, attr datalog.Keyword) bool
+
 // GetElseScanRewritePass returns a transform pass that rewrites
-// Map(get-else) nodes into LeftOuterJoin + Scan. Every decision on a
+// Map(get-else) nodes into LeftOuterJoin + Scan where answers says a match
+// on the source the get-else reads answers its lookup's one value per entity
+// (docs/proposals/GET_ELSE_SCAN_REWRITE_PROOF.md). Every decision on a
 // get-else candidate — applied, or declined with the failed precondition —
 // goes to the sink as a typed RewriteRecord and as its annotation-event form
 // (a nil sink records nothing). Map nodes that are not get-else expressions
@@ -18,24 +27,24 @@ const getElsePassName = "get-else-scan-rewrite"
 //
 // Rule 5 (ALGEBRA.md): get-else is a disguised left-outer-join.
 // Replace N per-tuple point lookups with 1 index scan + hash join.
-func GetElseScanRewritePass(sink *RewriteSink) Pass {
+func GetElseScanRewritePass(sink *RewriteSink, answers MatchAnswersLookup) Pass {
 	return Pass{
 		Name: getElsePassName,
 		Transforms: parse.TransformMap{
-			RuleMap: makeGetElseScanRewriteTransform(sink),
+			RuleMap: makeGetElseScanRewriteTransform(sink, answers),
 		},
 	}
 }
 
-func makeGetElseScanRewriteTransform(sink *RewriteSink) parse.TransformFunc {
+func makeGetElseScanRewriteTransform(sink *RewriteSink, answers MatchAnswersLookup) parse.TransformFunc {
 	return func(node *parse.Node, children ...interface{}) interface{} {
-		return getElseScanRewriteTransform(node, sink, children...)
+		return getElseScanRewriteTransform(node, sink, answers, children...)
 	}
 }
 
 // getElseScanRewriteTransform detects Map(get-else) and rewrites to
 // LeftOuterJoin(child, Scan([E A ?result])) with default.
-func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children ...interface{}) interface{} {
+func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, answers MatchAnswersLookup, children ...interface{}) interface{} {
 	if node.TransformedValue == nil {
 		return node
 	}
@@ -117,6 +126,15 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		return rebuildWithChildren(node, children)
 	}
 
+	// The default branch reads the default's variables, so the child relation
+	// provides each, as it provides the entity.
+	for _, sym := range ge.Default.RequiredSymbols() {
+		if !query.ContainsSymbol(childNode.Symbols(), sym) {
+			decline("default variable is not provided by the child relation")
+			return rebuildWithChildren(node, children)
+		}
+	}
+
 	// A scope's required run is the scope's input, as :in is a query's, so
 	// an entity it alone provides is an input parameter too. The default
 	// branch the rewrite's own join decompiles to runs as a scope over the
@@ -126,8 +144,22 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		return rebuildWithChildren(node, children)
 	}
 
-	// Build: Scan([?entity :attr ?result])
+	// The scan stands in for the lookup only where a match on the source the
+	// get-else reads answers, per entity, the one value the source's lookup
+	// answers. The source answers for itself.
+	if !answers(ge.ReadsFrom(), ge.Attr) {
+		decline("the source's match does not answer its lookup's one value per entity")
+		return rebuildWithChildren(node, children)
+	}
+
+	// Build: Scan([?entity :attr ?result]) on the source the get-else reads, a
+	// $ source leaving the pattern's Source nil, the pattern's spelling of $.
+	var scanSource query.Symbol
+	if source := ge.ReadsFrom(); source != datalog.SymDollar {
+		scanSource = source
+	}
 	scanPattern := &query.DataPattern{
+		Source: scanSource,
 		Elements: []query.PatternElement{
 			query.Variable{Name: entityVar.Symbol},
 			query.Constant{Value: ge.Attr},
@@ -156,19 +188,20 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		})
 	}
 
-	// Build: LeftOuterJoin(on=[?entity], default=[ge.Default], attr=ge.Attr)
-	// The DefaultAttr enables the decompiler to emit a get-else expression
-	// in the default branch instead of plain ground, preserving schema type
-	// information for vector defaults (e.g., []string vs []interface{}).
-	defaultAttr := ge.Attr
+	// Build: LeftOuterJoin(on=[?entity], default=[?result], get-else=ge)
+	// The DefaultGetElse is the get-else the decompiler emits in the default
+	// branch instead of plain ground. It reads the default from each tuple's
+	// bindings and types it by the schema of the source it reads (e.g.,
+	// []string vs []interface{} for a vector default); the Defaults entry
+	// names the symbol it binds.
 	joinNode := &Node{
 		Op: RuleJoin,
 		Data: &Join{
-			Kind:        LeftOuterJoin,
-			JoinSymbols: []query.Symbol{entityVar.Symbol},
-			Output:      mergeSymbols(childNode.Symbols(), []query.Symbol{bindingSym}),
-			Defaults:    []Default{{Symbol: bindingSym, Value: ge.Default}},
-			DefaultAttr: &defaultAttr,
+			Kind:           LeftOuterJoin,
+			JoinSymbols:    []query.Symbol{entityVar.Symbol},
+			Output:         mergeSymbols(childNode.Symbols(), []query.Symbol{bindingSym}),
+			Defaults:       []Default{{Symbol: bindingSym}},
+			DefaultGetElse: ge,
 		},
 		Children: []*Node{childNode, scanNode},
 	}

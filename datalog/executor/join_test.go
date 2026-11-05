@@ -358,8 +358,8 @@ func TestJoinStrategyAnnotationDoesNotConsumeStreamingRelation(t *testing.T) {
 	base := NewMaterializedRelationFromSet(
 		[]query.Symbol{joinSymbol},
 		[]Tuple{{int64(1)}},
-		ExecutorOptions{},
-	)
+		ExecutorOptions{}, RelationProperties{})
+
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),
 		base.Iterator(),

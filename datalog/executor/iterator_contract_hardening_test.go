@@ -43,8 +43,7 @@ func TestPredicateFilterIteratorPropagatesEvaluationError(t *testing.T) {
 			Op:    datalog.SymGT,
 			Left:  query.VariableTerm{Symbol: missing},
 			Right: query.ConstantTerm{Value: int64(0)},
-		},
-	)
+		}, nil, nil)
 
 	require.False(t, iterator.Next())
 	require.ErrorContains(t, iterator.Error(), "?missing")

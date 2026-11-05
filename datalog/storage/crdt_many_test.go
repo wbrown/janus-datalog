@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
@@ -1270,22 +1272,35 @@ func TestRemoveCardinalityValidation(t *testing.T) {
 
 			entityID := datalog.NewIdentity("test-entity")
 
-			// Remove() on CardinalityOne should succeed (writes OpCRDTRemove)
-			tx := db.NewTransaction()
-			err := tx.Remove(entityID, datalog.NewKeyword(":person/name"), "Alice")
-			if err != nil {
-				t.Errorf("Remove() should succeed for cardinality-one attribute: %v", err)
-			} else {
-				t.Log("Remove correctly accepted for cardinality-one (writes OpCRDTRemove)")
-			}
+			// A declared cardinality-one attribute and an unknown one, which
+			// defaults to cardinality one.
+			for _, c := range []struct {
+				attr  datalog.Keyword
+				value string
+			}{
+				{datalog.NewKeyword(":person/name"), "Alice"},
+				{datalog.NewKeyword(":unknown/attr"), "value"},
+			} {
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Remove(entityID, c.attr, c.value), "Remove() on %s", c.attr)
+				_, err := tx.Commit()
+				require.NoError(t, err)
 
-			// Remove() on unknown/schemaless attributes should succeed (CardinalityOne default)
-			tx2 := db.NewTransaction()
-			err = tx2.Remove(entityID, datalog.NewKeyword(":unknown/attr"), "value")
-			if err != nil {
-				t.Errorf("Remove() should succeed for unknown attribute: %v", err)
-			} else {
-				t.Log("Remove correctly accepted for unknown attribute (CardinalityOne default)")
+				// The store holds the one datom Remove wrote: the value under
+				// OpCRDTRemove.
+				it, err := OpenScan(db.Store(), DiscardIntake, ScanBound{Index: EAVT, Prefix: []datalog.Value{entityID, c.attr}})
+				require.NoError(t, err)
+				count := 0
+				for it.Next() {
+					d, err := it.Datom()
+					require.NoError(t, err)
+					assert.Equal(t, datalog.OpCRDTRemove, d.Op, "Remove on %s writes a remove", c.attr)
+					assert.Equal(t, c.value, d.V, "Remove on %s writes the value removed", c.attr)
+					count++
+				}
+				require.NoError(t, it.Error())
+				require.NoError(t, it.Close())
+				assert.Equal(t, 1, count, "Remove on %s writes one datom", c.attr)
 			}
 		})
 	}

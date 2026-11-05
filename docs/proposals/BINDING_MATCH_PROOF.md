@@ -2,10 +2,11 @@
 
 ## Sources
 
-- The code: `datalog/storage/matcher_relations.go` (`MatchWithConstraints`, `matchWithBindingsFromCache`, `restoreScanSetSemantics`), `datalog/storage/matcher.go` (`typedPositionBindingCheck`), `datalog/executor/relation.go` (`MaterializedRelation.ProjectFromPattern`, `MaterializedRelation.Project`, `MaterializedRelation.Rename`, `MaterializedRelation.carryErr`, `MaterializedRelation.Iterator`, `Select`, `NewMaterializedRelationWithOptions`, `NewMaterializedRelationFromSet`, `newMaterializedRelationFromSet`, `deduplicateTuples`, `projectionPreservesSet`), `datalog/query` (`DataPattern.Symbols`), `datalog/planner/framing.go` (`WindowFraming`), `datalog/executor/bound_pattern.go` (`executeBoundPattern`), `datalog/executor/kept_branch.go` (`buildBranchTuples`).
+- The code: `datalog/storage/matcher_relations.go` (`MatchWithConstraints`, `matchWithBindingsFromCache`, `restoreScanSetSemantics`), `datalog/storage/matcher.go` (`typedPositionBindingCheck`), `datalog/executor/relation.go` (`MaterializedRelation.ProjectFromPattern`, `MaterializedRelation.Project`, `MaterializedRelation.Rename`, `MaterializedRelation.carryErr`, `MaterializedRelation.Iterator`, `StreamingRelation.Project`, `ProductRelation.Project`, `Select`, `NewMaterializedRelationWithOptions`, `NewMaterializedRelationFromSet`, `newMaterializedRelationFromSet`, `deduplicateTuples`, `projectionPreservesSet`), `datalog/executor/lazy_seq_relation.go` (`LazySeqRelation.Project`), `datalog/executor/iterator_composition.go` (`ProjectIterator`), `datalog/query` (`DataPattern.Symbols`), `datalog/planner/framing.go` (`WindowFraming`), `datalog/executor/bound_pattern.go` (`executeBoundPattern`), `datalog/executor/kept_branch.go` (`buildBranchTuples`).
 - The design record: `docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md`. Its law that a set-preserving operator does not deduplicate again, and the relational invariants of the janus `CLAUDE.md`: every relation is a set, and a relation is never changed in place.
 - The scope design: `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.4, "A data pattern over a streaming group": the pattern is one body under the header of the variables it shares with the group, and its frame's run is held under `scope/required`.
 - The failure: the allocation profile of the `unfilled` query of the downstream's first report through the CLI, over the dump and the rule set that report shipped, which the tree does not carry, attributes to this path three allocations per binding that answer nothing. The projection of the bindings onto the pattern's symbols copies every binding when the symbols are the bindings' own. The typed selection copies the whole binding list when it rejects nothing. The cache match's constructor builds a key map over a result that is a set. `PERFORMANCE_STATUS.md` carries the figures.
+- The failure for streams: in `BenchmarkClausesAfterAnEvaluation` (storage), a ground expression extending a group answers a stream, and the find's projection of it onto its own symbols copies every tuple through a projecting iterator, one allocation per tuple beyond the held relation's route.
 
 ## 1. Definitions
 
@@ -15,7 +16,7 @@ Every name below is the code's, given a symbol for the proof.
 - A **held relation** is a `*MaterializedRelation`: its symbols, its tuples, its options, its properties and its deferred error, read through `Symbols`, `Iterator`, `Get`, `Size`, `Options`, `Properties` and the iterator's `Error`.
 - A **stream** is any other relation.
 - **B** is the binding relation of a match: the relation `MatchWithConstraints` reads bindings from, after `ProjectFromPattern` and the typed selection.
-- The **identity projection** of a held relation R is `Project(S)` with S equal to R's symbols, element by element, in R's order.
+- The **identity projection** of a relation R is `Project(S)` with S equal to R's symbols, element by element, in R's order.
 - A **selection rejecting nothing** is `Select(R, p)` with p true of every tuple of R.
 - The **read positions** of the cache match are the pattern's entity variable and, when the pattern's attribute is a variable, its attribute variable. The cache match reads nothing else of a binding.
 - The **cache match's result** is the relation `matchWithBindingsFromCache` constructs over the tuples it builds, one per answer.
@@ -32,10 +33,11 @@ Every name below is the code's, given a symbol for the proof.
 - **P8 (the constructors).** `NewMaterializedRelationWithOptions` deduplicates its tuples through a key map sized to their count. `NewMaterializedRelationFromSet` deduplicates nothing and checks each value's domain. `restoreScanSetSemantics` returns a held relation unchanged.
 - **P9 (B is a set).** The relation `ProjectFromPattern` answers is a set by P3. A selection of a set is a set. So B is a set.
 - **P10 (one position per variable).** `query.UnifyPatterns`, a step of `Prepare`, writes every data pattern that names one variable at several positions as the pattern over distinct variables followed by their equalities. So a pattern reaching the matcher names each variable at one position, and a result tuple's entity, attribute and value stand at distinct positions.
+- **P11 (a stream's projection).** For any symbols, `StreamingRelation.Project`, `LazySeqRelation.Project` and `ProductRelation.Project` answer a relation over a `ProjectIterator` on the relation, wrapped in a deduplicating pass when `projectionPreservesSet` fails. The projecting iterator reads the relation's iterator once, at its first pull, and on each pull allocates a new tuple holding the source tuple's values at the projected positions. It answers the source's error and a copy answer of false. The answer's options are the relation's, and its properties are the relation's projected onto the symbols.
 
 ## 3. Theorems
 
-**T1 (the identity projection is the relation).** For a held relation R, the identity projection of R answers R itself. Every reader reads R's symbols, tuples, options, properties and error as it read the fresh relation's before.
+**T1 (the identity projection is the relation).** For a relation R, held or a stream, the identity projection of R answers R itself. Every reader reads R's symbols, tuples, options, properties and error as it read the fresh relation's before.
 
 **T2 (a selection rejecting nothing is the relation).** For a held relation R and a predicate true of every tuple of R, `Select` answers R itself. For a stream, and for a predicate that rejects a tuple, `Select` answers as before.
 
@@ -50,6 +52,8 @@ Every name below is the code's, given a symbol for the proof.
 ### L1. Answering the relation itself (T1, T2)
 
 By P1 nothing writes R after its construction, so a reader of R at any later time reads what R was constructed with. By P3 the fresh relation the identity projection constructed carried R's symbols in R's order, one tuple per tuple of R holding the same values at the same positions, R's options, R's properties projected onto R's own symbols, and R's error. `RelationProperties.project` keeps every ordering clause and every key whose symbols are all among the projection's, and R's own symbols are all of them, so that projection is R's properties. By P5 the fresh relation a selection rejecting nothing constructed carried R's symbols, R's tuples in R's order, R's options, R's properties and R's deferred error. Each is equal to R in every part a reader reads. So answering R reads the same. `Rename` already answers a relation sharing its input's tuples, so a tuple read through two relations is the established case. ∎
+
+For a stream R, by P11 the fresh relation was a relation over a projecting iterator on R. Each of its tuples held R's tuple's values at R's own positions. Its options were R's and its error R's, and its properties were R's projected onto R's own symbols, which are R's properties as above. A permutation of the full symbol list preserves the set, so no deduplicating pass wrapped it. The projecting iterator read R's iterator once, when the fresh relation was read, so answering R reads R once, when its reader reads it, and yields R's tuples themselves. R's copy answer is its iterator's, where the projecting iterator answered false. Every reader that keeps a tuple past the next pull reads the copy answer or copies regardless (`PULL_BASED_HASH_JOIN_PROOF.md` P2), and a query's caller reads it under the public contract there (P8). So answering R reads the same tuples. ∎
 
 ### L2. A windowed pattern projects by the identity (T1)
 
@@ -76,6 +80,7 @@ The identity projection returns R and allocates nothing. The selection over a he
 The change carries these tests, each pinning the theorem named.
 
 - `TestProjectOntoItsOwnSymbolsAnswersTheRelation` (executor, new): a held relation's identity projection is the relation itself, with its properties and its deferred error; its projection onto a permutation of its symbols is another relation holding the same tuples under the new order (T1).
+- `TestProjectOntoItsOwnSymbolsAnswersTheRelationOverAStream` (executor, new): a stream's, a lazy sequence's and a product's identity projection is the relation itself, and the projection of each onto a permutation of its symbols is another relation holding the same tuples under the new order (T1).
 - `TestSelectRejectingNothingAnswersTheRelation` (executor, new): a selection rejecting nothing over a held relation is the relation itself, with its deferred error; a selection rejecting one tuple is another relation holding the survivors; a selection over a stream is a held relation holding the stream's tuples (T2).
 - `TestCacheMatchOverBindingsCarryingTheValueAnswersEachTupleOnce` (storage, new): two bindings sharing an entity and differing at the pattern's value variable, over a cardinality-many attribute with two members, answer each member's tuple once (T3, the deduplicating arm). By L3 a set constructor taken for those bindings answers each member's tuple twice, which the assertion refuses.
 - `TestSelect`, `TestSelectCarriesScanError` and `TestProject` (executor), and the storage tests of the binding-driven match, run unchanged (T4).
@@ -84,6 +89,7 @@ The change carries these tests, each pinning the theorem named.
 ## 6. The change the proof licenses
 
 - `relation.go`, `MaterializedRelation.Project`: answers the relation itself when the symbols are its own in its own order.
+- `relation.go`, `StreamingRelation.Project` and `ProductRelation.Project`, and `lazy_seq_relation.go`, `LazySeqRelation.Project`: answer the relation itself when the symbols are its own in its own order.
 - `relation.go`, `Select`: over a held relation, answers the relation itself when the predicate rejects nothing, and otherwise the held relation over the survivors as before; over a stream, as before.
 - `matcher_relations.go`, `matchWithBindingsFromCache`: constructs through `NewMaterializedRelationFromSet` when the binding relation's symbols are the read positions alone, and through the deduplicating constructor otherwise.
 - `matcher_relations.go`, `restoreScanSetSemantics`'s doc: a held result is a set by its constructor, deduplicating or proven.
@@ -91,7 +97,6 @@ The change carries these tests, each pinning the theorem named.
 
 ## 7. What the proof does not cover
 
-- `StreamingRelation.Project` and `ProductRelation.Project`. A stream's identity projection still wraps a projecting iterator.
 - `Select` over a stream, which still drains the stream into a held relation.
 - The cache match over bindings carrying the pattern's value or transaction variable, which still deduplicates. Reading the bound value from the binding, so that every binding answers at most the tuples agreeing with it, changes which tuples the match answers and is not licensed here.
 - `matchFromCache`, the cache match without bindings, which constructs as before.

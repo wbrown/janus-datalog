@@ -9,9 +9,8 @@ import (
 )
 
 // TestOrderByNonProjectedThroughStorage exercises the non-projected sort-key
-// fix end-to-end against real BadgerDB storage (planner retention through
-// the storage PatternMatcher path, executor sort-strip finalization), not a synthetic
-// in-memory matcher. See
+// fix end-to-end through a database (planner retention through the storage
+// PatternMatcher path, executor sort-strip finalization). See
 // BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
 func TestOrderByNonProjectedThroughStorage(t *testing.T) {
 	for _, mode := range optimizerModes {

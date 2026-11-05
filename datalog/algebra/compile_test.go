@@ -203,7 +203,7 @@ func TestCompileDecompileNotAtEnd(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("Compiled:\n%s", root.String())
 
-	optimizer := NewOptimizer(DefaultPasses(nil)...)
+	optimizer := NewOptimizer(DefaultPasses(nil, everySourceAnswers)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("Optimized:\n%s", optimized.String())
@@ -233,7 +233,7 @@ func TestCompileDecompileWithNot(t *testing.T) {
 	t.Logf("Compiled:\n%s", root.String())
 
 	// Optimize (should be a no-op — no LateralJoins)
-	optimizer := NewOptimizer(DefaultPasses(nil)...)
+	optimizer := NewOptimizer(DefaultPasses(nil, everySourceAnswers)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("Optimized:\n%s", optimized.String())
@@ -277,7 +277,7 @@ func TestCompileCorrelatedNotJoinSeparatesKeysAndRequirements(t *testing.T) {
 		anti.Required,
 	)
 
-	optimizer := NewOptimizer(DefaultPasses(nil)...)
+	optimizer := NewOptimizer(DefaultPasses(nil, everySourceAnswers)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	clauses, err := Decompile(optimized)
@@ -461,7 +461,7 @@ func TestCompileDecompileWithGetElse(t *testing.T) {
 	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
-	optimizer := NewOptimizer(DefaultPasses(nil)...)
+	optimizer := NewOptimizer(DefaultPasses(nil, everySourceAnswers)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 

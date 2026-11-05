@@ -192,6 +192,16 @@ func (m *AnnotatedMatcher) LookupAttribute(
 	return nil, false, fmt.Errorf("entity lookup unavailable: underlying matcher %T does not support attribute lookup", m.underlying)
 }
 
+// LookupSource forwards to the underlying matcher, so a database function
+// names its source through the annotation wrapper and reads that source's own
+// lookup. An underlying matcher that cannot look up is an error.
+func (m *AnnotatedMatcher) LookupSource(source query.Symbol) (EntityLookupMatcher, error) {
+	if elm, ok := m.underlying.(EntityLookupMatcher); ok {
+		return elm.LookupSource(source)
+	}
+	return nil, fmt.Errorf("entity lookup unavailable: underlying matcher %T does not support attribute lookup", m.underlying)
+}
+
 // CanFuseAttributeFetch implements AttributeFetchFusable if the underlying
 // matcher supports it, so same-entity attribute fusion still applies when an
 // annotation handler is attached.

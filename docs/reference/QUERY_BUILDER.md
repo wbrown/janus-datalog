@@ -277,6 +277,15 @@ q := qb.Query().
 
 Equivalent EDN: `[(get-else $ ?e :person/nickname "Anonymous") ?nickname]`
 
+A variable default is read from each tuple's bindings:
+
+```go
+fallback := qb.NewVar("fallback")
+qb.GetElse(e, PersonNickname, fallback).As(nickname)
+```
+
+Equivalent EDN: `[(get-else $ ?e :person/nickname ?fallback) ?nickname]`
+
 ### Missing - Check Attribute Absence
 
 **As a predicate** (filter tuples where attribute is missing):
@@ -315,24 +324,36 @@ Equivalent EDN: `[(missing? $ ?e :person/email) ?needs-email]`
 
 ### GetSome - Fallback Attribute Chain
 
-Returns the first available attribute from a list (useful for display names, fallbacks):
+Binds the first listed attribute the entity carries and its value, Datomic's `[?attr ?val]` (useful for display names, fallbacks). An entity carrying none of the attributes is dropped:
 
 ```go
-displayName := qb.NewVar("displayName")
+found, displayName := qb.NewVar("found"), qb.NewVar("displayName")
 
 q := qb.Query().
-    Find(name, displayName).
+    Find(name, found, displayName).
     Where(
         qb.Pat(e, PersonName, name),
-        qb.GetSome(e, PersonNickname, PersonFullName, PersonEmail).As(displayName),
+        qb.GetSome(e, PersonNickname, PersonFullName, PersonEmail).As(found, displayName),
     ).
     MustBuild()
 
 // Returns first available: nickname > fullname > email
-// [["Alice", "Ali"], ["Bob", "Robert Jones"], ["Charlie", "charlie@example.com"]]
+// [["Alice", :person/nickname, "Ali"], ["Bob", :person/fullname, "Robert Jones"],
+//  ["Charlie", :person/email, "charlie@example.com"]]
 ```
 
-Equivalent EDN: `[(get-some $ ?e :person/nickname :person/fullname :person/email) ?display-name]`
+Equivalent EDN: `[(get-some $ ?e :person/nickname :person/fullname :person/email) [?found ?display-name]]`
+
+### Database Functions on a Named Source
+
+`qb.GetElseFrom`, `qb.MissingFrom` and `qb.GetSomeFrom` take the source the function reads, the `qb.Source` a pattern's `qb.PatFrom` takes:
+
+```go
+build := qb.Source("$build")
+qb.GetElseFrom(build, run, RunFailed, "").As(failed)
+```
+
+Equivalent EDN: `[(get-else $build ?run :run/failed "") ?failed]`
 
 ## Input Parameters
 
@@ -983,7 +1004,10 @@ func main() {
 | `qb.GetElse(e, attr, default).As(r)` | `[(get-else $ ?e :attr default) ?r]` | Default for missing |
 | `qb.Missing(e, attr)` | `[(missing? $ ?e :attr)]` | Filter: attr missing |
 | `qb.Missing(e, attr).As(r)` | `[(missing? $ ?e :attr) ?r]` | Bind: is attr missing? |
-| `qb.GetSome(e, a1, a2, a3).As(r)` | `[(get-some $ ?e :a1 :a2 :a3) ?r]` | First available attr |
+| `qb.GetSome(e, a1, a2, a3).As(a, r)` | `[(get-some $ ?e :a1 :a2 :a3) [?a ?r]]` | First available attr and its value |
+| `qb.GetElseFrom(src, e, attr, default).As(r)` | `[(get-else $src ?e :attr default) ?r]` | get-else on a named source |
+| `qb.MissingFrom(src, e, attr)` | `[(missing? $src ?e :attr)]` | missing? on a named source |
+| `qb.GetSomeFrom(src, e, a1, a2).As(a, r)` | `[(get-some $src ?e :a1 :a2) [?a ?r]]` | get-some on a named source |
 
 ### Input Parameters
 

@@ -1,9 +1,10 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -42,11 +43,11 @@ func catItemDatoms() []datalog.Datom {
 // invocation support lands, simply removing the parse rejection makes the
 // correctness assertion below the active gate — no test edit required.
 func TestSubqueryLimitIsPerInvocation(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(catItemDatoms())
+	matcher := factsDatabase(t, catItemDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find ?c ?v
 	                              :where [?cat :cat/name ?c]
@@ -83,11 +84,11 @@ func TestSubqueryLimitIsPerInvocation(t *testing.T) {
 // When per-invocation support lands, removing the parse rejection makes the
 // correctness assertion below the active gate — no test edit required.
 func TestSubqueryLimitTopPerGroup(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(catItemDatoms())
+	matcher := factsDatabase(t, catItemDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find ?c ?v
 	                              :where [?cat :cat/name ?c]
@@ -128,11 +129,11 @@ func TestSubqueryLimitTopPerGroup(t *testing.T) {
 // TestPureAggregateWithLimit: a pure (ungrouped) aggregate yields one tuple;
 // limit 1 keeps it, limit 0 yields none.
 func TestPureAggregateWithLimit(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(catItemDatoms())
+	matcher := factsDatabase(t, catItemDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			t.Run("limit 1 keeps the single aggregate tuple", func(t *testing.T) {
 				q, err := parser.ParseQuery(`[:find (count ?e) .
@@ -174,11 +175,11 @@ func TestPureAggregateWithLimit(t *testing.T) {
 
 // TestPullWithLimit: :limit caps the number of pulled entities (tuples).
 func TestPullWithLimit(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(catItemDatoms())
+	matcher := factsDatabase(t, catItemDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find (pull ?e [:item/val])
 	                              :where [?e :item/val ?v]

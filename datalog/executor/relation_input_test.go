@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"fmt"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -34,11 +35,11 @@ func TestRelationInput(t *testing.T) {
 		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			ctx := NewContext()
 
 			t.Run("direct query with RelationInput", func(t *testing.T) {
@@ -218,11 +219,11 @@ func TestRelationInput_GroupedMax(t *testing.T) {
 		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			ctx := NewContext()
 
 			t.Run("query with RelationInput", func(t *testing.T) {
@@ -373,13 +374,13 @@ func TestRelationInput_EdgeCases(t *testing.T) {
 		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	ctx := NewContext()
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			t.Run("empty input relation", func(t *testing.T) {
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 				q := `[:find ?n ?y (max ?age)
 				          :in $ [[?n ?y] ...]
@@ -406,7 +407,7 @@ func TestRelationInput_EdgeCases(t *testing.T) {
 			})
 
 			t.Run("single tuple", func(t *testing.T) {
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 				q := `[:find ?n ?y (max ?age)
 				          :in $ [[?n ?y] ...]
@@ -436,7 +437,7 @@ func TestRelationInput_EdgeCases(t *testing.T) {
 			})
 
 			t.Run("no matching results", func(t *testing.T) {
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 				q := `[:find ?n ?y (max ?age)
 				          :in $ [[?n ?y] ...]
@@ -469,7 +470,7 @@ func TestRelationInput_EdgeCases(t *testing.T) {
 			})
 
 			t.Run("mixed matching and non-matching", func(t *testing.T) {
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 				q := `[:find ?n ?y (max ?age)
 				          :in $ [[?n ?y] ...]
@@ -537,13 +538,13 @@ func TestRelationInput_ThreeHundredTuples(t *testing.T) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	ctx := NewContext()
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			t.Run("three hundred input tuples", func(t *testing.T) {
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 				q := `[:find ?n ?y ?m (max ?age)
 				          :in $ [[?n ?y ?m] ...]
@@ -626,7 +627,7 @@ func TestRelationInput_ThreeHundredTuples(t *testing.T) {
 				errCh := make(chan error, 10)
 				for i := 0; i < 10; i++ {
 					go func() {
-						exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+						exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 						_, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
 						errCh <- err
 					}()

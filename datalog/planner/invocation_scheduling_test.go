@@ -37,7 +37,7 @@ func TestCreatePhasesGreedy_AScanOfAWholeExtentIsSelectedLast(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			q, err := parser.ParseQuery(c.text)
 			require.NoError(t, err)
-			phases, err := createPhasesGreedy(q.Where, physicalFindSymbols(q.Find), map[query.Symbol]bool{a: true}, query.Bindings{Rules: rules})
+			phases, err := createPhasesGreedy(q.Where, query.FindSymbols(q.Find), map[query.Symbol]bool{a: true}, query.Bindings{Rules: rules})
 			require.NoError(t, err)
 			assertScheduledAfter(t, phases, q.Where[c.scan], q.Where[c.other],
 				"the scan of a whole extent is selected after the clause with visible selectivity")
@@ -104,7 +104,7 @@ func TestCreatePhasesGreedy_AnInvocationWaitsOnAProviderByItsSelectivity(t *test
 		t.Run(c.name, func(t *testing.T) {
 			q, err := parser.ParseQuery(c.text)
 			require.NoError(t, err)
-			phases, err := createPhasesGreedy(q.Where, physicalFindSymbols(q.Find), c.inputs, query.Bindings{Rules: rules})
+			phases, err := createPhasesGreedy(q.Where, query.FindSymbols(q.Find), c.inputs, query.Bindings{Rules: rules})
 			require.NoError(t, err)
 			assertScheduledAfter(t, phases, q.Where[c.later], q.Where[c.earlier], c.msg)
 		})
@@ -149,7 +149,7 @@ func TestCreatePhasesGreedy_ASubqueryReadingAnAvailableInputPrecedesAScan(t *tes
 		t.Run(c.name, func(t *testing.T) {
 			q, err := parser.ParseQuery(c.text)
 			require.NoError(t, err)
-			phases, err := createPhasesGreedy(q.Where, physicalFindSymbols(q.Find), map[query.Symbol]bool{s: true}, query.Bindings{Rules: rules})
+			phases, err := createPhasesGreedy(q.Where, query.FindSymbols(q.Find), map[query.Symbol]bool{s: true}, query.Bindings{Rules: rules})
 			require.NoError(t, err)
 			assertScheduledAfter(t, phases, q.Where[c.later], q.Where[c.earlier], c.msg)
 		})

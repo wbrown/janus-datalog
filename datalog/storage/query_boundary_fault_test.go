@@ -21,17 +21,23 @@ import (
 // and running the boundary assertions over both is what puts the property on
 // every backend without giving up the reproduction.
 
-var errInjectedScanFault = errors.New("injected scan fault")
+var (
+	errInjectedScanFault  = errors.New("injected scan fault")
+	errInjectedCloseFault = errors.New("injected close fault")
+)
 
 // scanFaultStore fails the iterators it hands out, once armed, and counts
 // them, so a reader that opens one scan on a failing read is told apart from
 // one that retries. Setup writes through it unarmed, so only the reads under
-// test fail.
+// test fail. An iterator fails its read after failAfter datoms. When
+// closeFailAfter is above zero, an iterator that has yielded closeFailAfter
+// datoms fails its close.
 type scanFaultStore struct {
 	Store
-	armed     bool
-	failAfter int
-	scans     int
+	armed          bool
+	failAfter      int
+	closeFailAfter int
+	scans          int
 }
 
 func (s *scanFaultStore) arm() { s.armed = true }
@@ -41,7 +47,7 @@ func (s *scanFaultStore) wrap(it Iterator, err error) (Iterator, error) {
 		return it, err
 	}
 	s.scans++
-	return &scanFaultIterator{Iterator: it, remaining: s.failAfter}, nil
+	return &scanFaultIterator{Iterator: it, remaining: s.failAfter, closeFailAfter: s.closeFailAfter}, nil
 }
 
 func (s *scanFaultStore) Scan(bound ScanBound) (Iterator, error) {
@@ -75,11 +81,14 @@ func (s *scanFaultSession) ScanKeysOnly(bound ScanBound) (Iterator, error) {
 
 // scanFaultIterator yields remaining datoms and then fails the way a real
 // storage failure does: Next reports false and the error arrives through
-// Error(), stickily.
+// Error(), stickily. Once it has yielded closeFailAfter datoms, when that is
+// above zero, its Close fails.
 type scanFaultIterator struct {
 	Iterator
-	remaining int
-	failed    bool
+	remaining      int
+	closeFailAfter int
+	yielded        int
+	failed         bool
 }
 
 func (it *scanFaultIterator) Next() bool {
@@ -94,6 +103,7 @@ func (it *scanFaultIterator) Next() bool {
 		return false
 	}
 	it.remaining--
+	it.yielded++
 	return true
 }
 
@@ -102,6 +112,16 @@ func (it *scanFaultIterator) Error() error {
 		return errInjectedScanFault
 	}
 	return it.Iterator.Error()
+}
+
+func (it *scanFaultIterator) Close() error {
+	if err := it.Iterator.Close(); err != nil {
+		return err
+	}
+	if it.closeFailAfter > 0 && it.yielded >= it.closeFailAfter {
+		return errInjectedCloseFault
+	}
+	return nil
 }
 
 // queryBoundaryFaultCase is one way of making a scan fail, plus what the

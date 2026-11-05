@@ -14,6 +14,9 @@ import (
 // query, the rule set, the symbols bound when the plan was made, the
 // invocations held and the planner options that shape a plan. A hit compares
 // those parts in full, so a hash collision costs a miss, never a wrong plan.
+// A hit also asks the requesting planner's sources each question the plan's
+// get-else rewrites asked (RealizedPlan.SourceAnswers), and serves the plan
+// only where every answer is the one it was made under.
 type PlanCache struct {
 	cache map[uint64]*cachedPlan
 	mu    sync.RWMutex
@@ -56,9 +59,10 @@ func planOptionsOf(opts PlannerOptions) planOptions {
 }
 
 // madeUnder reports whether the plan was made under a request's query, rule
-// set, bound symbols, held invocations and options: the parts are compared
-// in full, a query and a rule set structurally and the bound symbols as a
-// set.
+// set, bound symbols, held invocations, options and sources: the parts are
+// compared in full, a query and a rule set structurally and the bound
+// symbols as a set, and the request's options answer each question the
+// plan's get-else rewrites asked as it was answered.
 func (p *cachedPlan) madeUnder(q *query.Query, bindings query.Bindings, opts PlannerOptions) bool {
 	if p.held != bindings.Held || p.options != planOptionsOf(opts) || len(p.bound) != len(bindings.Symbols) {
 		return false
@@ -74,7 +78,7 @@ func (p *cachedPlan) madeUnder(q *query.Query, bindings query.Bindings, opts Pla
 	if p.rules != nil && !p.rules.Equal(bindings.Rules) {
 		return false
 	}
-	return p.query.Equal(q)
+	return p.query.Equal(q) && opts.answersAlike(p.plan.SourceAnswers)
 }
 
 // NewPlanCache creates a new query plan cache holding at most maxSize plans,

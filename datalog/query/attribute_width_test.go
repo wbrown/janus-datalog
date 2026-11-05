@@ -27,7 +27,7 @@ func TestValidateQueryRefusesAnAttributeWiderThanStorageHolds(t *testing.T) {
 		clause Clause
 	}{
 		{"a data pattern's constant attribute", &DataPattern{Elements: []PatternElement{Variable{Name: e}, Constant{Value: wide}, Variable{Name: v}}}},
-		{"a get-else's attribute", &Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: wide, Default: "none"}, Binding: ScalarBinding{Variable: v}}},
+		{"a get-else's attribute", &Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: wide, Default: ConstantTerm{Value: "none"}}, Binding: ScalarBinding{Variable: v}}},
 		{"a get-some's attribute", &Expression{Function: &GetSomeFunction{Entity: VariableTerm{Symbol: e}, Attrs: []datalog.Keyword{fits, wide}}, Binding: ScalarBinding{Variable: v}}},
 		{"a missing? predicate's attribute", &DatabaseFunctionPredicate{Function: &MissingFunction{Entity: VariableTerm{Symbol: e}, Attr: wide}}},
 	}
@@ -79,7 +79,7 @@ func TestValidateQueryRefusesAnAttributeWiderThanStorageHolds(t *testing.T) {
 			Find: []FindElement{FindPull{Variable: e, Pattern: &PullPattern{Specs: []PullAttrSpec{&PullAttribute{Attr: fits}}}}},
 			Where: []Clause{
 				&DataPattern{Elements: []PatternElement{Variable{Name: e}, Constant{Value: fits}, Variable{Name: v}}},
-				&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: fits, Default: "none"}, Binding: ScalarBinding{Variable: sym("?w")}},
+				&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: fits, Default: ConstantTerm{Value: "none"}}, Binding: ScalarBinding{Variable: sym("?w")}},
 			},
 		}
 		require.NoError(t, ValidateQuery(q))

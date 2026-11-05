@@ -48,7 +48,7 @@ func TestValidateQueryRefusesAConstantOutsideTheDomain(t *testing.T) {
 			}}},
 			{"a get-else default", &Query{Find: []FindElement{FindVariable{Symbol: x}}, Where: []Clause{
 				scan,
-				&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: attr, Default: c.value}, Binding: x},
+				&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: attr, Default: ConstantTerm{Value: c.value}}, Binding: x},
 			}}},
 			{"a subquery argument", &Query{Find: []FindElement{FindVariable{Symbol: e}}, Where: []Clause{
 				scan,

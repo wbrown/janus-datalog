@@ -32,9 +32,11 @@ import (
 // CardinalityMany one — so we know the ON arm actually took the fused path.
 //
 // Pillar 3 — GATE: TestFusionGate_ModeAndCardinality proves CanFuseAttributeFetch
-// (the matcher decision the executor consults) is true only for latest-mode
-// CardinalityOne, and false for CardinalityMany, schemaless, and history mode.
-// The executor fuses iff that returns true, so this bounds where fusion can run.
+// (the matcher decision the executor consults) is true only in latest mode for
+// an attribute the matcher resolves cardinality-one, declared so or with no
+// definition, and false for CardinalityMany, CardinalityVector, history and
+// as-of mode. The executor fuses iff that returns true, so this bounds where
+// fusion can run.
 // =============================================================================
 
 func fusionSchema() *schema.Schema {
@@ -388,8 +390,41 @@ func TestFusion_CoverageFires(t *testing.T) {
 	}
 }
 
+// A same-entity fetch of an attribute the schema does not define takes the
+// fused path and answers as the unfused match does: both resolve the
+// attribute by LWW, so an entity holding two of its datoms answers the latest.
+func TestFusion_AnAttributeTheSchemaDoesNotDefineFusesAndAnswersAlike(t *testing.T) {
+	typ := datalog.NewKeyword(":place/type")
+	note := datalog.NewKeyword(":place/note")
+	e1, e2 := datalog.NewIdentity("e1"), datalog.NewIdentity("e2")
+	query := `[:find ?e ?n :where [?e :place/type "room"] [?e :place/note ?n]]`
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			apply := func(db *Database) {
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e1, typ, "room"))
+				require.NoError(t, tx.Set(e2, typ, "room"))
+				require.NoError(t, tx.Add(e1, note, "first"))
+				require.NoError(t, tx.Add(e1, note, "second"))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+			}
+			assertFusionEquivalent(t, mode, apply, query)
+
+			cap := &fusionCapture{n: map[string]int{}}
+			db := openFusionDB(t, mode, true, cap.handler())
+			apply(db)
+			_ = fusionTuples(t, db, query)
+			assert.Positive(t, cap.get(annotations.PatternFusedFetch),
+				"a fetch of an attribute the schema does not define must take the fused path")
+		})
+	}
+}
+
 // TestFusionGate_ModeAndCardinality proves the matcher gate the executor
-// consults: fusion is permitted only for latest-mode CardinalityOne attributes.
+// consults: fusion is permitted only in latest mode, for an attribute the
+// matcher resolves cardinality-one, declared so or with no definition.
 func TestFusionGate_ModeAndCardinality(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -409,8 +444,8 @@ func testFusionGateModeAndCardinality(t *testing.T, mode optimizerMode) {
 		"CardinalityMany is not fusable")
 	assert.False(t, latest.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/steps")),
 		"CardinalityVector is not fusable")
-	assert.False(t, latest.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/unknown")),
-		"schemaless attribute is not fusable")
+	assert.True(t, latest.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/unknown")),
+		"an attribute the schema does not define is fusable: the lookup and a match both resolve it by LWW")
 
 	hist, ok := db.History().Matcher().(*PatternMatcher)
 	require.True(t, ok)

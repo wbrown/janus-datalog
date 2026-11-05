@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
@@ -434,22 +435,27 @@ func TestQueryRunsAKeywordReachingThroughABinding(t *testing.T) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d, _ := refusingDB(t, mode)
+				_, err := d.Query(`[:find ?v :where [?e :t/strnig ?v]]`)
+				requireUnknown(t, err, kw(":t/strnig"))
+
 				var inputs []interface{}
 				if c.rules != "" {
 					inputs = append(inputs, mustRuleSet(t, c.rules))
 				}
-				_, err := executor.CollectTuples(d.Query(c.text, inputs...))
+				got, err := executor.CollectTuples(d.Query(c.text, inputs...))
 				require.NoError(t, err, "a keyword reaching the attribute position through a binding is a value")
+				require.Empty(t, got, "no datom carries :t/strnig, so the pattern it reaches matches nothing")
 			})
 		}
 	}
 }
 
 // typedAccessor is one exported read of Database naming an attribute in Go,
-// called on d for e and a with its value dropped and its error returned.
+// called on d for e and a, answering whether it read a value for the
+// attribute, and its error.
 type typedAccessor struct {
 	name string
-	get  func(d *Database, e datalog.Identity, a datalog.Keyword) error
+	read func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error)
 }
 
 // typedAccessors is every exported read of Database that names an attribute
@@ -457,41 +463,42 @@ type typedAccessor struct {
 // the two vector readers and the entity resolver.
 func typedAccessors() []typedAccessor {
 	return []typedAccessor{
-		{"GetString", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
-			_, _, err := d.GetString(e, a)
-			return err
+		{"GetString", func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error) {
+			_, found, err := d.GetString(e, a)
+			return found, err
 		}},
-		{"GetInt", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
-			_, _, err := d.GetInt(e, a)
-			return err
+		{"GetInt", func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error) {
+			_, found, err := d.GetInt(e, a)
+			return found, err
 		}},
-		{"GetFloat", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
-			_, _, err := d.GetFloat(e, a)
-			return err
+		{"GetFloat", func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error) {
+			_, found, err := d.GetFloat(e, a)
+			return found, err
 		}},
-		{"GetBool", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
-			_, _, err := d.GetBool(e, a)
-			return err
+		{"GetBool", func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error) {
+			_, found, err := d.GetBool(e, a)
+			return found, err
 		}},
-		{"GetRef", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
-			_, _, err := d.GetRef(e, a)
-			return err
+		{"GetRef", func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error) {
+			_, found, err := d.GetRef(e, a)
+			return found, err
 		}},
-		{"GetStrings", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
-			_, err := d.GetStrings(e, a)
-			return err
+		{"GetStrings", func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error) {
+			values, err := d.GetStrings(e, a)
+			return len(values) > 0, err
 		}},
-		{"GetVectorNth", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
-			_, err := d.GetVectorNth(e, a, 0)
-			return err
+		{"GetVectorNth", func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error) {
+			element, err := d.GetVectorNth(e, a, 0)
+			return element != nil, err
 		}},
-		{"GetVectorLength", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
-			_, err := d.GetVectorLength(e, a)
-			return err
+		{"GetVectorLength", func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error) {
+			length, err := d.GetVectorLength(e, a)
+			return length > 0, err
 		}},
-		{"ResolveEntityAttributes", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
-			_, err := d.ResolveEntityAttributes(e, []datalog.Keyword{a})
-			return err
+		{"ResolveEntityAttributes", func(d *Database, e datalog.Identity, a datalog.Keyword) (bool, error) {
+			resolved, err := d.ResolveEntityAttributes(e, []datalog.Keyword{a})
+			_, found := resolved[a]
+			return found, err
 		}},
 	}
 }
@@ -502,7 +509,8 @@ func TestTypedAccessorsRefuseUnknownAttribute(t *testing.T) {
 			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
 				d, entity := refusingDB(t, mode)
 				attr := kw(":t/strnig")
-				requireUnknown(t, accessor.get(d, entity, attr), attr)
+				_, err := accessor.read(d, entity, attr)
+				requireUnknown(t, err, attr)
 			})
 		}
 	}
@@ -557,26 +565,38 @@ func TestResolveEntityAttributesReportsEveryUnknownAttribute(t *testing.T) {
 }
 
 // A declared attribute no datom carries is not refused: every accessor
-// answers it on a refusing database with no error.
+// answers it on a refusing database with no error and no value, where the
+// same accessor refuses an undeclared attribute.
 func TestTypedAccessorsAnswerADeclaredAttributeWithNoDatoms(t *testing.T) {
 	for _, mode := range optimizerModes {
 		for _, accessor := range typedAccessors() {
 			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
 				d, entity := refusingDB(t, mode)
-				require.NoError(t, accessor.get(d, entity, kw(":t/double")), "a declared attribute with no datoms answers")
+				_, err := accessor.read(d, entity, kw(":t/strnig"))
+				requireUnknown(t, err, kw(":t/strnig"))
+				found, err := accessor.read(d, entity, kw(":t/double"))
+				require.NoError(t, err, "a declared attribute with no datoms answers")
+				assert.False(t, found, "no datom carries :t/double, so the accessor reads no value")
 			})
 		}
 	}
 }
 
 // A database opened without the option refuses nothing: every accessor
-// answers an undeclared attribute with no error.
+// answers an undeclared attribute with no error and no value, where the same
+// accessor on a refusing database refuses it.
 func TestTypedAccessorsWithoutRefusalOptionAreNotChecked(t *testing.T) {
 	for _, mode := range optimizerModes {
 		for _, accessor := range typedAccessors() {
 			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
-				require.NoError(t, accessor.get(d, datalog.NewIdentity("holder"), kw(":t/strnig")), "a database opened without the option refuses nothing")
+				found, err := accessor.read(d, datalog.NewIdentity("holder"), kw(":t/strnig"))
+				require.NoError(t, err, "a database opened without the option refuses nothing")
+				assert.False(t, found, "no datom carries :t/strnig, so the accessor reads no value")
+
+				refusing, entity := refusingDB(t, mode)
+				_, err = accessor.read(refusing, entity, kw(":t/strnig"))
+				requireUnknown(t, err, kw(":t/strnig"))
 			})
 		}
 	}
@@ -680,7 +700,7 @@ func TestQueryNamedSourcePatternIsNotChecked(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
-			cache := executor.NewMemoryPatternMatcher([]datalog.Datom{
+			cache := factsDatabase(t, []datalog.Datom{
 				{E: datalog.NewIdentity("cache:1"), A: kw(":cache/score"), V: int64(95)},
 			})
 

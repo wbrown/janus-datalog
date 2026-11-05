@@ -5,26 +5,36 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// PatternMatcher is the interface all data sources implement.
-// Database, memory sources, and slice sources all satisfy this.
+// PatternMatcher is the interface all data sources implement. A database
+// satisfies it, the one a slice's facts open into included.
 type PatternMatcher = executor.PatternMatcher
 
 // QueryOption configures query execution (e.g., adding sources).
 type QueryOption = storage.QueryOption
 
-// AttributeSchema maps keywords to accessor functions for SliceSource.
-type AttributeSchema[T any] = executor.AttributeSchema[T]
-
-// SliceSource wraps a Go slice as a queryable PatternMatcher.
-type SliceSource[T any] = executor.SliceSource[T]
+// AttributeSchema maps keywords to accessor functions for NewSliceSource.
+type AttributeSchema[T any] = storage.AttributeSchema[T]
 
 // WithSources adds named data sources for multi-source queries.
-// The default source ($) is always the database itself.
+// The default source ($) is always the database itself. A database is a
+// source, so facts held in memory are a database opened with OpenMemory and
+// written through a transaction.
 //
 // Example:
 //
-//	cache := db.NewMemorySource(datoms)
-//	results, _ := d.Query(
+//	cache, err := db.OpenMemory()
+//	if err != nil {
+//	    return err
+//	}
+//	defer cache.Close()
+//	tx := cache.NewTransaction()
+//	if err := tx.Add(datalog.NewIdentity("cache:1"), datalog.NewKeyword(":cache/score"), int64(95)); err != nil {
+//	    return err
+//	}
+//	if _, err := tx.Commit(); err != nil {
+//	    return err
+//	}
+//	results, err := d.Query(
 //	    `[:find ?name ?score
 //	      :in $ $cache
 //	      :where [?e :user/name ?name]
@@ -33,6 +43,9 @@ type SliceSource[T any] = executor.SliceSource[T]
 //	        datalog.NewSymbol("$cache"): cache,
 //	    }),
 //	)
+//	if err != nil {
+//	    return err
+//	}
 var WithSources = storage.WithSources
 
 // WithContext cancels the query with ctx. A query whose ctx is done is refused
@@ -48,10 +61,10 @@ var WithSources = storage.WithSources
 //	err := d.QueryInto(&results, q, db.WithContext(ctx))
 var WithContext = storage.WithContext
 
-// NewSliceSource creates a PatternMatcher from a Go slice and attribute schema.
-// Each item at index i gets entity ID "slice:i". Multi-valued attributes
-// (slices/arrays returned by accessor functions) are expanded into one datom
-// per element.
+// NewSliceSource opens a memory database holding a Go slice's facts under an
+// attribute schema. The item at index i is the entity "slice:i", holding at
+// each attribute the value its accessor answers, or every element of the
+// slice or array it answers. The caller closes the database.
 //
 // Example:
 //
@@ -60,21 +73,14 @@ var WithContext = storage.WithContext
 //	    DependsOn []string
 //	}
 //
-//	source := db.NewSliceSource(rules, db.AttributeSchema[Rule]{
+//	source, err := db.NewSliceSource(rules, db.AttributeSchema[Rule]{
 //	    datalog.NewKeyword(":rule/key"):        func(r Rule) any { return r.Key },
 //	    datalog.NewKeyword(":rule/depends-on"): func(r Rule) any { return r.DependsOn },
 //	})
-func NewSliceSource[T any](items []T, schema AttributeSchema[T]) *SliceSource[T] {
-	return executor.NewSliceSource(items, schema)
-}
-
-// NewMemorySource creates a PatternMatcher from a slice of datoms.
-// Use this for ad-hoc in-memory data sources.
-//
-// Example:
-//
-//	facts := []datalog.Datom{
-//	    {E: datalog.NewIdentity("e1"), A: datalog.NewKeyword(":item/name"), V: "Sword"},
+//	if err != nil {
+//	    return err
 //	}
-//	source := db.NewMemorySource(facts)
-var NewMemorySource = executor.NewMemoryPatternMatcher
+//	defer source.Close()
+func NewSliceSource[T any](items []T, schema AttributeSchema[T]) (*DB, error) {
+	return storage.NewSliceSource(items, schema)
+}

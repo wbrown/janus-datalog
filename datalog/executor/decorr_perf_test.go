@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"sync"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -30,7 +31,7 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	// Query with 2 subqueries that should decorrelate
 	queryStr := `[:find ?name ?max-price ?count
@@ -49,10 +50,10 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			// Test WITHOUT decorrelation
-			execNoDecor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+			execNoDecor := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			startNo := time.Now()
 			resultNo, err := execNoDecor.Execute(q)
@@ -62,7 +63,7 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 			}
 
 			// Test WITH decorrelation
-			execWithDecor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+			execWithDecor := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			startWith := time.Now()
 			resultWith, err := execWithDecor.Execute(q)
@@ -125,7 +126,7 @@ func TestDecorrelationAnnotations(t *testing.T) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	// Query with 2 subqueries that decorrelate
 	queryStr := `[:find ?name ?max-price ?count
@@ -144,14 +145,14 @@ func TestDecorrelationAnnotations(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			// Execute WITH decorrelation and capture annotations. The handler is
 			// registered on the options the executor is built with.
 			var capturedEvents []annotations.Event
 			var eventsMu sync.Mutex
 
-			opts := mode.zeroPlannerOptions()
+			opts := mode.ZeroPlannerOptions()
 			opts.Handler = func(e annotations.Event) {
 				eventsMu.Lock()
 				capturedEvents = append(capturedEvents, e)

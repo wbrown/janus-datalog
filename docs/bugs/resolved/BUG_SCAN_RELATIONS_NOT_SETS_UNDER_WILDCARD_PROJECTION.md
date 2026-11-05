@@ -1,6 +1,6 @@
 # BUG: Scan relations are not sets when the pattern projects away key components
 
-**Status**: Fixed (2026-07-22, fix/identity-hash-only). Pinned by `TestSetSemantics_StorageQuery` (value-only leg), `TestScanProjectionPreservesSet`, `TestScanSetSemantics_DeclaredManyValueWildcard`, `TestScanSetSemantics_HistoryReassertedValue`, `TestPatternCoversDatomIdentity`, `TestMemoryMatcherScanRestoresSetSemantics`, `TestMemoryMatcherBoundScanIgnoresPassengerMultiplicity`, and the projection pins in `relation_properties_test.go` / `product_test.go`.
+**Status**: Fixed (2026-07-22, fix/identity-hash-only). Pinned by `TestSetSemantics_StorageQuery` (value-only leg), `TestScanProjectionPreservesSet`, `TestScanSetSemantics_DeclaredManyValueWildcard`, `TestScanSetSemantics_HistoryReassertedValue`, and the projection pins in `relation_properties_test.go` / `product_test.go`.
 
 ## Invariant
 

@@ -3,6 +3,7 @@ package query
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 )
@@ -108,18 +109,26 @@ func TestValidateQueryRefusesTheShapesTheParserRefuses(t *testing.T) {
 func TestValidateQueryAcceptsAShortDataPattern(t *testing.T) {
 	e := sym("?e")
 	shapes := []struct {
-		name    string
-		pattern *DataPattern
+		name      string
+		pattern   *DataPattern
+		attribute PatternElement // the attribute position as the pattern reads it
 	}{
-		{"two elements", &DataPattern{Elements: []PatternElement{Variable{Name: e}, Constant{Value: datalog.NewKeyword(":t/a")}}}},
-		{"one element", &DataPattern{Elements: []PatternElement{Variable{Name: e}}}},
+		{"two elements", &DataPattern{Elements: []PatternElement{Variable{Name: e}, Constant{Value: datalog.NewKeyword(":t/a")}}}, Constant{Value: datalog.NewKeyword(":t/a")}},
+		{"one element", &DataPattern{Elements: []PatternElement{Variable{Name: e}}}, Blank{}},
 	}
 	for _, s := range shapes {
 		t.Run(s.name, func(t *testing.T) {
 			q := &Query{Find: []FindElement{FindVariable{Symbol: e}}, Where: []Clause{s.pattern}}
 			require.NoError(t, ValidateQuery(q), "ValidateQuery")
-			_, err := Prepare(q, nil)
+			prepared, err := Prepare(q, nil)
 			require.NoError(t, err, "Prepare")
+			require.Len(t, prepared.Where, 1)
+			pattern, ok := prepared.Where[0].(*DataPattern)
+			require.Truef(t, ok, "the prepared clause is a data pattern, got %T", prepared.Where[0])
+			assert.Equal(t,
+				[]PatternElement{Variable{Name: e}, s.attribute, Blank{}, Blank{}},
+				[]PatternElement{pattern.GetE(), pattern.GetA(), pattern.GetV(), pattern.GetT()},
+				"the positions the text omits read as unbound")
 		})
 	}
 }

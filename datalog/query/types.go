@@ -337,12 +337,13 @@ func (p DataPattern) GetV() PatternElement {
 	return Blank{}
 }
 
-// GetT returns the transaction/time element if it exists
+// GetT returns the transaction element; a position the pattern omits is
+// unbound, so it reads as a blank.
 func (p DataPattern) GetT() PatternElement {
 	if len(p.Elements) > 3 {
 		return p.Elements[3]
 	}
-	return nil
+	return Blank{}
 }
 
 // Symbols returns the symbols (variables) bound by this pattern
@@ -544,6 +545,27 @@ func (f FindAggregate) String() string {
 
 func (f FindAggregate) IsAggregate() bool {
 	return true
+}
+
+// FindSymbols is a :find's result symbols in written order: a variable as
+// itself, an aggregate under its display symbol, and a pull under its entity
+// variable. A query's result is the relation over them, and a subquery's
+// binding names them by position.
+func FindSymbols(find []FindElement) []Symbol {
+	symbols := make([]Symbol, 0, len(find))
+	for _, element := range find {
+		switch value := element.(type) {
+		case FindVariable:
+			symbols = append(symbols, value.Symbol)
+		case FindAggregate:
+			symbols = append(symbols, datalog.NewSymbol(value.String()))
+		case FindPull:
+			symbols = append(symbols, value.Variable)
+		default:
+			panic(fmt.Sprintf("query.FindSymbols: find element %T is of no kind a :find holds", element))
+		}
+	}
+	return symbols
 }
 
 // String renders the query in the text the parser reads. A query's text is

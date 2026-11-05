@@ -578,15 +578,20 @@ func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
 				opts,
 			)
 
-			// Analyze reuse strategy
-			strategy, _ := db.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, inputRel)
+			strategy, binding := db.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, inputRel)
+			assert.Equal(t, AETV, strategy.Index, "should select AETV for E-from-input with CardinalityOne")
 
-			// With CardinalityOne schema, should select AETV (once implemented)
-			// For now, document the expected behavior
-			t.Logf("Strategy type: %v, Index: %v", strategy.Type, strategy.Index)
-
-			// TODO: After AETV implementation, verify:
-			// assert.Equal(t, AETV, strategy.Index, "should select AETV for E-from-input with CardinalityOne")
+			// The binding relation handed back is the input's: ?e bound to the
+			// one entity.
+			require.Equal(t, []query.Symbol{datalog.NewSymbol("?e")}, binding.Symbols())
+			it := binding.Iterator()
+			var tuples []executor.Tuple
+			for it.Next() {
+				tuples = append(tuples, append(executor.Tuple(nil), it.Tuple()...))
+			}
+			require.NoError(t, it.Error())
+			require.NoError(t, it.Close())
+			assert.Equal(t, []executor.Tuple{{entity}}, tuples)
 		})
 	}
 }
@@ -702,10 +707,19 @@ func BenchmarkAETVKeyEncoding(b *testing.B) {
 		Op: datalog.OpCRDTAdd,
 	}
 
+	want := encoder.EncodeKey(AETV, datom)
+	decoded, err := DatomFromKey(AETV, want, encoder, nil)
+	require.NoError(b, err)
+	require.Equal(b, *datom, decoded, "the key decodes to the benchmark datom")
+
+	var key []byte
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = encoder.EncodeKey(AETV, datom)
+		key = encoder.EncodeKey(AETV, datom)
 	}
+	b.StopTimer()
+	require.Equal(b, want, key, "every encoding of the datom is the verified key")
 }
 
 func BenchmarkAETVKeyDecoding(b *testing.B) {
@@ -720,9 +734,30 @@ func BenchmarkAETVKeyDecoding(b *testing.B) {
 	}
 
 	key := encoder.EncodeKey(AETV, datom)
+	decoded, err := DatomFromKey(AETV, key, encoder, nil)
+	require.NoError(b, err)
+	require.Equal(b, *datom, decoded, "the key decodes to the benchmark datom")
+
+	type components struct {
+		entity   [20]byte
+		attr     [32]byte
+		value    []byte
+		tx       [16]byte
+		op       byte
+		afterRef [16]byte
+	}
+	var want, got components
+	want.entity, want.attr, want.value, want.tx, want.op, want.afterRef, err = encoder.DecodeKey(AETV, key)
+	require.NoError(b, err)
 
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _, _, _, _, _ = encoder.DecodeKey(AETV, key)
+		got.entity, got.attr, got.value, got.tx, got.op, got.afterRef, err = encoder.DecodeKey(AETV, key)
+		if err != nil {
+			b.Fatalf("decode: %v", err)
+		}
 	}
+	b.StopTimer()
+	require.Equal(b, want, got, "every decode of the key answers the verified components")
 }

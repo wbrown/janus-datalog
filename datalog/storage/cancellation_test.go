@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -48,10 +49,21 @@ func TestExplainAcceptsContextOption(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 
-			_, err := d.Explain(nodesQuery, WithContext(ctx))
+			// A plan-only surface has nothing to cancel: under the cancelled
+			// context it explains the query as it does without the option.
+			plain, err := d.Explain(nodesQuery)
 			require.NoError(t, err)
-			_, err = d.ExplainAlgebra(nodesQuery, WithContext(ctx))
+			require.NotNil(t, plain)
+			plan, err := d.Explain(nodesQuery, WithContext(ctx))
 			require.NoError(t, err)
+			assert.Equal(t, plain, plan)
+
+			plainAlgebra, err := d.ExplainAlgebra(nodesQuery)
+			require.NoError(t, err)
+			require.NotNil(t, plainAlgebra)
+			algebra, err := d.ExplainAlgebra(nodesQuery, WithContext(ctx))
+			require.NoError(t, err)
+			assert.Equal(t, plainAlgebra, algebra)
 		})
 	}
 }

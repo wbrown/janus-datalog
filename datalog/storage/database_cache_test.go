@@ -38,8 +38,12 @@ func TestDatabasePlanCache(t *testing.T) {
 			}
 
 			// Test 1: Create multiple executors - they should share the cache
-			exec1 := db.NewExecutorWithOptions(mode.plannerOptions())
-			exec2 := db.NewExecutorWithOptions(mode.plannerOptions())
+			// Attribute-fetch fusion is off, so the second pattern runs over the
+			// first's streaming group through the window scope the cache holds.
+			planOpts := mode.plannerOptions()
+			planOpts.EnableAttributeFetchFusion = false
+			exec1 := db.NewExecutorWithOptions(planOpts)
+			exec2 := db.NewExecutorWithOptions(planOpts)
 
 			// Debug: Check that cache is not nil
 			if db.PlanCache() == nil {

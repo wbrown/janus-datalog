@@ -101,6 +101,39 @@ func TestProductRelation_EmptyMiddleLeavesTheOthersReplayable(t *testing.T) {
 	require.Len(t, replay, 2)
 }
 
+// A member failing in place of a first tuple is the product's failure only
+// where every other member has a tuple: beside an empty member the product
+// answers no tuple and no failure, and beside a member with a tuple it
+// answers the failure, the failing member on either side
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract).
+func TestProductRelation_AMembersFailureIsItsFailureOnlyWhereEveryOtherMemberHasATuple(t *testing.T) {
+	failing := func() Relation { return newFailingStream(0, Tuple{int64(10)}) }
+	for _, c := range []struct {
+		name    string
+		members func() Relations
+	}{
+		{"the failing member before an empty member", func() Relations { return Relations{failing(), streamOf("?y")} }},
+		{"the failing member after an empty member", func() Relations { return Relations{streamOf("?y"), failing()} }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tuples, err := CollectTuples(c.members().Product(), nil)
+			require.NoError(t, err, "no assignment holds the empty member, so no failure is raised")
+			require.Empty(t, tuples)
+		})
+	}
+	for _, c := range []struct {
+		name    string
+		members func() Relations
+	}{
+		{"the failing member before a member with a tuple", func() Relations { return Relations{failing(), streamOf("?y", Tuple{"a"})} }},
+		{"the failing member after a member with a tuple", func() Relations { return Relations{streamOf("?y", Tuple{"a"}), failing()} }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			require.ErrorIs(t, driveErr(c.members().Product()), errInjectedIterator)
+		})
+	}
+}
+
 // completeCache reads an iterator filling a replay cache to its end, so that
 // closing it leaves its relation replayable whole, and leaves any other
 // iterator where it stands.

@@ -27,7 +27,8 @@ if a doc says an option is default-active, `DefaultPlannerOptions()` sets it, an
 
 ```go
 type PlannerOptions struct {
-    Cache *PlanCache // set by the Database
+    Cache              *PlanCache                 // set by the Database
+    MatchAnswersLookup algebra.MatchAnswersLookup // set by the executor
 
     EnableAlgebraOptimizer      bool // default-active
     EnableJoinProjectInsertion bool // experimental, opt-in
@@ -87,6 +88,18 @@ validated Datalog query before physical planning. This is where decorrelation
 and pushdown actually happen — there are no separate knobs for them. Consumed in
 `planner/planner_clause_based.go`.
 
+#### MatchAnswersLookup — **set by the executor**
+The sources' answer to whether a match of an attribute on a source gives, for
+every entity, the one value the source's lookup gives.
+`executor.NewExecutorWithOptions` sets it from its matcher's
+`CanFuseAttributeFetch`, so a planner asks the sources its executor reads. The
+algebra optimizer's get-else scan rewrite applies only where it answers true.
+A plan records each answer its rewrites asked, and the plan cache serves the
+plan only where the sources give each of those answers again. Nil answers
+false, so a planner given none declines every get-else rewrite. Consumed in
+`planner/algebra_bridge.go`, `planner/planner_clause_based.go` and
+`planner/cache.go`.
+
 #### EnableJoinProjectInsertion — **experimental, opt-in** (default false)
 Inserts logical `Project` on inner-join children when backward liveness proves
 symbols dead, then lowers it to a relation-binding subquery. It is restricted to
@@ -112,9 +125,10 @@ Benchmarked performance-neutral, hence off. Consumed in
 #### EnableAttributeFetchFusion — **default-active**
 Fuses contiguous CardinalityOne patterns sharing an already-bound entity into
 one tuple traversal. Fresh variables become attached bindings; literal values
-become typed constraints evaluated by cache-backed lookup. Latest mode only;
-History, AsOf, unknown-schema, CardinalityMany, and CardinalityVector patterns
-decline the fusion. Constant constraints improve focused 1K/10K workloads by
+become typed constraints evaluated by cache-backed lookup. It runs in the
+latest view at an attribute the matcher resolves cardinality-one, declared so
+or with no definition. History, AsOf, CardinalityMany, and CardinalityVector
+patterns decline the fusion. Constant constraints improve focused 1K/10K workloads by
 21.9–23.2% time and the production-shaped complex checkpoint by 11.1%.
 Consumed in `executor/query_executor.go`.
 

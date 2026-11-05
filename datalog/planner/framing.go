@@ -92,7 +92,7 @@ func (f Framing) Branches(branches [][]query.Clause, rules *query.RuleSet) []Bra
 				frame.Scope.Find = append(frame.Scope.Find, query.FindVariable{Symbol: sym})
 			}
 		}
-		outputs := physicalFindSymbols(f.Find)
+		outputs := query.FindSymbols(f.Find)
 		for position, elem := range f.Find {
 			if sym := outputs[position]; !query.ContainsSymbol(frame.Scope.Required, sym) && !query.ContainsSymbol(frame.Scope.Outputs(), sym) {
 				frame.Scope.Find = append(frame.Scope.Find, elem)
@@ -152,7 +152,7 @@ func ReadSubqueryFrame(subq *query.SubqueryPattern) (SubqueryFrame, error) {
 		}
 		frame.StandsFor = append(frame.StandsFor, standsFor)
 	}
-	from = append(from, physicalFindSymbols(subq.Query.Find)...)
+	from = append(from, query.FindSymbols(subq.Query.Find)...)
 	to = append(to, subq.Binding.BoundVariables()...)
 	subst, err := query.SubstitutionOf(from, to)
 	if err != nil {

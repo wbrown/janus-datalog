@@ -43,8 +43,48 @@ func TestRefuseUnknownAttributes_ReadsThePlansRoster(t *testing.T) {
 	require.Same(t, datalog.NewKeyword(":t/strnig"), unknown.Attribute)
 }
 
-// refusingSource is a source answering patterns from an in-memory matcher
-// and refusing every attribute outside its declared vocabulary.
+// The vocabulary check asks each source the query names an attribute on,
+// whether or not its :in declares the source: a get-else and a data pattern
+// on $other, which the :in does not declare, are refused there, and of two
+// undeclared sources the one the query names first is refused first.
+func TestRefuseUnknownAttributes_AsksEverySourceTheQueryNames(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		text    string
+		refused string
+	}{
+		{"a get-else on an undeclared source", `[:find ?v :where [?e :t/known ?v] [(get-else $other ?e :t/strnig "x") ?w]]`, ":t/strnig"},
+		{"a data pattern on an undeclared source", `[:find ?v :where [?e :t/known ?v] [$other ?e :t/strnig ?w]]`, ":t/strnig"},
+		{"two undeclared sources", `[:find ?v :where [?e :t/known ?v] [$b ?e :t/strnig-b ?w] [$a ?e :t/strnig-a ?x]]`, ":t/strnig-b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(tc.text)
+			require.NoError(t, err)
+			plan := &planner.RealizedPlan{Query: q, Rosters: query.CollectRosters(q)}
+			err = refuseUnknownAttributes(declaredVocabulary{datalog.NewKeyword(":t/known")}, NewContext(), plan)
+			var unknown *schema.UnknownAttributeError
+			require.ErrorAs(t, err, &unknown, "the query names %s on a source its :in does not declare", tc.refused)
+			require.Same(t, datalog.NewKeyword(tc.refused), unknown.Attribute)
+		})
+	}
+}
+
+// The vocabulary check asks each source the rule set names an attribute on,
+// though the query names nothing there.
+func TestRefuseUnknownAttributes_AsksEverySourceTheRuleSetNames(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?v :in $ % :where [?e :t/known ?v] (probe ?e ?w)]`)
+	require.NoError(t, err)
+	rs, err := parser.ParseRules(`[[(probe ?e ?w) [?e :t/known _] [(get-else $other ?e :t/strnig "x") ?w]]]`)
+	require.NoError(t, err)
+	plan := &planner.RealizedPlan{Query: q, Rosters: query.CollectRosters(q)}
+	err = refuseUnknownAttributes(declaredVocabulary{datalog.NewKeyword(":t/known")}, NewContext().WithRules(rs), plan)
+	var unknown *schema.UnknownAttributeError
+	require.ErrorAs(t, err, &unknown, "the rule set names :t/strnig on $other")
+	require.Same(t, datalog.NewKeyword(":t/strnig"), unknown.Attribute)
+}
+
+// refusingSource is a source answering patterns through the matcher it
+// embeds and refusing every attribute outside its declared vocabulary.
 type refusingSource struct {
 	PatternMatcher
 	declaredVocabulary
@@ -56,8 +96,8 @@ type refusingSource struct {
 // it, route to none.
 func TestAnySourceRefusesUnknownAttributes(t *testing.T) {
 	other := datalog.NewSymbol("$other")
-	refusing := refusingSource{NewMemoryPatternMatcher(nil), declaredVocabulary{datalog.NewKeyword(":t/known")}}
-	plain := NewMemoryPatternMatcher(nil)
+	refusing := refusingSource{nil, declaredVocabulary{datalog.NewKeyword(":t/known")}}
+	var plain PatternMatcher
 	require.True(t, anySourceRefusesUnknownAttributes(refusing), "a refusing source asked as itself")
 	require.False(t, anySourceRefusesUnknownAttributes(plain), "a matcher without the capability")
 	atDefault := NewSourceRouter(map[query.Symbol]PatternMatcher{datalog.SymDollar: refusing, other: plain})
@@ -69,57 +109,4 @@ func TestAnySourceRefusesUnknownAttributes(t *testing.T) {
 	require.True(t, anySourceRefusesUnknownAttributes(atDefault), "a router whose default source refuses")
 	require.True(t, anySourceRefusesUnknownAttributes(atName), "a router whose named source refuses")
 	require.False(t, anySourceRefusesUnknownAttributes(none), "a router of sources that refuse nothing")
-}
-
-// An executor over a router with a refusing source refuses an undeclared
-// attribute named on that source and answers a query naming declared ones,
-// and an executor over sources that refuse nothing runs any attribute
-// (NESTED_SCOPES_AS_QUERIES.md §5.5, the roster paragraph).
-func TestNewExecutor_CollectsARosterWhenAnySourceRefuses(t *testing.T) {
-	other := datalog.NewSymbol("$other")
-	known := datalog.NewKeyword(":t/known")
-	refusing := func() PatternMatcher {
-		return refusingSource{NewMemoryPatternMatcher(nil), declaredVocabulary{known}}
-	}
-	parse := func(text string) *query.Query {
-		q, err := parser.ParseQuery(text)
-		require.NoError(t, err)
-		return q
-	}
-	typoOnOther := parse(`[:find ?v :in $ $other :where [$other ?e :t/strnig ?v]]`)
-	knownOnOther := parse(`[:find ?v :in $ $other :where [$other ?e :t/known ?v]]`)
-	typoOnDefault := parse(`[:find ?v :where [?e :t/strnig ?v]]`)
-	knownOnDefault := parse(`[:find ?v :where [?e :t/known ?v]]`)
-	cases := []struct {
-		name    string
-		sources map[query.Symbol]PatternMatcher
-		refused *query.Query
-		runs    *query.Query
-	}{
-		{"a refusing named source beside a plain default source",
-			map[query.Symbol]PatternMatcher{datalog.SymDollar: NewMemoryPatternMatcher(nil), other: refusing()}, typoOnOther, knownOnOther},
-		{"a refusing default source",
-			map[query.Symbol]PatternMatcher{datalog.SymDollar: refusing()}, typoOnDefault, knownOnDefault},
-		{"sources that refuse nothing",
-			map[query.Symbol]PatternMatcher{datalog.SymDollar: NewMemoryPatternMatcher(nil), other: NewMemoryPatternMatcher(nil)}, nil, typoOnOther},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			exec := NewExecutor(NewSourceRouter(c.sources), nil)
-			if c.refused != nil {
-				var refused error
-				require.NotPanics(t, func() {
-					_, refused = CollectTuples(exec.Execute(c.refused))
-				})
-				var unknown *schema.UnknownAttributeError
-				require.ErrorAs(t, refused, &unknown, "the source named refuses the attribute it does not declare")
-				require.Same(t, datalog.NewKeyword(":t/strnig"), unknown.Attribute)
-			}
-			var answered error
-			require.NotPanics(t, func() {
-				_, answered = CollectTuples(exec.Execute(c.runs))
-			})
-			require.NoError(t, answered)
-		})
-	}
 }

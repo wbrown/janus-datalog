@@ -148,7 +148,6 @@ Names that coexist:
 
 - `executor.PatternMatcher` — the interface
 - `storage.PatternMatcher` — the Store- and tree-backed concrete matcher
-- `executor.NewMemoryPatternMatcher` — an unrelated slice-plus-hash-index construct for multi-source tests; not `BadgerEmulatorStore`
 
 ### Boundaries
 

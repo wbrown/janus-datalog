@@ -3,6 +3,7 @@ package planner
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
@@ -198,24 +199,6 @@ func TestRealizedPlanRejectsSymbolDroppedBeforeNonAdjacentUse(t *testing.T) {
 	require.Contains(t, err.Error(), "requires unavailable symbol ?entity")
 }
 
-func TestPhysicalFindSymbolsPreserveTypedOutputOrder(t *testing.T) {
-	entity := datalog.NewSymbol("?entity")
-	value := datalog.NewSymbol("?value")
-
-	require.Equal(t,
-		[]query.Symbol{
-			entity,
-			datalog.NewSymbol("(sum ?value)"),
-			entity,
-		},
-		physicalFindSymbols([]query.FindElement{
-			query.FindVariable{Symbol: entity},
-			query.FindAggregate{Function: datalog.SymSum, Arg: value},
-			query.FindPull{Variable: entity, Pattern: &query.PullPattern{}},
-		}),
-	)
-}
-
 func TestClauseBasedPlannerEmitsPhysicalPhaseContracts(t *testing.T) {
 	queries := map[string]string{
 		"simple": `[:find ?entity ?name
@@ -243,9 +226,23 @@ func TestClauseBasedPlannerEmitsPhysicalPhaseContracts(t *testing.T) {
 			require.NoError(t, err)
 			plan, err := planner.Plan(parsed, query.Bindings{}, nil)
 			require.NoError(t, err)
-			require.NoError(t, plan.Validate())
+			assertPlanContract(t, plan)
 		})
 	}
+}
+
+// assertPlanContract asserts a realized plan's physical contracts and the
+// boundary the executor reads: the final phase answers the query's :find,
+// followed by the :order-by symbols it retains for the sort.
+func assertPlanContract(t *testing.T, plan *RealizedPlan) {
+	t.Helper()
+	require.NoError(t, plan.Validate())
+	require.NotEmpty(t, plan.Phases, "the plan runs at least one phase")
+	final := plan.Phases[len(plan.Phases)-1]
+	assert.Equal(t,
+		append(query.FindSymbols(plan.Query.Find), query.RetainedSortSymbols(plan.Query)...),
+		final.Provides,
+		"the final phase answers the query's :find and its retained sort symbols")
 }
 
 func cloneRealizedPlanForContractTest(plan *RealizedPlan) *RealizedPlan {

@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -29,34 +31,31 @@ func TestTupleBuilderCacheConcurrency(t *testing.T) {
 			}
 			symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
-			// Spawn 1000 goroutines accessing cache concurrently
-			// This should trigger the concurrent map access bug if not fixed
+			// 1000 goroutines use the cache at once, from its first use; every
+			// call answers the one builder the cache stores for the pattern.
+			const goroutines, calls = 1000, 100
+			got := make([][]*query.InternedTupleBuilder, goroutines)
 			var wg sync.WaitGroup
-			errorChan := make(chan error, 1000)
-
-			for i := 0; i < 1000; i++ {
+			for i := 0; i < goroutines; i++ {
 				wg.Add(1)
-				go func() {
+				go func(i int) {
 					defer wg.Done()
-					for j := 0; j < 100; j++ {
-						builder := matcher.getTupleBuilder(pattern, symbols)
-						if builder == nil {
-							select {
-							case errorChan <- nil:
-							default:
-							}
-							return
-						}
+					got[i] = make([]*query.InternedTupleBuilder, calls)
+					for j := range got[i] {
+						got[i][j] = matcher.getTupleBuilder(pattern, symbols)
 					}
-				}()
+				}(i)
 			}
-
 			wg.Wait()
-			close(errorChan)
 
-			// Check if any goroutine reported an error
-			if err := <-errorChan; err != nil {
-				t.Errorf("getTupleBuilder returned nil")
+			want := matcher.getTupleBuilder(pattern, symbols)
+			require.NotNil(t, want)
+			for i := range got {
+				for j, builder := range got[i] {
+					if builder != want {
+						t.Fatalf("goroutine %d call %d answered builder %p, the cache holds %p", i, j, builder, want)
+					}
+				}
 			}
 		})
 	}
@@ -201,7 +200,7 @@ func TestIteratorWorkspaceIsolation(t *testing.T) {
 			tx := db.NewTransaction()
 			for i := 0; i < 10; i++ {
 				e := datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
-				tx.Add(e, datalog.NewKeyword(":test/value"), int64(i))
+				require.NoError(t, tx.Add(e, datalog.NewKeyword(":test/value"), int64(i)))
 			}
 			_, err := tx.Commit()
 			if err != nil {
@@ -226,11 +225,11 @@ func TestIteratorWorkspaceIsolation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			vi := query.SymbolIndex(rel2.Symbols(), datalog.NewSymbol("?v"))
+			require.GreaterOrEqual(t, vi, 0, "the match carries ?v; got %v", rel2.Symbols())
 
 			it1 := rel1.Iterator()
 			it2 := rel2.Iterator()
-			defer it1.Close()
-			defer it2.Close()
 
 			// Advance it1 once and capture the tuple
 			if !it1.Next() {
@@ -241,14 +240,13 @@ func TestIteratorWorkspaceIsolation(t *testing.T) {
 			copy(tuple1Copy, originalTuple)
 
 			// Advance it2 through all its tuples - should not affect it1's current tuple
-			count2 := 0
+			var values []interface{}
 			for it2.Next() {
-				_ = it2.Tuple()
-				count2++
+				values = append(values, it2.Tuple()[vi])
 			}
-			if count2 != 10 {
-				t.Errorf("it2 expected 10 tuples, got %d", count2)
-			}
+			require.NoError(t, it2.Error())
+			require.NoError(t, it2.Close())
+			assert.ElementsMatch(t, []interface{}{int64(0), int64(1), int64(2), int64(3), int64(4), int64(5), int64(6), int64(7), int64(8), int64(9)}, values, "it2 answers the ten values written")
 
 			// Verify it1's tuple is unchanged after it2 iterated
 			currentTuple := it1.Tuple()
@@ -264,6 +262,8 @@ func TestIteratorWorkspaceIsolation(t *testing.T) {
 			for it1.Next() {
 				count1++
 			}
+			require.NoError(t, it1.Error())
+			require.NoError(t, it1.Close())
 			if count1 != 10 {
 				t.Errorf("it1 expected 10 tuples, got %d", count1)
 			}
@@ -283,7 +283,7 @@ func TestIteratorWorkspaceConcurrency(t *testing.T) {
 			tx := db.NewTransaction()
 			for i := 0; i < 100; i++ {
 				e := datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
-				tx.Add(e, datalog.NewKeyword(":test/value"), int64(i))
+				require.NoError(t, tx.Add(e, datalog.NewKeyword(":test/value"), int64(i)))
 			}
 			_, err := tx.Commit()
 			if err != nil {
@@ -316,7 +316,6 @@ func TestIteratorWorkspaceConcurrency(t *testing.T) {
 
 					count := 0
 					it := rel.Iterator()
-					defer it.Close()
 
 					for it.Next() {
 						tuple := it.Tuple()
@@ -326,6 +325,14 @@ func TestIteratorWorkspaceConcurrency(t *testing.T) {
 							return
 						}
 						count++
+					}
+					if err := it.Error(); err != nil {
+						errors <- fmt.Errorf("goroutine %d: iterate: %v", id, err)
+						return
+					}
+					if err := it.Close(); err != nil {
+						errors <- fmt.Errorf("goroutine %d: close: %v", id, err)
+						return
 					}
 
 					if count != 100 {

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -1391,8 +1393,8 @@ func TestGetElse(t *testing.T) {
 	}
 
 	// Check default
-	if getElse.Default != "Anonymous" {
-		t.Errorf("Expected default 'Anonymous', got %v", getElse.Default)
+	if want := (query.ConstantTerm{Value: "Anonymous"}); getElse.Default != want {
+		t.Errorf("Expected default %v, got %v", want, getElse.Default)
 	}
 
 	// Check binding
@@ -1424,10 +1426,25 @@ func TestGetElseWithDifferentDefaults(t *testing.T) {
 			expr := GetElse(entity, attr, tt.defaultVal).As(result)
 			clause := expr.toClause().(*query.Expression)
 			getElse := clause.Function.(*query.GetElseFunction)
-			if !tt.checkResult(getElse.Default) {
-				t.Errorf("Default value mismatch, got %v", getElse.Default)
+			constant, ok := getElse.Default.(query.ConstantTerm)
+			if !ok {
+				t.Fatalf("Default is %T, want query.ConstantTerm", getElse.Default)
+			}
+			if !tt.checkResult(constant.Value) {
+				t.Errorf("Default value mismatch, got %v", constant.Value)
 			}
 		})
+	}
+}
+
+// TestGetElseWithAVariableDefault tests GetElse with a variable default, read
+// from each tuple's bindings.
+func TestGetElseWithAVariableDefault(t *testing.T) {
+	entity, fallback, result := NewVar("entity"), NewVar("fallback"), NewVar("result")
+	clause := GetElse(entity, Kw(":test/attr"), fallback).As(result).toClause().(*query.Expression)
+	getElse := clause.Function.(*query.GetElseFunction)
+	if want := (query.VariableTerm{Symbol: fallback.Symbol()}); getElse.Default != want {
+		t.Errorf("Default is %v, want %v", getElse.Default, want)
 	}
 }
 
@@ -1494,12 +1511,13 @@ func TestMissingAsExpression(t *testing.T) {
 // TestGetSome tests GetSome function builder
 func TestGetSome(t *testing.T) {
 	entity := NewVar("entity")
+	found := NewVar("found")
 	displayName := NewVar("displayName")
 	PersonNickname := Kw(":person/nickname")
 	PersonFullName := Kw(":person/fullname")
 	PersonEmail := Kw(":person/email")
 
-	getSome := GetSome(entity, PersonNickname, PersonFullName, PersonEmail).As(displayName)
+	getSome := GetSome(entity, PersonNickname, PersonFullName, PersonEmail).As(found, displayName)
 	clause := getSome.toClause()
 
 	queryExpr, ok := clause.(*query.Expression)
@@ -1532,26 +1550,34 @@ func TestGetSome(t *testing.T) {
 		t.Errorf("Expected third attr :person/email, got %s", getSomeFn.Attrs[2].String())
 	}
 
-	// Check binding
-	if queryExpr.Binding != displayName.Symbol() {
-		t.Errorf("Expected binding %s, got %s", displayName.Symbol(), queryExpr.Binding)
+	// Check binding: the attribute found and its value, Datomic's [?attr ?val]
+	binding, ok := queryExpr.Binding.(query.TupleBinding)
+	if !ok {
+		t.Fatalf("Expected a tuple binding, got %T", queryExpr.Binding)
+	}
+	if len(binding.Variables) != 2 || binding.Variables[0] != found.Symbol() || binding.Variables[1] != displayName.Symbol() {
+		t.Errorf("Expected binding [%s %s], got %s", found.Symbol(), displayName.Symbol(), binding)
 	}
 }
 
 // TestGetSomeWithTwoAttrs tests GetSome with minimum required attributes
 func TestGetSomeWithTwoAttrs(t *testing.T) {
 	entity := NewVar("entity")
+	found := NewVar("found")
 	result := NewVar("result")
 	AttrA := Kw(":attr/a")
 	AttrB := Kw(":attr/b")
 
-	getSome := GetSome(entity, AttrA, AttrB).As(result)
-	clause := getSome.toClause().(*query.Expression)
-	getSomeFn := clause.Function.(*query.GetSomeFunction)
+	getSome := GetSome(entity, AttrA, AttrB).As(found, result)
+	clause, ok := getSome.toClause().(*query.Expression)
+	require.Truef(t, ok, "the clause is an expression, got %T", getSome.toClause())
+	getSomeFn, ok := clause.Function.(*query.GetSomeFunction)
+	require.Truef(t, ok, "the function is get-some, got %T", clause.Function)
 
-	if len(getSomeFn.Attrs) != 2 {
-		t.Errorf("Expected 2 attrs, got %d", len(getSomeFn.Attrs))
-	}
+	assert.Equal(t, datalog.SymDollar, getSomeFn.ReadsFrom())
+	assert.Equal(t, query.VariableTerm{Symbol: entity.Symbol()}, getSomeFn.Entity)
+	assert.Equal(t, []datalog.Keyword{AttrA.Keyword(), AttrB.Keyword()}, getSomeFn.Attrs)
+	assert.Equal(t, query.TupleBinding{Variables: []query.Symbol{found.Symbol(), result.Symbol()}}, clause.Binding)
 }
 
 // TestDatabaseFunctionInQuery tests using database functions in a complete query

@@ -17,7 +17,7 @@ func TestCorrelatedSubqueryStreamsInputProductIntoCombinationExtraction(t *testi
 	sum := datalog.NewSymbol("?sum")
 	ctx := NewContext()
 	options := ExecutorOptions{}
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
+	exec := newQueryExecutor(nil, nil, options)
 	left := NewStreamingRelationWithOptions(
 		[]query.Symbol{x},
 		NewMaterializedRelation(
@@ -77,7 +77,7 @@ func TestCorrelatedSubqueryInputProductPropagatesDeferredError(t *testing.T) {
 		[]query.Symbol{y},
 		[]Tuple{{int64(10)}, {int64(20)}},
 	)
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	exec := newQueryExecutor(nil, nil, ExecutorOptions{})
 
 	groups, err := exec.executeSubquery(
 		NewContext(),

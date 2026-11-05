@@ -20,8 +20,9 @@ const joinProjectPassName = "join-project-insertion"
 // would reject valid queries. The bindings are what the caller holds when it
 // asks for the plan; the rule set among them is what the compiler and the
 // passes fold under. Both trees return so provenance consumers can hold the
-// before and after.
-func optimizeAlgebra(q *query.Query, bindings query.Bindings, handler annotations.Handler, sink *algebra.RewriteSink) (compiled *algebra.Node, optimized *algebra.Node, err error) {
+// before and after. answers is the sources' answer the get-else scan rewrite
+// reads.
+func optimizeAlgebra(q *query.Query, bindings query.Bindings, handler annotations.Handler, sink *algebra.RewriteSink, answers algebra.MatchAnswersLookup) (compiled *algebra.Node, optimized *algebra.Node, err error) {
 	// The guard is the caller's, never the emitter's: `tree` is a whole-tree
 	// walk through algebra.formatNode, and Go evaluates it before the call, so a
 	// check inside emit would render both trees and discard them on every plan.
@@ -51,7 +52,7 @@ func optimizeAlgebra(q *query.Query, bindings query.Bindings, handler annotation
 		})
 	}
 
-	optimizer := algebra.NewOptimizer(algebra.DefaultPasses(sink)...)
+	optimizer := algebra.NewOptimizer(algebra.DefaultPasses(sink, answers)...)
 	optimized, err = optimizer.Optimize(compiled)
 	if err != nil {
 		if handler != nil {
@@ -77,7 +78,8 @@ func optimizeAlgebra(q *query.Query, bindings query.Bindings, handler annotation
 // When expl is non-nil the bridge fills its algebra fields — the compiled
 // tree, every pass's rewrite records, the final optimized tree, and the
 // decompiled query — as values. expl is nil on the normal query path, which
-// collects nothing.
+// collects nothing. The get-else scan rewrite reads the options' answer,
+// false for every source where they carry none.
 func optimizeViaAlgebra(
 	q *query.Query,
 	bindings query.Bindings,
@@ -89,7 +91,7 @@ func optimizeViaAlgebra(
 		return nil, fmt.Errorf("algebra optimize: nil query")
 	}
 	sink := &algebra.RewriteSink{Handler: handler, Collect: expl != nil}
-	compiled, optimized, err := optimizeAlgebra(q, bindings, handler, sink)
+	compiled, optimized, err := optimizeAlgebra(q, bindings, handler, sink, options.matchAnswersLookup)
 	if err != nil {
 		return nil, err
 	}

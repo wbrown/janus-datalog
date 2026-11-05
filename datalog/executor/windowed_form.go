@@ -48,6 +48,135 @@ type framing struct {
 	planOverRequired bool
 }
 
+// canFailOnAValue reports whether running clauses can raise an evaluation
+// failure on a resolved value: an expression's function or a database-function
+// predicate's over a variable, a registered predicate function, a transaction
+// range over a value naming no transaction, or a subquery's fold that can
+// refuse a value (subqueryFoldCanFail), at any depth of the header forms, in a
+// subquery's body, or in a rule body an invocation reaches through rules. A
+// database function fails on an entity value that is no identity. A function
+// reading no variable answers alike on every tuple, so it fails on the first
+// tuple or on none. A data pattern fails on no value, and neither do the
+// comparisons, which order every value, a string prefix, which answers a typed
+// non-match, or a GroundPredicate or MissingPredicate. A form whose body can
+// fail evaluates as its result is pulled, window by window, so its result
+// carries Evaluates (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T11). The
+// clause taxonomy is closed, so a clause kind this does not name panics, as
+// WalkClauses does.
+func canFailOnAValue(clauses []query.Clause, rules *query.RuleSet) bool {
+	reached := map[query.Symbol]bool{}
+	var fails func(clauses []query.Clause) bool
+	fails = func(clauses []query.Clause) bool {
+		found := false
+		query.WalkClauses(clauses, func(clause query.Clause) bool {
+			switch c := clause.(type) {
+			case *query.NotClause, *query.NotJoinClause, *query.OrClause,
+				*query.OrJoinClause, *query.OrDefaultClause, *query.OrDefaultJoinClause:
+			case *query.DataPattern, *query.Comparison, *query.ChainedComparison,
+				*query.NotEqualPredicate, *query.GroundPredicate, *query.MissingPredicate,
+				*query.StrStartsWithPredicate:
+			case *query.Expression:
+				found = found || len(c.Function.RequiredSymbols()) > 0
+			case *query.DatabaseFunctionPredicate:
+				found = found || len(c.Function.RequiredSymbols()) > 0
+			case *query.FunctionPredicate, *query.TxRangePredicate:
+				found = true
+			case *query.SubqueryPattern:
+				found = found || subqueryFoldCanFail(c) || fails(c.Query.Where)
+			case *query.RuleInvocation:
+				if rules != nil && !reached[c.Name] {
+					reached[c.Name] = true
+					for _, rule := range rules.Rules(c.Name) {
+						found = found || fails(rule.Body)
+					}
+				}
+			default:
+				panic(fmt.Sprintf("BUG: unknown clause type %T in canFailOnAValue", clause))
+			}
+			return !found
+		})
+		return found
+	}
+	return fails(clauses)
+}
+
+// subqueryFoldCanFail reports whether a subquery's :find holds an aggregate
+// whose fold can fail on a resolved value, a sum or an avg
+// (aggregateOps.failsOnAValue). Such a subquery's result carries Evaluates
+// whatever its call passes. So a :limit 0 reads it to its end
+// (LimitRelation.take), as it reads the uncorrelated subquery Rule 1 makes of
+// a correlated one. An aggregate resolveAggregate does not bind is refused
+// before execution (query.ValidateQuery), so meeting one here panics.
+func subqueryFoldCanFail(c *query.SubqueryPattern) bool {
+	for _, element := range c.Query.Find {
+		aggregate, ok := element.(query.FindAggregate)
+		if !ok {
+			continue
+		}
+		ops, err := resolveAggregate(aggregate.Function)
+		if err != nil {
+			panic(fmt.Sprintf("BUG: %v in a subquery's :find past validation", err))
+		}
+		if ops.failsOnAValue {
+			return true
+		}
+	}
+	return false
+}
+
+// canFailOnAValueOver reports whether running one predicate or expression
+// over a relation whose identity symbols are identities can raise an
+// evaluation failure on a value: canFailOnAValue's verdict for the clause,
+// except that a database-function predicate whose entity is one of the
+// identity symbols (entityIsAnIdentity), and an expression that fails on no
+// value over them (expressionFailsOnNoValueOver), fail on no value.
+func canFailOnAValueOver(clause query.Clause, identities []query.Symbol) bool {
+	switch c := clause.(type) {
+	case *query.DatabaseFunctionPredicate:
+		if entityIsAnIdentity(c.Function, identities) {
+			return false
+		}
+	case *query.Expression:
+		if expressionFailsOnNoValueOver(c, identities) {
+			return false
+		}
+	}
+	return canFailOnAValue([]query.Clause{clause}, nil)
+}
+
+// expressionFailsOnNoValueOver reports whether evaluating expr over a
+// relation whose identity symbols are identities fails on no value: its
+// function is a database function whose entity is one of them
+// (entityIsAnIdentity), and its binding is the scalar form, which binds any
+// value. The tuple, collection and relation forms read the value's shape and
+// fail on a value of another shape (bindingTuples), whatever the entity.
+func expressionFailsOnNoValueOver(expr *query.Expression, identities []query.Symbol) bool {
+	if _, scalar := expr.Binding.(query.Symbol); !scalar {
+		return false
+	}
+	return entityIsAnIdentity(expr.Function, identities)
+}
+
+// entityIsAnIdentity reports whether fn is a database function whose entity
+// is a variable among identities. A database function fails on a value only
+// where its entity value is no identity (toIdentity), and every value of an
+// identity symbol is one, so such a function fails on no value.
+func entityIsAnIdentity(fn query.Function, identities []query.Symbol) bool {
+	var entity query.Term
+	switch f := fn.(type) {
+	case *query.GetElseFunction:
+		entity = f.Entity
+	case *query.MissingFunction:
+		entity = f.Entity
+	case *query.GetSomeFunction:
+		entity = f.Entity
+	default:
+		return false
+	}
+	variable, ok := entity.(query.VariableTerm)
+	return ok && query.ContainsSymbol(identities, variable.Symbol)
+}
+
 // standing is the symbol of the enclosing scope a given symbol stands for,
 // by which the subject is read for it, and nil for a symbol standing for
 // nothing, a constant argument's. A symbol outside the given list is the
@@ -118,9 +247,12 @@ type windowedIterator struct {
 	options  ExecutorOptions
 
 	// reader reads the subject into the windows the branches are run over
-	// and probed for; windowPos is the tuple of its window being answered.
+	// and probed for; windowPos is the tuple of its window being answered,
+	// and answering is the position of the tuple whose outputs the form
+	// answers, recorded by tupleToAnswer.
 	reader    *windowReader
 	windowPos int
+	answering int
 
 	// frames is each distinct frame of the plans resolved against the
 	// subject and the environment, holding the keys its windows have run and
@@ -146,6 +278,12 @@ type windowedIterator struct {
 	currentTuple Tuple
 	done         bool
 	err          error
+
+	// failed is the output the form answered for a failed window tuple, and
+	// failedUnknown the positions it holds no value at, until a reader
+	// resumes the form past it. err holds the tuple's failure meanwhile.
+	failed        Tuple
+	failedUnknown []int
 }
 
 // continuationsFor is the context a windowed form's iterator runs under and
@@ -167,7 +305,10 @@ func continuationsFor(ctx *Context) (*Context, *ruleContinuations, bool) {
 // its form: the frames of plans resolved against the subject and the
 // framing's environment relation, the continuations, and the reader over
 // the subject's iterator, counting the window event's distinct keys over
-// the subject's positions the required run's symbols stand for.
+// the subject's positions the required run's symbols stand for, and
+// carrying a failed subject tuple that holds a value at each position the
+// form reads: the required run's, the key's, and those of the find
+// variables the subject carries.
 func newWindowedIterator(executor *DefaultQueryExecutor, ctx *Context, f framing, plans []branchRun, options ExecutorOptions) windowedIterator {
 	it := windowedIterator{executor: executor, ctx: ctx, framing: f, plans: plans, options: options}
 	it.frames, it.frameOf = windowFrames(plans, f)
@@ -194,25 +335,77 @@ func newWindowedIterator(executor *DefaultQueryExecutor, ctx *Context, f framing
 			keyPos = append(keyPos, pos)
 		}
 	}
-	it.reader = newWindowReader(f.subject.Iterator(), f.form, f.subject.RequiresCopy(), keyPos, options)
+	readPos := append([]int(nil), keyPos...)
+	reads := func(sym query.Symbol) {
+		pos := query.SymbolIndex(outerSyms, sym)
+		if pos < 0 {
+			return
+		}
+		for _, seen := range readPos {
+			if seen == pos {
+				return
+			}
+		}
+		readPos = append(readPos, pos)
+	}
+	for _, sym := range f.key {
+		reads(sym)
+	}
+	for _, elem := range f.find {
+		if variable, ok := elem.(query.FindVariable); ok {
+			reads(variable.Symbol)
+		}
+	}
+	it.reader = newWindowReader(f.subject.Iterator(), f.form, f.subject.RequiresCopy(), keyPos, readPos, options)
 	return it
 }
 
 // Next answers the next tuple from the window in hand under the form's
 // policy, and reads the next window when the one in hand is answered,
-// ending at the subject's end or on a failure.
+// ending at the subject's end or on a failure. An output the form answers
+// for a failed window tuple stops it with that tuple's failure, and the form
+// answers the output as its failed tuple: the form holds at the tuple's key,
+// as the subject's clauses hold at the tuple
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract). Next
+// answers nothing more until the failure is resumed past.
 func (it *windowedIterator) Next() bool {
 	for {
-		if it.done {
+		if it.done || it.err != nil {
 			return false
 		}
 		if it.policy.answer() {
+			if err := it.reader.failureAt(it.answering); err != nil {
+				it.failed, it.failedUnknown, it.err = it.currentTuple, it.reader.unknownAt(it.answering), err
+				return false
+			}
 			return true
 		}
 		if !it.nextWindow() {
 			return false
 		}
 	}
+}
+
+// failedTuple answers the output the form answered for a failed window
+// tuple, with the positions it holds no value at. Each form's result lays
+// out its subject's symbols first, so those are the subject tuple's
+// positions. It answers false when the form's failure arose on no output,
+// a branch's build.
+func (it *windowedIterator) failedTuple() (Tuple, []int, bool) {
+	return it.failed, it.failedUnknown, it.failed != nil
+}
+
+// resume drops the failed output and its failure, and Next answers on from
+// the window in hand.
+func (it *windowedIterator) resume() {
+	it.failed, it.failedUnknown, it.err = nil, nil, nil
+}
+
+// tupleToAnswer is the window's tuple at windowPos, recorded as the one whose
+// outputs the form answers next.
+func (it *windowedIterator) tupleToAnswer() Tuple {
+	it.answering = it.windowPos
+	return it.reader.window[it.windowPos]
 }
 
 // nextWindow reads the next window of the subject through the reader and
@@ -291,12 +484,27 @@ func (it *windowedIterator) buildBranch(branchIdx int, run *MaterializedRelation
 		it.err = err
 		return false
 	}
-	it.reportCacheBuild(branchIdx, branchSyms, len(tuples))
 	cb, built := it.branchCache[branchIdx]
 	if !built {
 		cb = newCachedBranch(branchSyms, it.framing.subject.Symbols(), it.framing.key)
 		it.cache(branchIdx, cb)
+	} else if !symbolsMatch(cb.branchSyms, branchSyms) {
+		// A branch's index is kept across the windows over the symbols its
+		// first build gave it. A later build over other symbols is laid out
+		// over the index's, by symbol, and one lacking a symbol the index
+		// carries is an error.
+		laidOut, err := NewMaterializedRelation(branchSyms, tuples).Project(cb.branchSyms)
+		if err != nil {
+			it.err = fmt.Errorf("branch %d built over %v, its index over %v: %w", branchIdx, branchSyms, cb.branchSyms, err)
+			return false
+		}
+		if tuples, err = collectBranch(laidOut); err != nil {
+			it.err = err
+			return false
+		}
+		branchSyms = cb.branchSyms
 	}
+	it.reportCacheBuild(branchIdx, branchSyms, len(tuples))
 	for _, tuple := range tuples {
 		cb.Add(tuple)
 	}

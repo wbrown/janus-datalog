@@ -170,7 +170,7 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 		Keys:     [][]query.Symbol{{a}},
 	}
 	open := func() *StreamingRelation {
-		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
+		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}, RelationProperties{})
 		return NewStreamingRelationWithProperties(
 			symbols,
 			base.Iterator(),
@@ -200,10 +200,54 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 		},
 		fresh,
 	)
-	require.Equal(t, properties, evaluated.Properties())
+	// The function reads ?a and ?b, so Evaluates is true.
+	evaluating := properties
+	evaluating.Evaluates = true
+	require.Equal(t, evaluating, evaluated.Properties())
 
 	require.Equal(t, properties, NewLimitRelation(open(), 1).Properties())
 	require.Equal(t, properties, open().Materialize().Properties())
+}
+
+// A relation's identity symbols, those whose every value is an identity, are
+// carried by every derivation that keeps their values: a clone, a rename under
+// the names standing for them, a projection keeping them, a fresh symbol's
+// addition, a form's result that does not bind them anew, a join from either
+// side, a product from any member, and a held relation. A derivation that
+// drops a symbol or binds it anew drops it.
+func TestRelationPropertiesCarryIdentities(t *testing.T) {
+	a, b, c := datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")
+	left := RelationProperties{Identities: []query.Symbol{a}}
+	right := RelationProperties{Identities: []query.Symbol{c}}
+	swap, err := query.SubstitutionOf([]query.Symbol{a, b}, []query.Symbol{b, a})
+	require.NoError(t, err)
+	member := func(symbol query.Symbol, properties RelationProperties) Relation {
+		return NewMaterializedRelationWithProperties([]query.Symbol{symbol}, []Tuple{{datalog.NewIdentity("identity:member")}}, ExecutorOptions{}, properties)
+	}
+	cases := []struct {
+		name    string
+		derived RelationProperties
+		want    []query.Symbol
+	}{
+		{"a clone", left.clone(), []query.Symbol{a}},
+		{"a rename under the names standing for them", left.renameSymbols(swap), []query.Symbol{b}},
+		{"a projection keeping the symbol", left.project([]query.Symbol{b, a}), []query.Symbol{a}},
+		{"a projection dropping the symbol", left.project([]query.Symbol{b}), nil},
+		{"a fresh symbol's addition", left.addSymbol(b), []query.Symbol{a}},
+		{"the symbol bound anew", left.addSymbol(a), nil},
+		{"another symbol rebound", left.withoutReboundSymbols([]query.Symbol{b}), []query.Symbol{a}},
+		{"the symbol rebound", left.withoutReboundSymbols([]query.Symbol{a}), nil},
+		{"a form's result producing another symbol", orProperties(left, []query.Symbol{b}, nil, []query.Symbol{b}, false), []query.Symbol{a}},
+		{"a form's result binding the symbol anew", orProperties(left, []query.Symbol{a}, []query.Symbol{a}, []query.Symbol{a}, false), nil},
+		{"a join from either side", joinProperties(left, right, nil), []query.Symbol{a, c}},
+		{"a product from any member", NewProductRelation([]Relation{member(a, left), member(c, right)}).Properties(), []query.Symbol{a, c}},
+		{"a held relation", newMaterializedRelationFromSet([]query.Symbol{a}, []Tuple{{datalog.NewIdentity("identity:held")}}, ExecutorOptions{}, left).Properties(), []query.Symbol{a}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.ElementsMatch(t, tc.want, tc.derived.Identities)
+		})
+	}
 }
 
 func TestRelationPropertiesSatisfyOrderingPrefixes(t *testing.T) {
@@ -232,7 +276,7 @@ func TestStreamingProjectionSkipsDedupWhenKeyIsRetained(t *testing.T) {
 	symbols := []query.Symbol{a, b}
 	tuples := []Tuple{{int64(1), "same"}, {int64(2), "same"}}
 	open := func(properties RelationProperties) *StreamingRelation {
-		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
+		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}, RelationProperties{})
 		return NewStreamingRelationWithProperties(
 			symbols,
 			base.Iterator(),
@@ -274,8 +318,8 @@ func TestStreamingProjectionSkipsDedupOnPermutation(t *testing.T) {
 	a := datalog.NewSymbol("?a")
 	b := datalog.NewSymbol("?b")
 	symbols := []query.Symbol{a, b}
-	base := NewMaterializedRelationFromSet(symbols,
-		[]Tuple{{int64(1), "x"}, {int64(2), "y"}}, ExecutorOptions{})
+	base := NewMaterializedRelationFromSet(symbols, []Tuple{{int64(1), "x"}, {int64(2), "y"}}, ExecutorOptions{}, RelationProperties{})
+
 	stream := NewStreamingRelationWithOptions(symbols, base.Iterator(), ExecutorOptions{})
 
 	reordered, err := stream.Project([]query.Symbol{b, a})
@@ -299,8 +343,8 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	leftBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, leftValue},
 		[]Tuple{{int64(1), "left-1"}, {int64(2), "left-2"}},
-		ExecutorOptions{},
-	)
+		ExecutorOptions{}, RelationProperties{})
+
 	left := NewStreamingRelationWithProperties(
 		leftBase.Symbols(),
 		leftBase.Iterator(),
@@ -366,8 +410,8 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	leftBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, leftValue},
 		[]Tuple{{int64(1), "left-1"}},
-		ExecutorOptions{},
-	)
+		ExecutorOptions{}, RelationProperties{})
+
 	left := NewStreamingRelationWithProperties(
 		leftBase.Symbols(),
 		leftBase.Iterator(),
@@ -377,8 +421,7 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	right := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, rightValue},
 		[]Tuple{{int64(1), "right-1"}, {int64(1), "right-2"}},
-		opts,
-	)
+		opts, RelationProperties{})
 
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Empty(t, joined.Properties().Keys)
@@ -416,8 +459,8 @@ func TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey(t *testing.T) {
 	rightBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, rightValue},
 		[]Tuple{{int64(1), "right-1"}, {int64(2), "right-2"}},
-		ExecutorOptions{},
-	)
+		ExecutorOptions{}, RelationProperties{})
+
 	right := NewStreamingRelationWithProperties(
 		rightBase.Symbols(),
 		rightBase.Iterator(),
@@ -505,8 +548,8 @@ func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
 		DefaultHashTableSize:    16,
 		EnableTrueStreaming:     true,
 	}
-	streamingLeftBase := NewMaterializedRelationFromSet(leftSymbols, leftTuples, ExecutorOptions{})
-	streamingRightBase := NewMaterializedRelationFromSet(rightSymbols, rightTuples, ExecutorOptions{})
+	streamingLeftBase := NewMaterializedRelationFromSet(leftSymbols, leftTuples, ExecutorOptions{}, RelationProperties{})
+	streamingRightBase := NewMaterializedRelationFromSet(rightSymbols, rightTuples, ExecutorOptions{}, RelationProperties{})
 	streamingLeft := NewStreamingRelationWithProperties(
 		leftSymbols, streamingLeftBase.Iterator(), opts, properties)
 	streamingRight := NewStreamingRelationWithProperties(
@@ -562,13 +605,12 @@ func TestExpandingExpressionDoesNotPreserveOuterKey(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	expanded, err := evaluateExpressionWithLookup(source, &query.Expression{
+	expanded := evaluateExpressionWithLookup(source, &query.Expression{
 		Function: query.EnumerateFunction{
 			VecTerm: query.VariableTerm{Symbol: vector},
 		},
 		Binding: query.RelationBinding{Variables: []query.Symbol{index, value}},
 	}, nil, nil)
-	require.NoError(t, err)
 
 	require.False(t, containsSymbolSet(expanded.Properties().Keys, []query.Symbol{entity}),
 		"one entity expands to multiple tuples, so the outer key is no longer unique")
@@ -673,8 +715,8 @@ func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
 	base := NewMaterializedRelationFromSet(
 		[]query.Symbol{symbol},
 		[]Tuple{{int64(1)}, {int64(2)}},
-		ExecutorOptions{},
-	)
+		ExecutorOptions{}, RelationProperties{})
+
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),
 		base.Iterator(),

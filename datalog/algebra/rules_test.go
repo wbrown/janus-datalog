@@ -51,7 +51,7 @@ func TestCompileRuleInvocationRoundTrips(t *testing.T) {
 	require.Equal(t, data.Output, analysis[derived].Output)
 	require.Empty(t, derived.Children, "a Derived node is a leaf")
 
-	optimized, err := NewOptimizer(DefaultPasses(&RewriteSink{})...).Optimize(compiled)
+	optimized, err := NewOptimizer(DefaultPasses(&RewriteSink{}, everySourceAnswers)...).Optimize(compiled)
 	require.NoError(t, err)
 	refreshed, err := RefreshSchemas(optimized)
 	require.NoError(t, err)
@@ -82,7 +82,7 @@ func TestDecompile_SubqueryDeclaresRulesWhenItInvokes(t *testing.T) {
 	require.NoError(t, err)
 	compiled, err := Compile(q, nil)
 	require.NoError(t, err)
-	optimized, err := NewOptimizer(DefaultPasses(&RewriteSink{})...).Optimize(compiled)
+	optimized, err := NewOptimizer(DefaultPasses(&RewriteSink{}, everySourceAnswers)...).Optimize(compiled)
 	require.NoError(t, err)
 	clauses, err := Decompile(optimized)
 	require.NoError(t, err)

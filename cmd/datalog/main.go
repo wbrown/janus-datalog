@@ -288,7 +288,12 @@ func runInteractive(db *storage.Database, enableDecorrelation bool) {
 			}
 
 			// Display results as markdown table
-			fmt.Println(result.Table())
+			table, err := resultTable(result)
+			if err != nil {
+				fmt.Printf("Execution error: %v\n", err)
+				continue
+			}
+			fmt.Println(table)
 
 		default:
 			fmt.Println("Unknown command. Use .help for help.")
@@ -583,7 +588,10 @@ func runSingleQuery(db *storage.Database, queryStr string, enableDecorrelation b
 	}
 
 	// Display results as markdown table with timing
-	table := result.Table()
+	table, err := resultTable(result)
+	if err != nil {
+		return fmt.Errorf("Execution error: %v", err)
+	}
 	// Replace the tuple count line with tuple count + timing
 	lines := strings.Split(table, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -597,6 +605,21 @@ func runSingleQuery(db *storage.Database, queryStr string, enableDecorrelation b
 	}
 	fmt.Print(strings.Join(lines, "\n"))
 	return nil
+}
+
+// resultTable reads a query's result to its end and renders it as a table. A
+// failure reading the result is its error, so a query whose result fails as
+// it is read ends as a query that fails to execute does.
+func resultTable(result executor.Relation) (string, error) {
+	collected, err := executor.CollectTuples(result, nil)
+	if err != nil {
+		return "", err
+	}
+	tuples := make([]executor.Tuple, len(collected))
+	for i, tuple := range collected {
+		tuples[i] = tuple
+	}
+	return executor.NewMaterializedRelation(result.Symbols(), tuples).Table(), nil
 }
 
 // ednSliceFlag implements flag.Value for a repeatable -in flag.

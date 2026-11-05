@@ -83,7 +83,7 @@ func TestRostersNameConstantsPerSource(t *testing.T) {
 		{"a database function as an expression and as a predicate",
 			nil, nil, []Clause{
 				constant(nil, ":t/x"),
-				&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: sym("?e")}, Attr: datalog.NewKeyword(":t/getelse"), Default: "none"}, Binding: sym("?g")},
+				&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: sym("?e")}, Attr: datalog.NewKeyword(":t/getelse"), Default: ConstantTerm{Value: "none"}}, Binding: sym("?g")},
 				&DatabaseFunctionPredicate{Function: &MissingFunction{Entity: VariableTerm{Symbol: sym("?e")}, Attr: datalog.NewKeyword(":t/missing")}},
 			}, keywordsNamed(":t/x", ":t/getelse", ":t/missing"), nil},
 		{"a ground into the attribute position",

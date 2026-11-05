@@ -278,7 +278,8 @@ func (m *PatternMatcher) MatchWithConstraints(
 // candidate key of the emitted stream are injective
 // (scanProjectionPreservesSet). Every other streaming scan wraps a
 // deduplicating pass so the relation is a set at birth. Scan iterators reuse
-// workspace tuples, so the dedup's seen-keys copy.
+// workspace tuples, so the dedup's seen-keys copy. The pass keeps the scan's
+// values, so it carries the scan's identity symbols.
 func (m *PatternMatcher) restoreScanSetSemantics(rel executor.Relation, pattern *query.DataPattern, symbols []query.Symbol) executor.Relation {
 	if rel == nil {
 		return nil
@@ -289,10 +290,11 @@ func (m *PatternMatcher) restoreScanSetSemantics(rel executor.Relation, pattern 
 	if scanProjectionPreservesSet(pattern, m.schema, m.mode == historyMode) {
 		return rel
 	}
-	return executor.NewStreamingRelationWithOptions(
+	return executor.NewStreamingRelationWithProperties(
 		symbols,
 		executor.NewDedupIterator(rel.Iterator(), 0, true),
 		m.options,
+		executor.RelationProperties{Identities: rel.Properties().Identities},
 	)
 }
 
@@ -330,9 +332,7 @@ func (m *PatternMatcher) matchUnboundScan(
 	if elem := pattern.GetV(); elem != nil {
 		v = m.extractValue(elem)
 	}
-	if elem := pattern.GetT(); elem != nil {
-		tx = m.extractValue(elem)
-	}
+	tx = m.extractValue(pattern.GetT())
 
 	// Determine cardinality for CRDT resolution
 	// For cardinality-one with E+A bound, V unbound: return only current value (first result)
@@ -563,6 +563,7 @@ func (m *PatternMatcher) matchUnboundScan(
 
 	// Return streaming relation with lazy materialization
 	// The iterator will be consumed and cached on first call to Iterator()
+	properties.Identities = executor.AnswerIdentities(pattern)
 	rel := executor.NewStreamingRelationWithProperties(
 		symbols,
 		regularIter,
@@ -631,7 +632,8 @@ func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, b
 	}
 
 	// Return streaming relation with the iterator
-	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
+	return executor.NewStreamingRelationWithProperties(symbols, iter, m.options,
+		executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}), nil
 }
 
 // matchWithVValidation implements the candidate + validate pattern for V-bound
@@ -701,11 +703,13 @@ func (m *PatternMatcher) matchWithVValidation(
 		report:           report,
 	}
 
+	properties := validatedVBoundProperties(pattern, strategy)
+	properties.Identities = executor.AnswerIdentities(pattern)
 	return executor.NewStreamingRelationWithProperties(
 		symbols,
 		iter,
 		m.options,
-		validatedVBoundProperties(pattern, strategy),
+		properties,
 	), nil
 }
 
@@ -1220,7 +1224,8 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// - Group deduplication via contiguous comparison (O(1) space)
 	// - Add-wins with same-Tx tiebreaking for CardinalityMany
 	// - RGA for CardinalityVector
-	// - Add-wins for CardinalityUnknown (same as CardinalityMany)
+	// - LWW for CardinalityUnknown, an attribute the schema leaves undefined
+	//   (same as CardinalityOne)
 	//
 	// The matcher carries the view, so candidate resolution reads the
 	// snapshot: in as-of mode an entry after the target is skipped, and a
@@ -1758,10 +1763,11 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 	if vSymIdx >= 0 {
 		readPositions++
 	}
+	properties := executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}
 	if len(bindingRel.Symbols()) == readPositions {
-		return executor.NewMaterializedRelationFromSet(symbols, resultTuples, m.options), true, nil
+		return executor.NewMaterializedRelationFromSet(symbols, resultTuples, m.options, properties), true, nil
 	}
-	return executor.NewMaterializedRelationWithOptions(symbols, resultTuples, m.options), true, nil
+	return executor.NewMaterializedRelationWithProperties(symbols, resultTuples, m.options, properties), true, nil
 }
 
 // matchCardinalityManyAsRelation handles cardinality-many patterns using add-wins resolution
@@ -1823,7 +1829,7 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 				pattern.GetV().(query.Variable).Name == sym:
 				tuple[i] = member
-			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+			case pattern.GetT().IsVariable() &&
 				pattern.GetT().(query.Variable).Name == sym:
 				// For cardinality-many, we don't have a single Tx
 				// Use the max ElementID as the "current" transaction
@@ -1929,7 +1935,7 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 			pattern.GetV().(query.Variable).Name == sym:
 			tuple[i] = resolved
-		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+		case pattern.GetT().IsVariable() &&
 			pattern.GetT().(query.Variable).Name == sym:
 			// Use the max ElementID as the "current" transaction
 			tuple[i] = result.MaxElementID
@@ -2061,7 +2067,7 @@ func (m *PatternMatcher) matchVectorWithBindings(
 			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 				pattern.GetV().(query.Variable).Name == sym:
 				tuple[i] = resolved
-			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+			case pattern.GetT().IsVariable() &&
 				pattern.GetT().(query.Variable).Name == sym:
 				tuple[i] = result.MaxElementID
 			default:
@@ -2082,7 +2088,8 @@ func (m *PatternMatcher) matchVectorWithBindings(
 		return nil, err
 	}
 
-	return executor.NewMaterializedRelation(symbols, tuples), nil
+	return executor.NewMaterializedRelationWithProperties(symbols, tuples, executor.ExecutorOptions{},
+		executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}), nil
 }
 
 // matchCardinalityManyMembership checks if a specific value is in a cardinality-many set
@@ -2165,7 +2172,7 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 			pattern.GetV().(query.Variable).Name == sym:
 			tuple[i] = v
-		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+		case pattern.GetT().IsVariable() &&
 			pattern.GetT().(query.Variable).Name == sym:
 			// For membership queries, we don't have a specific Tx
 			tuple[i] = datalog.ElementID{}
@@ -2224,7 +2231,7 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 				case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
 					it.pattern.GetV().(query.Variable).Name == sym:
 					tuple[i] = member
-				case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
+				case it.pattern.GetT().IsVariable() &&
 					it.pattern.GetT().(query.Variable).Name == sym:
 					tuple[i] = it.currentMaxElementID
 				}
@@ -2385,7 +2392,8 @@ func (m *PatternMatcher) matchVectorScanAllEntities(
 		report:       report,
 	}
 
-	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
+	return executor.NewStreamingRelationWithProperties(symbols, iter, m.options,
+		executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}), nil
 }
 
 // vectorScanAllEntitiesIterator streams results for vector patterns with E unbound.
@@ -2467,7 +2475,7 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 			case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
 				it.pattern.GetV().(query.Variable).Name == sym:
 				tuple[i] = resolved
-			case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
+			case it.pattern.GetT().IsVariable() &&
 				it.pattern.GetT().(query.Variable).Name == sym:
 				tuple[i] = result.MaxElementID
 			}
@@ -2543,7 +2551,8 @@ func (m *PatternMatcher) matchVectorUnderOpenAttribute(
 			}
 		}
 	}
-	return executor.NewMaterializedRelationWithOptions(symbols, tuples, m.options), nil
+	return executor.NewMaterializedRelationWithProperties(symbols, tuples, m.options,
+		executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}), nil
 }
 
 // matchCardinalityManyScanAllEntities handles [?e :attr ?v] where E is unbound
@@ -2589,7 +2598,8 @@ func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 		report:       report,
 	}
 
-	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
+	return executor.NewStreamingRelationWithProperties(symbols, iter, m.options,
+		executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}), nil
 }
 
 // cardinalityManyAVETValueIterator streams results for [?e :attr "value"] patterns
@@ -2857,5 +2867,6 @@ func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 		report:      report,
 	}
 
-	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
+	return executor.NewStreamingRelationWithProperties(symbols, iter, m.options,
+		executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}), nil
 }

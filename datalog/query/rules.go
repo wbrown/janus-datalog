@@ -499,9 +499,22 @@ func (rs *RuleSet) CheckInvocation(inv *RuleInvocation) error {
 // SourceAttributes returns every attribute the rule bodies name on the
 // source, in order of first appearance and each once, collected once over
 // every body as Rosters.SourceAttributes collects a query's: the keyword
-// constants in the attribute position of the bodies' patterns on the source,
-// at any depth, an inner query's under the sources its call passes.
+// constants in the attribute position of the bodies' patterns on the source
+// and the attributes of the get-else, get-some and missing? that read it, at
+// any depth, an inner query's under the sources its call passes.
 func (rs *RuleSet) SourceAttributes(source Symbol) []datalog.Keyword {
+	return rs.bodyRosters().SourceAttributes(source)
+}
+
+// Sources returns every source the rule bodies name an attribute on, in
+// order of first appearance and each once.
+func (rs *RuleSet) Sources() []Symbol {
+	return rs.bodyRosters().Sources()
+}
+
+// bodyRosters is what the rule bodies name on each source, collected once
+// over every body, the rules in the set's order.
+func (rs *RuleSet) bodyRosters() *Rosters {
 	rs.rostersOnce.Do(func() {
 		rosters := newRosters()
 		for _, name := range rs.order {
@@ -511,7 +524,7 @@ func (rs *RuleSet) SourceAttributes(source Symbol) []datalog.Keyword {
 		}
 		rs.rosters = rosters
 	})
-	return rs.rosters.SourceAttributes(source)
+	return rs.rosters
 }
 
 // checkRuleSafety reports the first symbol neither the rule's positive body

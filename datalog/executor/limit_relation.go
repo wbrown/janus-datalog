@@ -32,13 +32,16 @@ func NewLimitRelation(source Relation, limit int) *LimitRelation {
 }
 
 // take pulls at most limit tuples from the source, exactly once, and holds
-// them.
+// them. A source whose reading evaluates a function is then read to its end,
+// keeping nothing more, so a failure past the tuples kept is the limit's
+// error (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T11).
 func (r *LimitRelation) take() *MaterializedRelation {
 	r.once.Do(func() {
 		tuples := make([]Tuple, 0, r.limit)
 		var err error
 
-		if r.limit > 0 {
+		evaluates := r.source.Properties().Evaluates
+		if r.limit > 0 || evaluates {
 			needsCopy := r.source.RequiresCopy()
 			it := r.source.Iterator()
 			// Pull no more than limit tuples — this is the early termination:
@@ -49,6 +52,10 @@ func (r *LimitRelation) take() *MaterializedRelation {
 					tuple = copyTuple(tuple)
 				}
 				tuples = append(tuples, tuple)
+			}
+			if evaluates {
+				for it.Next() {
+				}
 			}
 			err = it.Error()
 			if cerr := it.Close(); err == nil {

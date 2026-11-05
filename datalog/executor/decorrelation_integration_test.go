@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -61,7 +62,7 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 	)
 
 	// Create matcher with all datoms
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	// The hourly OHLC query with 4 subqueries
 	queryStr := `[:find ?datetime ?open-price ?hour-high ?hour-low ?close-price ?total-volume
@@ -163,10 +164,10 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			// Execute with decorrelation DISABLED first to verify test data
-			execNoDecor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+			execNoDecor := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			startNoDecor := time.Now()
 			resultNoDecor, err := execNoDecor.Execute(q)
@@ -182,7 +183,7 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 			}
 
 			// Execute with decorrelation ENABLED
-			execWithDecor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+			execWithDecor := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 			startWithDecor := time.Now()
 			resultWithDecor, err := execWithDecor.Execute(q)

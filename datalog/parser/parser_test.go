@@ -1,10 +1,11 @@
 package parser
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -122,58 +123,36 @@ func TestParseWithLiterals(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
-		check func(*query.Query) error
+		value query.PatternElement // the pattern's value position
 	}{
 		{
 			name: "string literal",
 			input: `[:find ?e
                      :where [?e :person/name "Alice"]]`,
-			check: func(q *query.Query) error {
-				pattern := q.Where[0].(*query.DataPattern)
-				elem := pattern.Elements[2]
-				if elem.IsVariable() {
-					return fmt.Errorf("expected constant, got variable")
-				}
-				return nil
-			},
+			value: query.Constant{Value: "Alice"},
 		},
 		{
 			name: "integer literal",
 			input: `[:find ?e
                      :where [?e :person/age 42]]`,
-			check: func(q *query.Query) error {
-				pattern := q.Where[0].(*query.DataPattern)
-				elem := pattern.Elements[2]
-				if elem.IsVariable() {
-					return fmt.Errorf("expected constant, got variable")
-				}
-				return nil
-			},
+			value: query.Constant{Value: int64(42)},
 		},
 		{
 			name: "float literal",
 			input: `[:find ?e
                      :where [?e :score/value 3.14]]`,
-			check: func(q *query.Query) error {
-				pattern := q.Where[0].(*query.DataPattern)
-				elem := pattern.Elements[2]
-				if elem.IsVariable() {
-					return fmt.Errorf("expected constant, got variable")
-				}
-				return nil
-			},
+			value: query.Constant{Value: 3.14},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			q, err := ParseQuery(tt.input)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if err := tt.check(q); err != nil {
-				t.Error(err)
-			}
+			require.NoError(t, err)
+			require.Len(t, q.Where, 1)
+			pattern, ok := q.Where[0].(*query.DataPattern)
+			require.Truef(t, ok, "the clause is a data pattern, got %T", q.Where[0])
+			assert.Equal(t, tt.value, pattern.Elements[2])
 		})
 	}
 }
@@ -258,7 +237,14 @@ func TestParseSubqueryPatterns(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
-		check func(*query.Query) error
+		// where is the number of :where clauses and at the subquery's place
+		// among them; find is the inner query's :find, inputs what the call
+		// passes, binding the form its result binds under.
+		where   int
+		at      int
+		find    []query.FindElement
+		inputs  []query.PatternElement
+		binding query.BindingForm
 	}{
 		{
 			name: "subquery bound by Datomic's relation form [[?high]]",
@@ -270,46 +256,14 @@ func TestParseSubqueryPatterns(t *testing.T) {
 			                :where [?p :price/symbol ?symbol]
 			                       [?p :price/high ?h]]
 			               ?s) [[?high]]]]`,
-			check: func(q *query.Query) error {
-				if len(q.Where) != 3 {
-					return fmt.Errorf("expected 3 patterns, got %d", len(q.Where))
-				}
-
-				// Check the subquery pattern
-				subq, ok := q.Where[2].(*query.SubqueryPattern)
-				if !ok {
-					return fmt.Errorf("expected SubqueryPattern, got %T", q.Where[2])
-				}
-
-				// Check inputs
-				if len(subq.Inputs) != 1 {
-					return fmt.Errorf("expected 1 input, got %d", len(subq.Inputs))
-				}
-
-				// [[?high]] is the relation binding (Datomic's bind-rel)
-				binding, ok := subq.Binding.(query.RelationBinding)
-				if !ok {
-					return fmt.Errorf("expected RelationBinding, got %T", subq.Binding)
-				}
-
-				if len(binding.Variables) != 1 || binding.Variables[0] != datalog.NewSymbol("?high") {
-					return fmt.Errorf("expected [[?high]] binding, got %v", binding.Variables)
-				}
-
-				// Check nested query
-				if len(subq.Query.Find) != 1 {
-					return fmt.Errorf("expected 1 find element in nested query")
-				}
-
-				agg, ok := subq.Query.Find[0].(query.FindAggregate)
-				if !ok || agg.Function != datalog.SymMax || agg.Arg != datalog.NewSymbol("?h") {
-					return fmt.Errorf("expected (max ?h) in nested query")
-				}
-
-				return nil
-			},
+			where:   3,
+			at:      2,
+			find:    []query.FindElement{query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?h")}},
+			inputs:  []query.PatternElement{query.Variable{Name: datalog.NewSymbol("?s")}},
+			binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?high")}},
 		},
 		{
+			// ?var is Datomic's scalar binding.
 			name: "subquery with scalar binding",
 			input: `[:find ?symbol ?max-price
 			         :where
@@ -318,24 +272,11 @@ func TestParseSubqueryPatterns(t *testing.T) {
 			                :where [?p :price/symbol ?sym]
 			                       [?p :price/value ?price]]
 			               ?s) ?max-price]]`,
-			check: func(q *query.Query) error {
-				subq, ok := q.Where[1].(*query.SubqueryPattern)
-				if !ok {
-					return fmt.Errorf("expected SubqueryPattern")
-				}
-
-				// Check scalar binding: ?var means scalar in Datomic
-				binding, ok := subq.Binding.(query.ScalarBinding)
-				if !ok {
-					return fmt.Errorf("expected ScalarBinding, got %T", subq.Binding)
-				}
-
-				if binding.Variable != datalog.NewSymbol("?max-price") {
-					return fmt.Errorf("expected ?max-price binding, got %s", binding.Variable)
-				}
-
-				return nil
-			},
+			where:   2,
+			at:      1,
+			find:    []query.FindElement{query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?price")}},
+			inputs:  []query.PatternElement{query.Variable{Name: datalog.NewSymbol("?s")}},
+			binding: query.ScalarBinding{Variable: datalog.NewSymbol("?max-price")},
 		},
 		{
 			name: "subquery with collection binding",
@@ -346,62 +287,37 @@ func TestParseSubqueryPatterns(t *testing.T) {
 			                :where [?p :price/symbol ?sym]
 			                       [?p :price/value ?price]]
 			               ?s) [?prices ...]]]`,
-			check: func(q *query.Query) error {
-				subq, ok := q.Where[1].(*query.SubqueryPattern)
-				if !ok {
-					return fmt.Errorf("expected SubqueryPattern")
-				}
-
-				// Check collection binding [?var ...]
-				binding, ok := subq.Binding.(query.CollectionBinding)
-				if !ok {
-					return fmt.Errorf("expected CollectionBinding, got %T", subq.Binding)
-				}
-
-				if binding.Variable != datalog.NewSymbol("?prices") {
-					return fmt.Errorf("expected ?prices binding, got %s", binding.Variable)
-				}
-
-				return nil
-			},
+			where:   2,
+			at:      1,
+			find:    []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?price")}},
+			inputs:  []query.PatternElement{query.Variable{Name: datalog.NewSymbol("?s")}},
+			binding: query.CollectionBinding{Variable: datalog.NewSymbol("?prices")},
 		},
 		{
 			name: "subquery with relation binding",
 			input: `[:find ?symbol ?data
-			         :where 
+			         :where
 			           [?s :symbol/ticker ?symbol]
 			           [(q [:find ?price ?time
 			                :where [?p :price/symbol ?sym]
 			                       [?p :price/value ?price]
 			                       [?p :price/time ?time]]
 			               ?s) [[?price ?time] ...]]]`,
-			check: func(q *query.Query) error {
-				subq, ok := q.Where[1].(*query.SubqueryPattern)
-				if !ok {
-					return fmt.Errorf("expected SubqueryPattern")
-				}
-
-				// Check relation binding
-				binding, ok := subq.Binding.(query.RelationBinding)
-				if !ok {
-					return fmt.Errorf("expected RelationBinding, got %T", subq.Binding)
-				}
-
-				if len(binding.Variables) != 2 {
-					return fmt.Errorf("expected 2 variables in binding, got %d", len(binding.Variables))
-				}
-
-				if binding.Variables[0] != datalog.NewSymbol("?price") || binding.Variables[1] != datalog.NewSymbol("?time") {
-					return fmt.Errorf("expected [[?price ?time] ...], got %v", binding.Variables)
-				}
-
-				return nil
+			where: 2,
+			at:    1,
+			find: []query.FindElement{
+				query.FindVariable{Symbol: datalog.NewSymbol("?price")},
+				query.FindVariable{Symbol: datalog.NewSymbol("?time")},
 			},
+			inputs:  []query.PatternElement{query.Variable{Name: datalog.NewSymbol("?s")}},
+			binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?price"), datalog.NewSymbol("?time")}},
 		},
 		{
+			// The source, a constant holding its symbol, and the two
+			// variables, one input per :in position.
 			name: "subquery with multiple inputs",
 			input: `[:find ?result
-			         :where 
+			         :where
 			           [?s :symbol/ticker "AAPL"]
 			           [(ground "2025-06-02") ?date]
 			           [(q [:find (avg ?v)
@@ -411,44 +327,28 @@ func TestParseSubqueryPatterns(t *testing.T) {
 			                       [(= ?t ?date)]
 			                       [?p :price/value ?v]]
 			               $ ?s ?date) [[?result]]]]`,
-			check: func(q *query.Query) error {
-				subq, ok := q.Where[2].(*query.SubqueryPattern)
-				if !ok {
-					return fmt.Errorf("expected SubqueryPattern")
-				}
-
-				// The source and the two variables, one input per :in position
-				if len(subq.Inputs) != 3 {
-					return fmt.Errorf("expected 3 inputs, got %d", len(subq.Inputs))
-				}
-
-				// The variable ?s follows the source
-				v1, ok := subq.Inputs[1].(query.Variable)
-				if !ok || v1.Name != datalog.NewSymbol("?s") {
-					return fmt.Errorf("expected ?s as the input after the source")
-				}
-
-				// The variable ?date follows it
-				v2, ok := subq.Inputs[2].(query.Variable)
-				if !ok || v2.Name != datalog.NewSymbol("?date") {
-					return fmt.Errorf("expected ?date as the last input")
-				}
-
-				return nil
+			where: 3,
+			at:    2,
+			find:  []query.FindElement{query.FindAggregate{Function: datalog.SymAvg, Arg: datalog.NewSymbol("?v")}},
+			inputs: []query.PatternElement{
+				query.Constant{Value: datalog.NewSymbol("$")},
+				query.Variable{Name: datalog.NewSymbol("?s")},
+				query.Variable{Name: datalog.NewSymbol("?date")},
 			},
+			binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?result")}},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			q, err := ParseQuery(tt.input)
-			if err != nil {
-				t.Fatalf("unexpected parse error: %v", err)
-			}
-
-			if err := tt.check(q); err != nil {
-				t.Error(err)
-			}
+			require.NoError(t, err)
+			require.Len(t, q.Where, tt.where)
+			subq, ok := q.Where[tt.at].(*query.SubqueryPattern)
+			require.Truef(t, ok, "clause %d is a subquery, got %T", tt.at, q.Where[tt.at])
+			assert.Equal(t, tt.find, subq.Query.Find, "the inner query's :find")
+			assert.Equal(t, tt.inputs, subq.Inputs, "the inputs the call passes")
+			assert.Equal(t, tt.binding, subq.Binding, "the form the result binds under")
 		})
 	}
 }

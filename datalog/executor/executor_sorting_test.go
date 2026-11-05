@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"fmt"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -51,7 +52,7 @@ func TestQueryWithOrderBy(t *testing.T) {
 		{E: dave, A: joinedAttr, V: date4, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	tests := []struct {
 		name     string
@@ -109,9 +110,9 @@ func TestQueryWithOrderBy(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
@@ -198,11 +199,11 @@ func TestSortingEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			matcher := NewMemoryPatternMatcher(tt.datoms)
+			matcher := factsDatabase(t, tt.datoms)
 
-			for _, mode := range optimizerModes {
-				t.Run(mode.name, func(t *testing.T) {
-					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			for _, mode := range OptimizerModes {
+				t.Run(mode.Name(), func(t *testing.T) {
+					executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 					q, err := parser.ParseQuery(tt.query)
 					if err != nil {
@@ -261,7 +262,7 @@ func nonProjectedSortDatoms() []datalog.Datom {
 }
 
 func TestOrderByNonProjectedVariable(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
+	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
 	tests := []struct {
 		name     string
@@ -286,9 +287,9 @@ func TestOrderByNonProjectedVariable(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
@@ -355,11 +356,11 @@ func TestOrderByMixedProjectedAndNonProjectedKeys(t *testing.T) {
 		)
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// ?dept is projected, ?age is not. Both keys must be honored in the
 			// stated precedence: dept ascending, then age descending within dept.
@@ -393,11 +394,11 @@ func TestOrderByMixedProjectedAndNonProjectedKeys(t *testing.T) {
 }
 
 func TestOrderByNonProjectedVariableWithLimit(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
+	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Global top-N: the two youngest users, selected by a sort key that is
 			// not in :find. Sorting must happen before the limit is applied.
@@ -431,11 +432,11 @@ func TestOrderByNonProjectedVariableWithLimit(t *testing.T) {
 }
 
 func TestOrderByUnboundVariableIsError(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
+	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// ?bogus is bound nowhere in the query — not in :find, :where, or :in.
 			// This must be rejected (at parse or execution time), not silently
@@ -492,11 +493,11 @@ func statusUserDatoms() []datalog.Datom {
 // every tuple carries the same value, so the query succeeds and returns all
 // matching tuples (in no particular order).
 func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(statusUserDatoms())
+	matcher := factsDatabase(t, statusUserDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find ?name
 	                              :in $ ?status
@@ -538,11 +539,11 @@ func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
 // Case G: a constant scalar-input key composed with a real :where-bound key —
 // the constant contributes nothing (identity), the real key must be honored.
 func TestOrderByScalarConstantKeyThenRealKey(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(statusUserDatoms())
+	matcher := factsDatabase(t, statusUserDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find ?name
 	                              :in $ ?status
@@ -605,11 +606,11 @@ func TestOrderByCollectionInputBoundVariable(t *testing.T) {
 		)
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find ?name
 	                              :in $ [?dept ...]
@@ -667,11 +668,11 @@ func TestOrderByRelationInputSymbolAcrossUnion(t *testing.T) {
 	add("b3", "B", 6)
 	add("b4", "B", 7)
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find ?v
 	                              :in $ [[?k] ...]
@@ -717,11 +718,11 @@ func TestOrderByAggregateGroupKey(t *testing.T) {
 		{E: datalog.NewIdentity("p5"), A: cityAttr, V: "NYC", Tx: tx},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find ?city (count ?p)
 	                              :where [?p :person/city ?city]
@@ -758,11 +759,11 @@ func TestOrderByAggregateGroupKey(t *testing.T) {
 // of the post-aggregation relation — so this must be rejected, not silently
 // ignored.
 func TestOrderByAggregateNonFindVariableIsError(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(statusUserDatoms())
+	matcher := factsDatabase(t, statusUserDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find ?status (count ?e)
 	                              :where [?e :user/status ?status]
@@ -799,11 +800,11 @@ func TestOrderByNonProjectedPreservesDuplicates(t *testing.T) {
 		{E: datalog.NewIdentity("user:bob"), A: ageAttr, V: int64(20), Tx: tx},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find ?name
 	                              :where [?e :user/name ?name]
@@ -837,11 +838,11 @@ func TestOrderByNonProjectedPreservesDuplicates(t *testing.T) {
 // sort only ever sees Identity in the entity binding; the tied-key variant
 // is TestOrderByPullWithTiedSortKeys below.
 func TestOrderByProjectedKeyWithPull(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
+	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find (pull ?e [:user/name]) ?age
 	                              :where [?e :user/age ?age]
@@ -873,11 +874,11 @@ func TestOrderByProjectedKeyWithPull(t *testing.T) {
 // the find shape (all value bindings — plain deduplicating projection), and
 // the boundary pull renders the surviving tuples.
 func TestOrderByNonProjectedWithPull(t *testing.T) {
-	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
+	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find (pull ?e [:user/name])
 	                              :where [?e :user/age ?age]
@@ -927,11 +928,11 @@ func TestOrderByProjectedKeyDeduplicates(t *testing.T) {
 		{E: datalog.NewIdentity("user:bob"), A: ageAttr, V: int64(20), Tx: tx},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			baseline, err := parser.ParseQuery(`[:find ?name
 	                                     :where [?e :user/name ?name]
@@ -1015,11 +1016,11 @@ func TestOrderByPullWithTiedSortKeys(t *testing.T) {
 		{E: datalog.NewIdentity("user:carol"), A: ageAttr, V: int64(10), Tx: tx},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			q, err := parser.ParseQuery(`[:find (pull ?e [:user/name]) ?age
 	                              :where [?e :user/age ?age]
@@ -1063,7 +1064,7 @@ func TestSortRelationRejectsNonValueTuples(t *testing.T) {
 	rel := NewMaterializedRelationFromSet([]query.Symbol{e, age}, []Tuple{
 		{map[string]interface{}{"user/name": "Alice"}, int64(34)},
 		{map[string]interface{}{"user/name": "Bob"}, int64(34)},
-	}, ExecutorOptions{})
+	}, ExecutorOptions{}, RelationProperties{})
 
 	SortRelation(rel, []query.OrderByClause{
 		{Variable: age, Descending: false},
@@ -1090,11 +1091,11 @@ func TestSortingWithNulls(t *testing.T) {
 		{E: user3, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Note: get-else is not implemented, so we test with a simpler query
 			// This is more about ensuring no panic than specific null handling

@@ -1,7 +1,8 @@
 //go:build example
 
 // multi_source.go demonstrates cross-source queries: joining database
-// entities with in-memory Go data using SliceSource and NewMemorySource.
+// entities with in-memory Go data, through a slice source and a memory
+// database.
 //
 // Run from the repository root:
 //
@@ -48,10 +49,10 @@ func main() {
 	}
 	f.Close()
 
-	fmt.Println("=== 1. SliceSource: Go structs as a query source ===")
-	// SliceSource wraps a Go slice so it can be queried alongside
-	// database entities. Each struct field is mapped to a keyword
-	// via an AttributeSchema.
+	fmt.Println("=== 1. A slice source: Go structs as a query source ===")
+	// NewSliceSource opens a memory database holding a Go slice's facts, so
+	// the slice can be queried alongside database entities. Each struct
+	// field is mapped to a keyword through an AttributeSchema.
 	rules := []PortfolioRule{
 		{"AAPL", 0.25, "Buy"},
 		{"GOOGL", 0.20, "Buy"},
@@ -61,11 +62,15 @@ func main() {
 		{"NVDA", 0.10, "Buy"}, // not in our database
 	}
 
-	ruleSource := db.NewSliceSource(rules, db.AttributeSchema[PortfolioRule]{
+	ruleSource, err := db.NewSliceSource(rules, db.AttributeSchema[PortfolioRule]{
 		datalog.NewKeyword(":rule/ticker"):     func(r PortfolioRule) any { return r.Ticker },
 		datalog.NewKeyword(":rule/max-weight"): func(r PortfolioRule) any { return r.MaxWeight },
 		datalog.NewKeyword(":rule/rating"):     func(r PortfolioRule) any { return r.Rating },
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer ruleSource.Close()
 
 	// Query from the rule source alone (no database needed).
 	type RuleResult struct {
@@ -164,15 +169,28 @@ func main() {
 		fmt.Printf("    %s (%s)\n", r.Ticker, r.Name)
 	}
 
-	fmt.Println("\n=== 4. NewMemorySource: ad-hoc datoms ===")
-	// NewMemorySource creates a source from raw datoms.
+	fmt.Println("\n=== 4. A memory database: ad-hoc facts ===")
+	// A memory database holds the facts a transaction writes into it.
 	// Useful for injecting computed or external data.
-	alerts := db.NewMemorySource([]datalog.Datom{
+	alerts, err := db.OpenMemory()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer alerts.Close()
+	tx := alerts.NewTransaction()
+	for _, fact := range []datalog.Datom{
 		{E: datalog.NewIdentity("alert:1"), A: datalog.NewKeyword(":alert/ticker"), V: "TSLA"},
 		{E: datalog.NewIdentity("alert:1"), A: datalog.NewKeyword(":alert/message"), V: "Volatility spike detected"},
 		{E: datalog.NewIdentity("alert:2"), A: datalog.NewKeyword(":alert/ticker"), V: "AAPL"},
 		{E: datalog.NewIdentity("alert:2"), A: datalog.NewKeyword(":alert/message"), V: "Earnings report tomorrow"},
-	})
+	} {
+		if err := tx.Add(fact.E, fact.A, fact.V); err != nil {
+			log.Fatal(err)
+		}
+	}
+	if _, err := tx.Commit(); err != nil {
+		log.Fatal(err)
+	}
 
 	type AlertResult struct {
 		Ticker  string `datalog:"?ticker"`

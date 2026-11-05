@@ -1,9 +1,10 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -25,7 +26,7 @@ func TestPerformanceRegression(t *testing.T) {
 		)
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	// Test queries
 	queries := []string{
@@ -56,9 +57,9 @@ func TestPerformanceRegression(t *testing.T) {
 		         [(+ ?score ?age) ?adjusted]]`,
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			for i, queryStr := range queries {
 				q, err := parser.ParseQuery(queryStr)

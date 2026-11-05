@@ -88,7 +88,7 @@ The executor calls `PatternMatcher.Match` (`datalog/executor/interfaces.go`) and
   │   $       → Matcher[arena]           │                       │   publish watermark        │
   │   $local  → OverlayMatcher           │                       │                            │
   │   $peer   → Matcher[arena₂]          │                       │ ARENA (shared, off-heap):  │
-  │   $mem    → MemoryPatternMatcher     │   writes (ring) ──▶   │   8 raw index orderings    │
+  │   $mem    → memory database          │   writes (ring) ──▶   │   8 raw index orderings    │
   └──────────────────────────────────────┘                       │   resolved cache (seqlock) │
                                                                  │   value store + blobs      │
                                                                  │   symbol tables            │
@@ -131,7 +131,7 @@ Each reader publishes its pinned basis. A superseded datom (an old version a seg
 
 ## 7. Sources and overlay
 
-This is Janus's multi-source design (`SourceRouter`, `map[Symbol]PatternMatcher`), and §3 is what lets it span processes and hosts. More matchers in the map: the arena, a local overlay, a peer's arena, an in-memory source — all `PatternMatcher`s, joined by the executor as today (`WithSources`, `MemoryPatternMatcher`, `SliceSource`).
+This is Janus's multi-source design (`SourceRouter`, `map[Symbol]PatternMatcher`), and §3 is what lets it span processes and hosts. More matchers in the map: the arena, a local overlay, a peer's arena, an in-memory source — all `PatternMatcher`s, joined by the executor as today (`WithSources`, memory databases, slice sources).
 
 Two compositions:
 

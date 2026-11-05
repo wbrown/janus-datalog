@@ -7,47 +7,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// NewMemoryPatternMatcher creates a pattern matcher for in-memory datoms.
-// Returns an IndexedMemoryMatcher, which indexes datoms by (E, A, V).
-func NewMemoryPatternMatcher(datoms []datalog.Datom) PatternMatcher {
-	return NewIndexedMemoryMatcher(datoms)
-}
-
-// evaluateConstraints checks if a datom passes all constraints
-func evaluateConstraints(datom *datalog.Datom, constraints []StorageConstraint) bool {
-	for _, c := range constraints {
-		if !c.Evaluate(datom) {
-			return false
-		}
-	}
-	return true
-}
-
-// bindPatternFromTuple creates a new pattern with variables replaced by tuple values
-func bindPatternFromTuple(pattern *query.DataPattern, tuple Tuple, rel Relation) *query.DataPattern {
-	// Get symbol positions in the relation
-	symbols := rel.Symbols()
-	symbolIndex := make(map[query.Symbol]int)
-	for i, sym := range symbols {
-		symbolIndex[sym] = i
-	}
-
-	// Create new pattern elements
-	elements := make([]query.PatternElement, len(pattern.Elements))
-	copy(elements, pattern.Elements)
-
-	// Bind variables to tuple values
-	for i, elem := range pattern.Elements {
-		if v, ok := elem.(query.Variable); ok {
-			if idx, found := symbolIndex[v.Name]; found && idx < len(tuple) {
-				elements[i] = query.Constant{Value: tuple[idx]}
-			}
-		}
-	}
-
-	return &query.DataPattern{Elements: elements}
-}
-
 // matchesDatomWithPattern checks if a datom matches a pattern: each position
 // the pattern has, a position it omits reading as a blank.
 func matchesDatomWithPattern(datom datalog.Datom, pattern *query.DataPattern) bool {
@@ -185,9 +144,10 @@ func (it *datomIterator) Close() error {
 func (it *datomIterator) Error() error { return nil }
 
 // patternCoversDatomIdentity reports whether every datom component (E, A, V,
-// Tx) is bound by the pattern to a constant or a variable. A memory matcher
-// emits raw datoms with no CRDT resolution, so a datom's full identity is the
-// only candidate key its stream carries: a wildcard — or an absent Tx
+// Tx) is bound by the pattern to a constant or a variable. A datom list
+// streamed by datomsToRelationWithOptions is raw datoms with no CRDT
+// resolution, so a datom's full identity is the only candidate key its stream
+// carries: a wildcard — or an absent Tx
 // position — drops a varying component, and two distinct datoms can then
 // project to the same tuple. Such scans must restore set semantics with a
 // dedup pass before the tuple stream becomes a Relation.
@@ -200,11 +160,6 @@ func patternCoversDatomIdentity(pattern *query.DataPattern) bool {
 		}
 	}
 	return true
-}
-
-// datomsToRelation converts datoms to a streaming relation (zero-copy lazy evaluation)
-func datomsToRelation(datoms []datalog.Datom, pattern *query.DataPattern, symbols []query.Symbol) Relation {
-	return datomsToRelationWithOptions(datoms, pattern, symbols, ExecutorOptions{})
 }
 
 // datomsToRelationWithOptions converts datoms to a streaming relation with options
@@ -227,10 +182,4 @@ func datomsToRelationWithOptions(datoms []datalog.Datom, pattern *query.DataPatt
 	}
 
 	return NewStreamingRelationWithOptions(symbols, iterator, opts)
-}
-
-// PatternToRelation converts pattern match results to a relation
-func PatternToRelation(datoms []datalog.Datom, pattern *query.DataPattern) Relation {
-	symbols := pattern.Symbols()
-	return datomsToRelation(datoms, pattern, symbols)
 }

@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"strings"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -31,21 +32,21 @@ func (m *plansMade) handle(e annotations.Event) {
 // verdict the fixture can fail.
 func TestAWindowedClauseReadsItsFrameFromThePlan(t *testing.T) {
 	const pages = 10
-	datoms := chainDatoms(pages)
-	rs := mustRules(t, followsRulesText)
+	datoms := ChainDatoms(pages)
+	rs := MustRules(t, FollowsRulesText)
 	cases := []struct{ name, text string }{
 		{"a pattern after a join", `[:find ?x ?z :in $ % :where [?x :page/kind "leaf"] [?x :page/next ?y] [?y :page/next ?z]]`},
 		{"an invocation after a join", `[:find ?x ?z :in $ % :where [?x :page/kind "leaf"] [?x :page/next ?y] (follows ?y ?z)]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range OptimizerModes {
 		for _, c := range cases {
-			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
+			t.Run(mode.Name()+"/"+c.name, func(t *testing.T) {
 				made := &plansMade{recording: true}
-				opts := mode.plannerOptions()
+				opts := mode.PlannerOptions()
 				opts.Handler = made.handle
-				exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts)
+				exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts)
 				exec.SetPlanCache(planner.NewPlanCache(64, 0))
-				q := mustParse(t, c.text)
+				q := MustParse(t, c.text)
 				prepared, err := query.Prepare(q, rs)
 				require.NoError(t, err)
 				_, err = exec.GetPlanner().PlanQuery(prepared, query.Bindings{Rules: rs}, made.handle)

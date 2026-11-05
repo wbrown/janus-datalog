@@ -859,15 +859,18 @@ func hashDatabaseFunction(h *structuralHash, fn DatabaseFunction) {
 	switch f := fn.(type) {
 	case *GetElseFunction:
 		h.kind(kindGetElse)
+		h.symbol(f.ReadsFrom())
 		hashTerm(h, f.Entity)
 		h.keyword(f.Attr)
-		h.value(f.Default)
+		hashTerm(h, f.Default)
 	case *MissingFunction:
 		h.kind(kindMissingFunction)
+		h.symbol(f.ReadsFrom())
 		hashTerm(h, f.Entity)
 		h.keyword(f.Attr)
 	case *GetSomeFunction:
 		h.kind(kindGetSome)
+		h.symbol(f.ReadsFrom())
 		hashTerm(h, f.Entity)
 		h.count(len(f.Attrs))
 		for _, attr := range f.Attrs {
@@ -879,18 +882,19 @@ func hashDatabaseFunction(h *structuralHash, fn DatabaseFunction) {
 }
 
 // equalDatabaseFunction compares a database function with a function of any
-// kind: the other is equal when it is the same kind over the same parts.
+// kind: the other is equal when it is the same kind over the same parts, the
+// source it reads among them.
 func equalDatabaseFunction(a DatabaseFunction, b Pattern) bool {
 	switch x := a.(type) {
 	case *GetElseFunction:
 		y, ok := b.(*GetElseFunction)
-		return ok && equalTerm(x.Entity, y.Entity) && x.Attr == y.Attr && datalog.ValuesEqual(x.Default, y.Default)
+		return ok && x.ReadsFrom() == y.ReadsFrom() && equalTerm(x.Entity, y.Entity) && x.Attr == y.Attr && equalTerm(x.Default, y.Default)
 	case *MissingFunction:
 		y, ok := b.(*MissingFunction)
-		return ok && equalTerm(x.Entity, y.Entity) && x.Attr == y.Attr
+		return ok && x.ReadsFrom() == y.ReadsFrom() && equalTerm(x.Entity, y.Entity) && x.Attr == y.Attr
 	case *GetSomeFunction:
 		y, ok := b.(*GetSomeFunction)
-		return ok && equalTerm(x.Entity, y.Entity) && equalKeywords(x.Attrs, y.Attrs)
+		return ok && x.ReadsFrom() == y.ReadsFrom() && equalTerm(x.Entity, y.Entity) && equalKeywords(x.Attrs, y.Attrs)
 	}
 	panic(fmt.Sprintf("query equality: %T is not a database function kind", a))
 }

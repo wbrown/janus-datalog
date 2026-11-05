@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
@@ -54,7 +55,7 @@ func TestJoinRoutesAnswerTheJoinOfSets(t *testing.T) {
 			{alice, dept, eng},
 		},
 	}
-	cache := executor.NewMemoryPatternMatcher([]datalog.Datom{
+	cache := factsDatabase(t, []datalog.Datom{
 		{E: cacheOne, A: cacheUser, V: "Alice"},
 		{E: cacheOne, A: cacheScore, V: int64(95)},
 		{E: cacheTwo, A: cacheUser, V: "Bob"},
@@ -168,12 +169,20 @@ func TestJoinRoutesAnswerTheJoinOfSets(t *testing.T) {
 	}
 }
 
-// A query whose join has an empty side and whose other side fails to
-// evaluate answers the failure.
-func TestAJoinOverAFailingSideAnswersTheFailure(t *testing.T) {
+// A query whose join has an empty side answers the empty relation, though its
+// other side fails to evaluate: no assignment satisfies the empty side's
+// clause, and a join over an empty side does not drive the other side
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). The same failing side
+// with no empty side answers its failure. With carol carrying :item/missing
+// and no name, the queries joining on ?p still meet no assignment and answer
+// empty, and the queries joining on ?m answer the failure: the failing side's
+// ?m is undefined, so carol's datom holds beside each of its tuples.
+func TestAJoinWithAnEmptySideAnswersEmptyThoughTheOtherSideFails(t *testing.T) {
 	name := datalog.NewKeyword(":item/name")
+	missing := datalog.NewKeyword(":item/missing")
 	alice := datalog.NewIdentity("join-fail:alice")
 	bob := datalog.NewIdentity("join-fail:bob")
+	carol := datalog.NewIdentity("join-fail:carol")
 	queries := []string{
 		`[:find ?p ?m :where [?p :item/name ?n] [(+ ?n 1) ?m] [?p :item/missing ?x]]`,
 		`[:find ?p ?m :where [?p :item/missing ?x] [?p :item/name ?n] [(+ ?n 1) ?m]]`,
@@ -191,9 +200,32 @@ func TestAJoinOverAFailingSideAnswersTheFailure(t *testing.T) {
 			for i, q := range queries {
 				t.Run(fmt.Sprint(i), func(t *testing.T) {
 					got, err := executor.CollectTuples(db.Query(q))
-					t.Logf("query %d: tuples %v err %v", i, got, err)
+					require.NoError(t, err, "query %d: a join with an empty side answers the empty relation", i)
+					assert.Empty(t, got, "query %d answers no tuples", i)
 				})
 			}
+			t.Run("reachable", func(t *testing.T) {
+				_, err := executor.CollectTuples(db.Query(`[:find ?p ?m :where [?p :item/name ?n] [(+ ?n 1) ?m]]`))
+				require.ErrorContains(t, err, "is not a number", "the failing side with no empty side answers its failure")
+			})
+			t.Run("an other side holding a fact", func(t *testing.T) {
+				withMissing := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				tx := withMissing.NewTransaction()
+				require.NoError(t, tx.Add(alice, name, "Alice"))
+				require.NoError(t, tx.Add(bob, name, "Bob"))
+				require.NoError(t, tx.Add(carol, missing, int64(5)))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+				for i, q := range queries[:2] {
+					got, err := executor.CollectTuples(withMissing.Query(q))
+					require.NoError(t, err, "query %d: carol has no name, so no assignment meets the join on ?p", i)
+					assert.Empty(t, got, "query %d answers no tuples", i)
+				}
+				for i, q := range queries[2:] {
+					_, err := executor.CollectTuples(withMissing.Query(q))
+					require.ErrorContains(t, err, "is not a number", "query %d: carol's datom holds beside each failing tuple", i+2)
+				}
+			})
 		})
 	}
 }

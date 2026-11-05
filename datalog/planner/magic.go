@@ -13,11 +13,15 @@ import (
 // Magic is a rule set rewritten for one invocation with bound arguments.
 // Rules derives Predicate, the invoked predicate adorned with the binding
 // pattern, from Seed, the predicate the invocation's bound values fill, so
-// evaluating Rules derives only the tuples those values reach.
+// evaluating Rules derives only the tuples those values reach. SourceAnswers
+// is the questions the scope plans the rewrite read asked, each with its
+// answer: the rewritten rules hold those plans' clauses, which their get-else
+// rewrites decided.
 type Magic struct {
-	Rules     *query.RuleSet
-	Predicate query.Symbol
-	Seed      query.Symbol
+	Rules         *query.RuleSet
+	Predicate     query.Symbol
+	Seed          query.Symbol
+	SourceAnswers []SourceAnswer
 }
 
 // Rewrite rewrites the set for an invocation of name whose positions bound
@@ -130,7 +134,7 @@ func Rewrite(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []bool,
 			return &Magic{Rules: rs, Predicate: name}, nil
 		}
 		if !again {
-			return &Magic{Rules: rewritten, Predicate: predicate, Seed: seed}, nil
+			return &Magic{Rules: rewritten, Predicate: predicate, Seed: seed, SourceAnswers: w.answers}, nil
 		}
 	}
 }
@@ -177,7 +181,8 @@ type adornedPredicate struct {
 // the predicates the evaluation derives whole, read whole at every site
 // (A_PREDICATE_DERIVED_WHOLE_IS_READ_WHOLE_PROOF.md), and enqueued the
 // original names of the adorned predicates the walk queued, which Rewrite
-// reads against the whole predicates of the set the walk built.
+// reads against the whole predicates of the set the walk built. answers holds
+// the questions of every scope plan the walk read.
 type magicRewriter struct {
 	rs       *query.RuleSet
 	planner  QueryPlanner
@@ -190,6 +195,7 @@ type magicRewriter struct {
 	sites    []nonMonotoneSite
 	whole    map[query.Symbol]bool
 	enqueued map[query.Symbol]bool
+	answers  []SourceAnswer
 }
 
 // nonMonotoneSite is an invocation under a non-monotone form, named by the
@@ -304,12 +310,14 @@ func (w *magicRewriter) includeOriginal(name query.Symbol) {
 // planned is a scope's clauses in the planner's order: the scope planned
 // through the planner under the set being rewritten, with every invocation
 // held, since the rewrite decides each site itself, read as the rewrite
-// reads a plan.
+// reads a plan. The walk keeps the questions the plan asked, since the
+// rewritten set holds its clauses.
 func (w *magicRewriter) planned(required []query.Symbol, find []query.FindElement, clauses []query.Clause) ([]query.Clause, error) {
 	plan, err := w.planner.PlanScope(Scope{Required: required, Find: find, Clauses: clauses}, query.Bindings{Rules: w.rs, Held: query.HeldEvery}, w.handler)
 	if err != nil {
 		return nil, err
 	}
+	w.answers = append(w.answers, plan.SourceAnswers...)
 	return plannedClauses(plan), nil
 }
 
@@ -843,35 +851,40 @@ func (w *magicRewriter) rewriteClause(rule query.Symbol, clause query.Clause, be
 // rewriteSubquery reads a subquery as a scope of the rewrite: each inner :in
 // symbol stands for the argument at its place, so an inner symbol is bound
 // when its argument is a constant or a variable the bound set holds. The
+// call is read under the sources it passes (query.UnderCallSources), so the
+// inner clauses are planned on the sources they read at execution. The
 // inner query is planned under its data inputs as its required run and its
 // find beyond them, and its clauses are walked in that order as a body's
 // are, under what passes into the scope and under its sealed twin, each
 // entered through enteringSubquery. A subquery holding no adorned
 // invocation is shared; one on the path to an adorned invocation is copied
-// over the inner query derived over the rewritten clauses.
+// over the call read under its sources, its inner query derived over the
+// rewritten clauses.
 func (w *magicRewriter) rewriteSubquery(rule query.Symbol, c *query.SubqueryPattern, before, negated passing, sealed bool) (query.Clause, []*query.Rule, error) {
-	inside, err := before.enteringSubquery(c)
+	inner, inputs := query.UnderCallSources(c.Query, query.CallSources(c), c.Inputs)
+	call := &query.SubqueryPattern{Query: inner, Inputs: inputs, Binding: c.Binding}
+	inside, err := before.enteringSubquery(call)
 	if err != nil {
 		return nil, nil, err
 	}
-	insideNegated, err := negated.enteringSubquery(c)
+	insideNegated, err := negated.enteringSubquery(call)
 	if err != nil {
 		return nil, nil, err
 	}
 	var required []query.Symbol
-	for _, sym := range query.InputSymbols(c.Query.In) {
+	for _, sym := range query.InputSymbols(call.Query.In) {
 		if sym != nil && !query.ContainsSymbol(required, sym) {
 			required = append(required, sym)
 		}
 	}
 	var find []query.FindElement
-	for _, elem := range c.Query.Find {
+	for _, elem := range call.Query.Find {
 		if v, ok := elem.(query.FindVariable); ok && query.ContainsSymbol(required, v.Symbol) {
 			continue
 		}
 		find = append(find, elem)
 	}
-	planned, err := w.planned(required, find, c.Query.Where)
+	planned, err := w.planned(required, find, call.Query.Where)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -879,7 +892,7 @@ func (w *magicRewriter) rewriteSubquery(rule query.Symbol, c *query.SubqueryPatt
 	if err != nil || !changed {
 		return c, nil, err
 	}
-	return &query.SubqueryPattern{Query: c.Query.WithWhere(where), Inputs: c.Inputs, Binding: c.Binding}, rules, nil
+	return &query.SubqueryPattern{Query: call.Query.WithWhere(where), Inputs: call.Inputs, Binding: call.Binding}, rules, nil
 }
 
 // enteringSubquery is what passes into a subquery's inner query: the inner

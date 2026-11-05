@@ -181,8 +181,8 @@ func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *te
 	}
 }
 
-// TestDirectMatch_VsExecuteQuery_CRDTResolution compares direct Match with ExecuteQuery
-// to isolate whether the bug is in the matcher or the query executor.
+// TestDirectMatch_VsExecuteQuery_CRDTResolution checks that a direct Match and
+// a query both resolve a cardinality-one attribute to its last write.
 func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -224,41 +224,22 @@ func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 
 			results, err := matcher.Match(query.PatternQuery(pattern), nil)
 			require.NoError(t, err)
-
-			// Count results from Match
-			matchCount := 0
+			ni := query.SymbolIndex(results.Symbols(), datalog.NewSymbol("?name"))
+			require.GreaterOrEqual(t, ni, 0, "the match carries ?name; got %v", results.Symbols())
+			var matched []interface{}
 			iter := results.Iterator()
 			for iter.Next() {
-				matchCount++
-				t.Logf("Direct Match result: %v", iter.Tuple())
+				matched = append(matched, iter.Tuple()[ni])
 			}
+			require.NoError(t, iter.Error())
+			require.NoError(t, iter.Close())
+			assert.Equal(t, []interface{}{"Charlie"}, matched, "direct Match resolves cardinality one to the last write")
 
-			t.Logf("Direct Match returned %d results", matchCount)
-
-			// The matcher SHOULD return only 1 result for CardinalityOne
-			// If it returns multiple, the bug is in the matcher
-			// If it returns 1 but ExecuteQuery returns multiple, the bug is in the executor
-			if matchCount == 1 {
-				t.Log("Direct Match correctly returns 1 result - bug is in query executor")
-			} else {
-				t.Logf("Direct Match returns %d results - bug may be in matcher CRDT logic", matchCount)
-			}
-
-			// Also test ExecuteQueryWithInputs for comparison
 			queryResults, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
 				personID, nameAttr))
 			require.NoError(t, err)
-
-			t.Logf("ExecuteQueryWithInputs returned %d results", len(queryResults))
-
-			// Compare the two approaches
-			if matchCount == 1 && len(queryResults) > 1 {
-				t.Log("DIAGNOSIS: Direct Match works, ExecuteQueryWithInputs doesn't")
-				t.Log("The bug is in how the query executor uses the matcher")
-			} else if matchCount > 1 && len(queryResults) > 1 {
-				t.Log("DIAGNOSIS: Both return multiple - bug is in matcher CRDT resolution")
-			}
+			assert.Equal(t, [][]interface{}{{"Charlie"}}, queryResults, "the query resolves cardinality one to the last write")
 		})
 	}
 }
@@ -298,9 +279,8 @@ func TestSchemaAwareness_InQueryExecution(t *testing.T) {
 	}
 }
 
-// TestAllQueryMethods_CRDTResolution tests all query methods to determine which
-// correctly apply CRDT resolution. This provides a comprehensive matrix of
-// working vs broken methods.
+// TestAllQueryMethods_CRDTResolution checks that every read surface resolves
+// a cardinality-one attribute written three times to its last write.
 func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -335,16 +315,6 @@ func testAllQueryMethodsCRDTResolution(t *testing.T, mode optimizerMode) {
 
 	expectedName := "Charlie"
 
-	// Track results for summary
-	type methodResult struct {
-		name    string
-		count   int
-		value   interface{}
-		correct bool
-	}
-	var results []methodResult
-
-	// 1. Direct Matcher.Match (control - known working)
 	t.Run("DirectMatch", func(t *testing.T) {
 		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
@@ -360,180 +330,81 @@ func testAllQueryMethodsCRDTResolution(t *testing.T, mode optimizerMode) {
 
 		matchResults, err := matcher.Match(query.PatternQuery(pattern), nil)
 		require.NoError(t, err)
-
-		count := 0
-		var lastValue interface{}
+		ni := query.SymbolIndex(matchResults.Symbols(), datalog.NewSymbol("?name"))
+		require.GreaterOrEqual(t, ni, 0, "the match carries ?name; got %v", matchResults.Symbols())
+		var names []interface{}
 		iter := matchResults.Iterator()
 		for iter.Next() {
-			count++
-			tuple := iter.Tuple()
-			// The tuple contains only the bound variables from the pattern
-			// Since we have one Variable (?name), it should be at index 0
-			if len(tuple) > 0 {
-				lastValue = tuple[0]
-			}
-			t.Logf("  tuple[%d]: %v (len=%d)", count-1, tuple, len(tuple))
+			names = append(names, iter.Tuple()[ni])
 		}
-
-		correct := count == 1
-		results = append(results, methodResult{"DirectMatch", count, lastValue, correct})
-		t.Logf("DirectMatch: %d results, value=%v, correct=%v", count, lastValue, correct)
+		require.NoError(t, iter.Error())
+		require.NoError(t, iter.Close())
+		assert.Equal(t, []interface{}{expectedName}, names)
 	})
 
-	// 2. PullInto (control - known working)
 	t.Run("PullInto", func(t *testing.T) {
 		type Person struct {
 			ID   datalog.Identity `datalog:"-,id"`
 			Name string           `datalog:"person/name"`
 		}
 		var person Person
-		err := db.PullInto(personID, &person)
-		require.NoError(t, err)
-
-		correct := person.Name == expectedName
-		results = append(results, methodResult{"PullInto", 1, person.Name, correct})
-		t.Logf("PullInto: value=%q, correct=%v", person.Name, correct)
+		require.NoError(t, db.PullInto(personID, &person))
+		assert.Equal(t, expectedName, person.Name)
 	})
 
-	// 3. Pull (to map)
 	t.Run("Pull", func(t *testing.T) {
 		pulled, err := db.Pull(personID, "[*]")
 		require.NoError(t, err)
-
-		name := pulled["person/name"]
-		// Pull might return single value or slice depending on implementation
-		var count int
-		var value interface{}
-		switch v := name.(type) {
-		case []interface{}:
-			count = len(v)
-			if count > 0 {
-				value = v[len(v)-1]
-			}
-		case string:
-			count = 1
-			value = v
-		default:
-			count = 1
-			value = v
-		}
-
-		correct := count == 1 && value == expectedName
-		results = append(results, methodResult{"Pull", count, value, correct})
-		t.Logf("Pull: %d results, value=%v, correct=%v", count, value, correct)
+		assert.Equal(t, expectedName, pulled["person/name"])
 	})
 
-	// 4. ExecuteQuery (basic, no inputs)
 	t.Run("ExecuteQuery", func(t *testing.T) {
-		// Use a query that doesn't need inputs by hardcoding the entity lookup
 		queryResults, err := executor.CollectTuples(db.Query(
 			`[:find ?v :where [?e :person/name ?v]]`))
 		require.NoError(t, err)
-
-		count := len(queryResults)
-		var value interface{}
-		if count > 0 {
-			value = queryResults[count-1][0]
-		}
-
-		correct := count == 1
-		results = append(results, methodResult{"ExecuteQuery", count, value, correct})
-		t.Logf("ExecuteQuery: %d results, correct=%v", count, correct)
+		assert.Equal(t, [][]interface{}{{expectedName}}, queryResults)
 	})
 
-	// 5. ExecuteQueryWithInputs (known broken)
 	t.Run("ExecuteQueryWithInputs", func(t *testing.T) {
 		queryResults, err := executor.CollectTuples(db.Query(
 			`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
 			personID, nameAttr))
 		require.NoError(t, err)
-
-		count := len(queryResults)
-		var value interface{}
-		if count > 0 {
-			value = queryResults[count-1][0]
-		}
-
-		correct := count == 1
-		results = append(results, methodResult{"ExecuteQueryWithInputs", count, value, correct})
-		t.Logf("ExecuteQueryWithInputs: %d results, correct=%v", count, correct)
+		assert.Equal(t, [][]interface{}{{expectedName}}, queryResults)
 	})
 
-	// 6. Query (streaming Relation)
 	t.Run("Query", func(t *testing.T) {
 		rel, err := db.Query(
 			`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
 			personID, nameAttr)
 		require.NoError(t, err)
-
-		count := 0
-		var value interface{}
+		vi := query.SymbolIndex(rel.Symbols(), datalog.NewSymbol("?v"))
+		require.GreaterOrEqual(t, vi, 0, "the answer carries ?v; got %v", rel.Symbols())
+		var values []interface{}
 		iter := rel.Iterator()
 		for iter.Next() {
-			count++
-			value = iter.Tuple()[0]
+			values = append(values, iter.Tuple()[vi])
 		}
-
-		correct := count == 1
-		results = append(results, methodResult{"Query", count, value, correct})
-		t.Logf("Query (streaming): %d results, correct=%v", count, correct)
+		require.NoError(t, iter.Error())
+		require.NoError(t, iter.Close())
+		assert.Equal(t, []interface{}{expectedName}, values)
 	})
 
-	// 7. QueryInto
 	t.Run("QueryInto", func(t *testing.T) {
 		var names []string
-		err := db.QueryInto(&names,
+		require.NoError(t, db.QueryInto(&names,
 			`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-			personID, nameAttr)
-		require.NoError(t, err)
-
-		count := len(names)
-		var value interface{}
-		if count > 0 {
-			value = names[count-1]
-		}
-
-		correct := count == 1
-		results = append(results, methodResult{"QueryInto", count, value, correct})
-		t.Logf("QueryInto: %d results, correct=%v", count, correct)
+			personID, nameAttr))
+		assert.Equal(t, []string{expectedName}, names)
 	})
 
-	// 8. QueryOneInto
 	t.Run("QueryOneInto", func(t *testing.T) {
 		var name string
 		found, err := db.QueryOneInto(&name,
 			`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
 			personID, nameAttr)
-
-		// QueryOneInto correctly errors when multiple results are returned
-		// This error is actually a symptom of the CRDT bug - there should only be one result
-		if err != nil {
-			t.Logf("QueryOneInto: error=%v (expected due to CRDT bug returning multiple results)", err)
-			results = append(results, methodResult{"QueryOneInto", -1, "ERROR: multiple results", false})
-			return
-		}
-
-		count := 0
-		if found {
-			count = 1
-		}
-
-		correct := found && name == expectedName
-		results = append(results, methodResult{"QueryOneInto", count, name, correct})
-		t.Logf("QueryOneInto: found=%v, value=%q, correct=%v", found, name, correct)
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, expectedName, name)
 	})
-
-	// Print summary table
-	t.Log("\n========== CRDT RESOLUTION MATRIX ==========")
-	t.Log("Method                    | Count | Correct | Value")
-	t.Log("--------------------------|-------|---------|------")
-	for _, r := range results {
-		status := "✗ BUG"
-		if r.correct {
-			status = "✓ OK "
-		}
-		t.Logf("%-25s | %5d | %s   | %v", r.name, r.count, status, r.value)
-	}
-	t.Log("=============================================")
-	t.Log("Expected: 1 result with value 'Charlie' for all methods")
 }

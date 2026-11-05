@@ -45,7 +45,7 @@ func (it *subqueryIterator) answer() bool {
 		if it.windowPos >= len(it.reader.window) {
 			return false
 		}
-		tuple := it.reader.window[it.windowPos]
+		tuple := it.tupleToAnswer()
 		it.windowPos++
 		body := it.branchCache[0]
 		matches := it.agreeing(body.Probe(tuple), body.branchSyms, tuple)

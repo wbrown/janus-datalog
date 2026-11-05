@@ -15,24 +15,9 @@ import (
 // This ensures Query never returns nil — callers always get a valid (possibly
 // empty) Relation.
 func emptyRelationForQuery(q *query.Query) Relation {
-	symbols := extractFindSymbols(q.Find)
+	symbols := query.FindSymbols(q.Find)
 	symbols = append(symbols, query.RetainedSortSymbols(q)...)
 	return NewMaterializedRelation(symbols, nil)
-}
-
-func extractFindSymbols(findElements []query.FindElement) []query.Symbol {
-	var symbols []query.Symbol
-	for _, elem := range findElements {
-		switch e := elem.(type) {
-		case query.FindVariable:
-			symbols = append(symbols, e.Symbol)
-		case query.FindAggregate:
-			symbols = append(symbols, datalog.NewSymbol(e.String()))
-		case query.FindPull:
-			symbols = append(symbols, e.Variable)
-		}
-	}
-	return symbols
 }
 
 // consumedFindSymbols is the symbols a find clause reads from the relation

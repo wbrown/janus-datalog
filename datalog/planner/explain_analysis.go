@@ -85,9 +85,7 @@ func analyzePatternForExplain(pattern *query.DataPattern, resolved map[query.Sym
 	if elem := pattern.GetV(); elem != nil {
 		plan.BoundMask.V = isElementBound(elem, resolved)
 	}
-	if elem := pattern.GetT(); elem != nil {
-		plan.BoundMask.T = isElementBound(elem, resolved)
-	}
+	plan.BoundMask.T = isElementBound(pattern.GetT(), resolved)
 
 	// Select index based on bound mask
 	plan.Index = selectIndexForMask(plan.BoundMask)
@@ -107,13 +105,14 @@ func analyzePatternForExplain(pattern *query.DataPattern, resolved map[query.Sym
 	return plan
 }
 
-// isElementBound checks if a pattern element is bound (constant or resolved variable)
+// isElementBound checks if a pattern element is bound: a constant, or a
+// resolved variable. A blank is a wildcard and binds nothing.
 func isElementBound(elem query.PatternElement, resolved map[query.Symbol]bool) bool {
-	if elem == nil {
+	if elem == nil || elem.IsBlank() {
 		return false
 	}
 	if !elem.IsVariable() {
-		return true // Constants and blanks are bound
+		return true // a constant is bound
 	}
 	if v, ok := elem.(query.Variable); ok {
 		return resolved[v.Name]

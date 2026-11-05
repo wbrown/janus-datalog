@@ -88,7 +88,11 @@ func TestTemporalHandle_Close_DoesNotCloseParent(t *testing.T) {
 			tx := db.NewTransaction()
 			require.NoError(t, tx.Set(alice, nameAttr, "Alice2"))
 			_, err = tx.Commit()
-			assert.NoError(t, err, "parent should be usable after temporal handle Close()")
+			require.NoError(t, err, "parent should be usable after temporal handle Close()")
+
+			var names []string
+			require.NoError(t, db.QueryInto(&names, `[:find ?n :in $ ?e :where [?e :person/name ?n]]`, alice))
+			assert.Equal(t, []string{"Alice2"}, names, "the parent reads its own write after the handle's Close")
 		})
 	}
 }

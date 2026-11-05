@@ -17,8 +17,21 @@ func TestNewRuleSet_AcceptsAnExistentialUnderANotInsideAnOrBranch(t *testing.T) 
 			}}),
 	}
 	for _, rule := range rules {
-		if _, err := NewRuleSet([]*Rule{rule}); err != nil {
+		rs, err := NewRuleSet([]*Rule{rule})
+		if err != nil {
 			t.Errorf("rule %s is refused: %v; a not's existential is local to its body wherever the not stands", rule.Name, err)
+			continue
+		}
+		// The accepted set defines the rule's predicate, of arity one, by the
+		// one rule given.
+		if got := rs.Predicates(); len(got) != 1 || got[0] != rule.Name {
+			t.Errorf("rule %s: the set defines %v, want only %s", rule.Name, got, rule.Name)
+		}
+		if arity, ok := rs.Arity(rule.Name); !ok || arity != 1 {
+			t.Errorf("rule %s: arity %d (defined: %v), want 1", rule.Name, arity, ok)
+		}
+		if n := len(rs.Rules(rule.Name)); n != 1 {
+			t.Errorf("rule %s: the set holds %d rules for it, want 1", rule.Name, n)
 		}
 	}
 }

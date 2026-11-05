@@ -9,11 +9,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// A constant-only expression (no required symbols, no groups) evaluates once
-// on the executor's ground path rather than through the streaming function
-// iterator. Its result crosses the same boundary into relational flow, so a
-// NaN produced from ±Inf operands is rejected loudly before it can reach
-// joins or comparisons.
+// A constant-only expression (no required symbols, no groups) stands over the
+// unit relation and evaluates as its result is pulled. Its result crosses the
+// boundary into relational flow there, so a NaN produced from ±Inf operands
+// is rejected loudly before it can reach joins or comparisons: the query's
+// failure, read where its result is driven.
 func TestGroundExpressionProducingNaNIsError(t *testing.T) {
 	r := datalog.NewSymbol("?r")
 	q := &query.Query{
@@ -32,11 +32,14 @@ func TestGroundExpressionProducingNaNIsError(t *testing.T) {
 		},
 	}
 
-	matcher := NewMemoryPatternMatcher(nil)
+	var matcher PatternMatcher
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			_, err := exec.Execute(q)
+			result, err := exec.Execute(q)
+			if err == nil {
+				_, err = CollectTuples(result, nil)
+			}
 			if err == nil {
 				t.Fatal("expected an error for a ground expression producing NaN, got none")
 			}

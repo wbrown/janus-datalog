@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
@@ -15,48 +17,48 @@ import (
 )
 
 // TestBadgerRelationInputProfile profiles a relation-input query over badger
-// to find bottlenecks.
+// to find bottlenecks, and checks the answer it profiles: each input tuple
+// matches one entity, so the grouped max answers that entity's age.
 //
-// It is an instrument rather than a correctness test: it writes a CPU profile
-// and a duration, and the only thing it asserts is that execution did not
-// error. The backend is fixed so successive profiles are comparable, which is
-// also why it stays off the backend axis — three stores would produce three
-// runs overwriting one profile. TestRelationInputOverStorage carries the
-// correctness claim across every backend.
+// It writes a CPU profile and a duration. The backend is fixed so successive
+// profiles are comparable, which is also why it stays off the backend axis —
+// three stores would produce three runs overwriting one profile.
+// TestRelationInputOverStorage carries the correctness claim across every
+// backend.
 func TestBadgerRelationInputProfile(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping profiling test in short mode")
 	}
 
-	// Create temporary directory
-	dir, err := os.MkdirTemp("", "badger-profile-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
 	// Create database with test data
-	db, err := storage.NewDatabase(dir)
+	db, err := storage.NewDatabase(t.TempDir())
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close the database: %v", err)
+		}
+	}()
 
-	// Create 500 entries
+	// Create 500 entries, one entity per (name, year, month) with its age.
 	names := []string{
 		"Alice", "Bob", "Charlie", "Dave", "Eve", "Frank", "Grace", "Henry", "Iris", "Jack",
 	}
 
 	tx := db.NewTransaction()
+	var want [][]interface{}
 	idCounter := 0
 	for _, name := range names {
 		for year := 2020; year <= 2029; year++ {
 			for month := 1; month <= 5; month++ {
 				entityID := datalog.NewIdentity(fmt.Sprintf("person:%d", idCounter))
-				tx.Add(entityID, datalog.NewKeyword(":name"), name)
-				tx.Add(entityID, datalog.NewKeyword(":year"), int64(year))
-				tx.Add(entityID, datalog.NewKeyword(":month"), int64(month))
-				tx.Add(entityID, datalog.NewKeyword(":age"), int64(25+idCounter%15))
+				age := int64(25 + idCounter%15)
+				require.NoError(t, tx.Add(entityID, datalog.NewKeyword(":name"), name))
+				require.NoError(t, tx.Add(entityID, datalog.NewKeyword(":year"), int64(year)))
+				require.NoError(t, tx.Add(entityID, datalog.NewKeyword(":month"), int64(month)))
+				require.NoError(t, tx.Add(entityID, datalog.NewKeyword(":age"), age))
+				want = append(want, []interface{}{name, int64(year), int64(month), age})
 				idCounter++
 			}
 		}
@@ -99,7 +101,11 @@ func TestBadgerRelationInputProfile(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer f.Close()
+			defer func() {
+				if err := f.Close(); err != nil {
+					t.Errorf("close the profile: %v", err)
+				}
+			}()
 
 			if err := pprof.StartCPUProfile(f); err != nil {
 				t.Fatal(err)
@@ -109,16 +115,17 @@ func TestBadgerRelationInputProfile(t *testing.T) {
 			exec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
 			start := time.Now()
-			result, err := exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+			tuples, err := executor.CollectTuples(exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel}))
 			duration := time.Since(start)
 
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
 
-			t.Logf("Relation input over badger: %v (%d results)", duration, result.Size())
+			t.Logf("Relation input over badger: %v (%d results)", duration, len(tuples))
 			t.Logf("CPU profile written to badger_relation_input.prof")
 			t.Logf("Analyze with: go tool pprof badger_relation_input.prof")
+			assert.ElementsMatch(t, want, tuples, "each input tuple answers its one entity's age")
 		})
 	}
 }

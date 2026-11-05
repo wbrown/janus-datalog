@@ -176,7 +176,7 @@ func TestGetElsePassRecords(t *testing.T) {
 		Collect: true,
 		Handler: func(e annotations.Event) { events = append(events, e) },
 	}
-	_, err = NewOptimizer(GetElseScanRewritePass(sink)).Optimize(root)
+	_, err = NewOptimizer(GetElseScanRewritePass(sink, everySourceAnswers)).Optimize(root)
 	require.NoError(t, err)
 
 	records := sink.Records()
@@ -204,7 +204,7 @@ func TestGetElsePassRecords(t *testing.T) {
 	require.NoError(t, err)
 
 	sink = &RewriteSink{Collect: true}
-	_, err = NewOptimizer(GetElseScanRewritePass(sink)).Optimize(root)
+	_, err = NewOptimizer(GetElseScanRewritePass(sink, everySourceAnswers)).Optimize(root)
 	require.NoError(t, err)
 
 	records = sink.Records()
@@ -225,7 +225,7 @@ func TestGetElsePassRecords(t *testing.T) {
 	require.NoError(t, err)
 
 	sink = &RewriteSink{Collect: true}
-	_, err = NewOptimizer(GetElseScanRewritePass(sink)).Optimize(root)
+	_, err = NewOptimizer(GetElseScanRewritePass(sink, everySourceAnswers)).Optimize(root)
 	require.NoError(t, err)
 
 	records = sink.Records()

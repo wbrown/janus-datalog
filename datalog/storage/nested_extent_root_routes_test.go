@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // Each caller route over the nested-scope rule set plans: the free query,
@@ -22,12 +23,16 @@ func TestRules_TheNestedExtentRootRuleSetPlansOnEveryRoute(t *testing.T) {
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 		for _, r := range rules {
 			rs := mustRuleSet(t, "["+pairs+" "+r.rule+"]")
-			_, err := d.Query(`[:find ?x ?q :in $ % :where (p ?x ?q)]`, rs)
+			free, err := executor.CollectTuples(d.Query(`[:find ?x ?q :in $ % :where (p ?x ?q)]`, rs))
 			assert.NoError(t, err, "%s %s: free query", mode.name, r.name)
-			_, err = d.Query(`[:find ?q :in $ % ?x :where (p ?x ?q)]`, rs, x1)
+			assert.Empty(t, free, "%s %s: the store holds no facts, so the free query answers no pairs", mode.name, r.name)
+			bound, err := executor.CollectTuples(d.Query(`[:find ?q :in $ % ?x :where (p ?x ?q)]`, rs, x1))
 			assert.NoError(t, err, "%s %s: bound query", mode.name, r.name)
-			_, err = d.Explain(`[:find ?q :in $ % ?x :where (p ?x ?q)]`, rs, x1)
-			assert.NoError(t, err, "%s %s: explain", mode.name, r.name)
+			assert.Empty(t, bound, "%s %s: the store holds no facts, so the bound query answers nothing", mode.name, r.name)
+			plan, err := d.Explain(`[:find ?q :in $ % ?x :where (p ?x ?q)]`, rs, x1)
+			if assert.NoError(t, err, "%s %s: explain", mode.name, r.name) && assert.NotNil(t, plan) {
+				assert.NoError(t, plan.Validate(), "%s %s: the explained plan's contracts", mode.name, r.name)
+			}
 		}
 	}
 }

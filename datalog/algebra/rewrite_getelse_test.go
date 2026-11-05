@@ -5,8 +5,58 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
+
+// everySourceAnswers answers true for every source and attribute: the answer
+// under which the get-else scan rewrite applies wherever its other
+// preconditions hold, which the tests of the rewrite's shape assume.
+func everySourceAnswers(query.Symbol, datalog.Keyword) bool { return true }
+
+// TestGetElseScanRewrite_AsksTheSourceTheGetElseReads pins the gate: the pass
+// asks the answer it is given about the source the get-else reads and its
+// attribute, once. Answered true, it rewrites the get-else. Answered false,
+// it leaves the Map and records the decline with its reason.
+func TestGetElseScanRewrite_AsksTheSourceTheGetElseReads(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?title
+	  :in $ $src
+	  :where
+	  [?e :entity/type :entity.type/project]
+	  [(get-else $src ?e :project/title "") ?title]]`)
+	require.NoError(t, err)
+
+	type question struct {
+		source query.Symbol
+		attr   datalog.Keyword
+	}
+	for _, answer := range []bool{true, false} {
+		root, err := Compile(q, nil)
+		require.NoError(t, err)
+		var asked []question
+		answers := func(source query.Symbol, attr datalog.Keyword) bool {
+			asked = append(asked, question{source, attr})
+			return answer
+		}
+		sink := &RewriteSink{Collect: true}
+		optimized, err := NewOptimizer(GetElseScanRewritePass(sink, answers)).Optimize(root)
+		require.NoError(t, err)
+
+		require.Equal(t, []question{{datalog.NewSymbol("$src"), datalog.NewKeyword(":project/title")}}, asked,
+			"the pass asks about the source the get-else reads and its attribute")
+		records := sink.Records()
+		require.Len(t, records, 1)
+		if answer {
+			assert.Equal(t, RewriteApplied, records[0].Action)
+			assert.Equal(t, 0, countNodes(optimized, RuleMap), "the get-else is rewritten")
+			continue
+		}
+		assert.Equal(t, RewriteDeclined, records[0].Action)
+		assert.Equal(t, "the source's match does not answer its lookup's one value per entity", records[0].Reason)
+		assert.Equal(t, 1, countNodes(optimized, RuleMap), "the get-else stays a Map")
+	}
+}
 
 // TestGetElseScanRewrite_Simple verifies that a single get-else expression
 // is rewritten from Map(get-else) to LeftOuterJoin + Scan.
@@ -26,7 +76,7 @@ func TestGetElseScanRewrite_Simple(t *testing.T) {
 	require.Equal(t, 1, mapsBefore, "should have 1 Map node (get-else)")
 
 	// Apply get-else rewrite
-	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil, everySourceAnswers))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("After:\n%s", optimized.String())
@@ -67,7 +117,7 @@ func TestGetElseScanRewrite_Multiple(t *testing.T) {
 	mapsBefore := countNodes(root, RuleMap)
 	require.Equal(t, 4, mapsBefore, "should have 4 Map nodes (get-else)")
 
-	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil, everySourceAnswers))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("After:\n%s", optimized.String())
@@ -99,7 +149,7 @@ func TestGetElseScanRewrite_NonGetElsePreserved(t *testing.T) {
 	mapsBefore := countNodes(root, RuleMap)
 	require.Equal(t, 1, mapsBefore)
 
-	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil, everySourceAnswers))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 
@@ -124,7 +174,7 @@ func TestGetElseScanRewrite_VectorDefaultRewritten(t *testing.T) {
 	mapsBefore := countNodes(root, RuleMap)
 	require.Equal(t, 1, mapsBefore)
 
-	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil, everySourceAnswers))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 
@@ -134,17 +184,17 @@ func TestGetElseScanRewrite_VectorDefaultRewritten(t *testing.T) {
 	joinsAfter := countNodes(optimized, RuleJoin)
 	assert.Greater(t, joinsAfter, 0, "should have LeftOuterJoin from get-else rewrite")
 
-	// Verify the LeftOuterJoin carries the attribute for typed defaults
-	var foundAttr bool
+	// Verify the LeftOuterJoin carries the get-else for typed defaults
+	var foundGetElse bool
 	walkNodes(optimized, func(n *Node) {
 		if n.Op == RuleJoin {
 			j := n.Data.(*Join)
-			if j.Kind == LeftOuterJoin && j.DefaultAttr != nil {
-				foundAttr = true
+			if j.Kind == LeftOuterJoin && j.DefaultGetElse != nil {
+				foundGetElse = true
 			}
 		}
 	})
-	assert.True(t, foundAttr, "LeftOuterJoin should carry DefaultAttr for typed defaults")
+	assert.True(t, foundGetElse, "LeftOuterJoin should carry DefaultGetElse for typed defaults")
 
 	// Decompile and verify the default branch uses get-else (not ground)
 	clauses, err := Decompile(optimized)
@@ -172,7 +222,7 @@ func TestGetElseScanRewrite_InputParamEntitySkipped(t *testing.T) {
 	mapsBefore := countNodes(root, RuleMap)
 	require.Equal(t, 1, mapsBefore)
 
-	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil, everySourceAnswers))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 
@@ -214,7 +264,7 @@ func TestGetElseScanRewrite_RequiredRunEntitySkipped(t *testing.T) {
 			root, err := Compile(q, nil)
 			require.NoError(t, err)
 			require.Equal(t, 1, countNodes(root, RuleMap))
-			optimized, err := NewOptimizer(GetElseScanRewritePass(nil)).Optimize(root)
+			optimized, err := NewOptimizer(GetElseScanRewritePass(nil, everySourceAnswers)).Optimize(root)
 			require.NoError(t, err)
 			assert.Equal(t, c.mapsAfter, countNodes(optimized, RuleMap))
 		})
@@ -241,7 +291,7 @@ func TestGetElseScanRewrite_BoundBindingSkipped(t *testing.T) {
 			root, err := Compile(q, nil)
 			require.NoError(t, err)
 			require.Equal(t, 1, countNodes(root, RuleMap))
-			optimized, err := NewOptimizer(GetElseScanRewritePass(nil)).Optimize(root)
+			optimized, err := NewOptimizer(GetElseScanRewritePass(nil, everySourceAnswers)).Optimize(root)
 			require.NoError(t, err)
 			assert.Equal(t, 1, countNodes(optimized, RuleMap))
 		})

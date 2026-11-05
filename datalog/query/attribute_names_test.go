@@ -70,7 +70,7 @@ func TestDefaultSourceAttributes(t *testing.T) {
 			&Expression{Function: GroundFunction{Value: int64(1)}, Binding: datalog.NewSymbol("?g")},
 			&Comparison{Op: datalog.SymLT, Left: ConstantTerm{Value: int64(1)}, Right: ConstantTerm{Value: int64(2)}},
 			&Expression{
-				Function: &GetElseFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/getelse"), Default: "none"},
+				Function: &GetElseFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/getelse"), Default: ConstantTerm{Value: "none"}},
 				Binding:  datalog.NewSymbol("?ge"),
 			},
 			&Expression{
@@ -171,6 +171,49 @@ func TestSourceAttributesOfASourceNoPatternNames(t *testing.T) {
 	}
 }
 
+// Sources returns every source the query names an attribute on, in order of
+// first appearance and each once: a data pattern's source, $ for a pattern
+// naming none, the source a database function reads, and a subquery body's
+// source under the source its call passes. A source the query names no
+// attribute on, a pattern's attribute being a variable, is not among them.
+func TestRostersSourcesAreTheSourcesTheQueryNamesAnAttributeOn(t *testing.T) {
+	entity := Variable{Name: datalog.NewSymbol("?e")}
+	cache, build := datalog.NewSymbol("$cache"), datalog.NewSymbol("$build")
+	inner, passed := datalog.NewSymbol("$inner"), datalog.NewSymbol("$passed")
+	on := func(source Symbol, attr string) *DataPattern {
+		return &DataPattern{Source: source, Elements: []PatternElement{entity, Constant{Value: datalog.NewKeyword(attr)}, Blank{}}}
+	}
+	q := &Query{Where: []Clause{
+		on(cache, ":t/cached"),
+		walkPattern("default"),
+		&Expression{
+			Function: &GetElseFunction{Source: build, Entity: VariableTerm{Symbol: datalog.NewSymbol("?e")}, Attr: datalog.NewKeyword(":t/built"), Default: ConstantTerm{Value: "none"}},
+			Binding:  datalog.NewSymbol("?b"),
+		},
+		on(cache, ":t/again"),
+		&SubqueryPattern{
+			Query: &Query{
+				Find:  []FindElement{FindVariable{Symbol: datalog.NewSymbol("?x")}},
+				In:    []InputSpec{DatabaseInput{Name: inner}},
+				Where: []Clause{on(inner, ":t/inner")},
+			},
+			Inputs:  []PatternElement{Constant{Value: passed}},
+			Binding: ScalarBinding{Variable: datalog.NewSymbol("?s")},
+		},
+		&DataPattern{Source: datalog.NewSymbol("$unnamed"), Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?a")}, Blank{}}},
+	}}
+	want := []Symbol{cache, datalog.SymDollar, build, passed}
+	got := CollectRosters(q).Sources()
+	if len(got) != len(want) {
+		t.Fatalf("sources %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("source %d is %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
 // TestSourceAttributes pins the roster SourceAttributes collects for a named
 // source: every attribute a data pattern on that source names, in order of
 // first appearance and each once, through NOT/NOT-JOIN bodies,
@@ -208,7 +251,7 @@ func TestSourceAttributes(t *testing.T) {
 				Binding: ScalarBinding{Variable: datalog.NewSymbol("?s")},
 			},
 			&Expression{
-				Function: &GetElseFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/getelse"), Default: "none"},
+				Function: &GetElseFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/getelse"), Default: ConstantTerm{Value: "none"}},
 				Binding:  datalog.NewSymbol("?ge"),
 			},
 		},

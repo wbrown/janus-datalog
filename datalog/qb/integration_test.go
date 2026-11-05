@@ -3,6 +3,7 @@ package qb_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
@@ -1518,38 +1519,44 @@ func setupTestDBWithOptionalAttrs(t *testing.T, backend storage.Backend, popts *
 		t.Fatalf("Failed to create database: %v", err)
 	}
 
-	// Insert test data with some optional attributes
-	tx := db.NewTransaction()
-
-	// Alice: has nickname and email
-	alice := datalog.NewIdentity("alice")
-	tx.Add(alice, PersonName.Keyword(), "Alice")
-	tx.Add(alice, PersonNickname.Keyword(), "Ali")
-	tx.Add(alice, PersonEmail.Keyword(), "alice@example.com")
-
-	// Bob: has email but no nickname
-	bob := datalog.NewIdentity("bob")
-	tx.Add(bob, PersonName.Keyword(), "Bob")
-	tx.Add(bob, PersonEmail.Keyword(), "bob@example.com")
-
-	// Charlie: has nickname but no email
-	charlie := datalog.NewIdentity("charlie")
-	tx.Add(charlie, PersonName.Keyword(), "Charlie")
-	tx.Add(charlie, PersonNickname.Keyword(), "Chuck")
-
-	// Diana: has neither nickname nor email
-	diana := datalog.NewIdentity("diana")
-	tx.Add(diana, PersonName.Keyword(), "Diana")
-
-	if _, err := tx.Commit(); err != nil {
-		db.Close()
-		store.Close()
-		t.Fatalf("Failed to commit transaction: %v", err)
+	cleanup := func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close the database: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Errorf("close the store: %v", err)
+		}
 	}
 
-	cleanup := func() {
-		db.Close()
-		store.Close()
+	// Insert test data with some optional attributes
+	tx := db.NewTransaction()
+	alice := datalog.NewIdentity("alice")
+	bob := datalog.NewIdentity("bob")
+	charlie := datalog.NewIdentity("charlie")
+	diana := datalog.NewIdentity("diana")
+	for _, fact := range []struct {
+		e datalog.Identity
+		a qb.Attr
+		v string
+	}{
+		// Alice: has nickname and email
+		{alice, PersonName, "Alice"}, {alice, PersonNickname, "Ali"}, {alice, PersonEmail, "alice@example.com"},
+		// Bob: has email but no nickname
+		{bob, PersonName, "Bob"}, {bob, PersonEmail, "bob@example.com"},
+		// Charlie: has nickname but no email
+		{charlie, PersonName, "Charlie"}, {charlie, PersonNickname, "Chuck"},
+		// Diana: has neither nickname nor email
+		{diana, PersonName, "Diana"},
+	} {
+		if err := tx.Add(fact.e, fact.a.Keyword(), fact.v); err != nil {
+			cleanup()
+			t.Fatalf("Failed to add %s: %v", fact.a.Keyword(), err)
+		}
+	}
+
+	if _, err := tx.Commit(); err != nil {
+		cleanup()
+		t.Fatalf("Failed to commit transaction: %v", err)
 	}
 
 	return db, cleanup
@@ -1825,14 +1832,15 @@ func TestIntegration_GetSome(t *testing.T) {
 
 			e := qb.NewVar("e")
 			name := qb.NewVar("name")
+			found := qb.NewVar("found")
 			displayName := qb.NewVar("displayName")
 
 			// Get nickname, fallback to name, fallback to email
 			q := qb.Query().
-				Find(name, displayName).
+				Find(name, found, displayName).
 				Where(
 					qb.Pat(e, PersonName, name),
-					qb.GetSome(e, PersonNickname, PersonName, PersonEmail).As(displayName),
+					qb.GetSome(e, PersonNickname, PersonName, PersonEmail).As(found, displayName),
 				).
 				OrderBy(qb.Asc(name)).
 				MustBuild()
@@ -1842,14 +1850,14 @@ func TestIntegration_GetSome(t *testing.T) {
 				t.Fatalf("Query failed: %v", err)
 			}
 
-			if len(results) != 4 {
-				t.Errorf("Expected 4 results, got %d", len(results))
-			}
-
-			// Note: GetSome returns a GetSomeResult struct with Attr and Value
-			// The executor should handle this appropriately
-			// For now, let's verify the query executes successfully
-			t.Logf("GetSome results: %v", results)
+			// get-some binds the first listed attribute the entity carries and
+			// its value: the nickname where there is one, else the name.
+			assert.Equal(t, [][]interface{}{
+				{"Alice", PersonNickname.Keyword(), "Ali"},
+				{"Bob", PersonName.Keyword(), "Bob"},
+				{"Charlie", PersonNickname.Keyword(), "Chuck"},
+				{"Diana", PersonName.Keyword(), "Diana"},
+			}, results)
 		})
 	}
 }

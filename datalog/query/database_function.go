@@ -25,31 +25,70 @@ type TypedDefaulter interface {
 
 // DatabaseFunction is a function that requires database access to evaluate.
 // Unlike pure Functions, these need read-only access to the database snapshot.
-// The database is passed explicitly via the `$` parameter in the syntax.
+// The source the function reads is its first argument in the syntax: $ or a
+// named source, as in Datomic's grammar.
 //
 // DatabaseFunctions are still semantically pure - given the same database snapshot,
 // entity, and attributes, they always return the same result.
 type DatabaseFunction interface {
-	Pattern
+	Function
 
-	// RequiredSymbols returns all symbols needed to evaluate this function
-	RequiredSymbols() []Symbol
+	// ReadsFrom returns the source the function reads: the source its first
+	// argument names, and $ for a function built with no source.
+	ReadsFrom() Symbol
+
+	// OnSource returns the function reading source, its other parts kept.
+	OnSource(source Symbol) DatabaseFunction
 
 	// EvalWithLookup evaluates the function with bindings and database access
 	EvalWithLookup(bindings map[Symbol]interface{}, lookup EntityLookup) (interface{}, error)
 }
 
-// GetElseFunction implements the Datomic get-else function.
-// Syntax: [(get-else $ ?entity :attribute default-value) ?result]
-// Returns the attribute value if it exists, or the default value if missing.
-type GetElseFunction struct {
-	Entity  Term            // The entity to look up (usually a variable like ?e)
-	Attr    datalog.Keyword // The attribute to retrieve
-	Default interface{}     // Default value if attribute is missing
+// readsFrom is the source a database function's Source field names, nil
+// standing for $ as it does on a data pattern.
+func readsFrom(source Symbol) Symbol {
+	if source == nil {
+		return datalog.SymDollar
+	}
+	return source
 }
 
+// OnSource returns the get-else reading source, its other parts kept.
+func (g *GetElseFunction) OnSource(source Symbol) DatabaseFunction {
+	return &GetElseFunction{Source: source, Entity: g.Entity, Attr: g.Attr, Default: g.Default}
+}
+
+// OnSource returns the missing? reading source, its other parts kept.
+func (m *MissingFunction) OnSource(source Symbol) DatabaseFunction {
+	return &MissingFunction{Source: source, Entity: m.Entity, Attr: m.Attr}
+}
+
+// OnSource returns the get-some reading source, its other parts kept.
+func (gs *GetSomeFunction) OnSource(source Symbol) DatabaseFunction {
+	return &GetSomeFunction{Source: source, Entity: gs.Entity, Attrs: gs.Attrs}
+}
+
+// GetElseFunction implements the Datomic get-else function.
+// Syntax: [(get-else $src ?entity :attribute default) ?result]
+// Returns the attribute value the source holds, or the default if missing.
+// The default is a function argument, a variable or a constant, read from
+// each tuple's bindings as the entity is.
+type GetElseFunction struct {
+	Source  Symbol          // The source the function reads; nil stands for $
+	Entity  Term            // The entity to look up (usually a variable like ?e)
+	Attr    datalog.Keyword // The attribute to retrieve
+	Default Term            // The value where the entity lacks the attribute
+}
+
+// RequiredSymbols returns the entity's and the default's variables.
 func (g *GetElseFunction) RequiredSymbols() []Symbol {
-	return g.Entity.RequiredSymbols()
+	symbols := append([]Symbol{}, g.Entity.RequiredSymbols()...)
+	return append(symbols, g.Default.RequiredSymbols()...)
+}
+
+// ReadsFrom returns the source the get-else reads.
+func (g *GetElseFunction) ReadsFrom() Symbol {
+	return readsFrom(g.Source)
 }
 
 // Eval is required by the Function interface but should not be called directly.
@@ -81,28 +120,38 @@ func (g *GetElseFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup
 		return value, nil
 	}
 
-	// Return default value, typed if possible
-	if td, ok := lookup.(TypedDefaulter); ok {
-		return td.TypeDefault(g.Attr, g.Default), nil
+	// Return the default the tuple's bindings give, typed if possible
+	defaultVal, ok := g.Default.Resolve(bindings)
+	if !ok {
+		return nil, fmt.Errorf("get-else: cannot resolve default %s", g.Default)
 	}
-	return g.Default, nil
+	if td, ok := lookup.(TypedDefaulter); ok {
+		return td.TypeDefault(g.Attr, defaultVal), nil
+	}
+	return defaultVal, nil
 }
 
 func (g *GetElseFunction) String() string {
-	return fmt.Sprintf("(get-else $ %s %s %s)", g.Entity, g.Attr, FormatValueEDN(g.Default))
+	return fmt.Sprintf("(get-else %s %s %s %s)", g.ReadsFrom(), g.Entity, g.Attr, g.Default)
 }
 
 // MissingFunction implements the Datomic missing? function.
-// Syntax: [(missing? $ ?entity :attribute)]
-// Returns true if the entity does NOT have the specified attribute.
+// Syntax: [(missing? $src ?entity :attribute)]
+// Returns true if the entity does NOT have the specified attribute in the source.
 // This is a predicate (filter), not a binding expression.
 type MissingFunction struct {
+	Source Symbol          // The source the function reads; nil stands for $
 	Entity Term            // The entity to check
 	Attr   datalog.Keyword // The attribute to check for
 }
 
 func (m *MissingFunction) RequiredSymbols() []Symbol {
 	return m.Entity.RequiredSymbols()
+}
+
+// ReadsFrom returns the source the missing? reads.
+func (m *MissingFunction) ReadsFrom() Symbol {
+	return readsFrom(m.Source)
 }
 
 // Eval is required by the Function interface but should not be called directly.
@@ -134,14 +183,15 @@ func (m *MissingFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup
 }
 
 func (m *MissingFunction) String() string {
-	return fmt.Sprintf("(missing? $ %s %s)", m.Entity, m.Attr)
+	return fmt.Sprintf("(missing? %s %s %s)", m.ReadsFrom(), m.Entity, m.Attr)
 }
 
 // GetSomeFunction implements the Datomic get-some function.
-// Syntax: [(get-some $ ?entity :attr1 :attr2 :attr3) [?found-attr ?value]]
+// Syntax: [(get-some $src ?entity :attr1 :attr2 :attr3) [?found-attr ?value]]
 // Returns the first attribute that exists along with its value.
 // Useful for fallback chains like "use nickname, else name, else email".
 type GetSomeFunction struct {
+	Source Symbol            // The source the function reads; nil stands for $
 	Entity Term              // The entity to look up
 	Attrs  []datalog.Keyword // Attributes to try, in order
 }
@@ -157,6 +207,11 @@ type GetSomeResult struct {
 
 func (gs *GetSomeFunction) RequiredSymbols() []Symbol {
 	return gs.Entity.RequiredSymbols()
+}
+
+// ReadsFrom returns the source the get-some reads.
+func (gs *GetSomeFunction) ReadsFrom() Symbol {
+	return readsFrom(gs.Source)
 }
 
 // Eval is required by the Function interface but should not be called directly.
@@ -203,7 +258,7 @@ func (gs *GetSomeFunction) String() string {
 		}
 		attrs += attr.String()
 	}
-	return fmt.Sprintf("(get-some $ %s %s)", gs.Entity, attrs)
+	return fmt.Sprintf("(get-some %s %s %s)", gs.ReadsFrom(), gs.Entity, attrs)
 }
 
 // toIdentity converts interface{} to Identity

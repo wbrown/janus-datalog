@@ -1,6 +1,6 @@
 # A source on a database function or a rule invocation is a Datomic form the language refuses
 
-**Status**: Open.
+**Status**: Open for the invocation's prefix. The database function's form is fixed, as *The fix* states for it. `TestDatabaseFunction_ReadsTheSourceItNames` and `TestDatabaseFunction_InASubqueryReadsTheSourceTheCallPasses` (storage), `TestDatabaseFunction_ParsesTheSourceItNames` (parser) and `TestDatabaseFunctionFrom_BuildsTheQueryTheEDNParsesTo` (qb) pin it.
 
 Each shape is refused loudly, so no answer is wrong. The defect is a gap
 against goal 12 of `docs/proposals/NESTED_SCOPES_AS_QUERIES.md`. Under that

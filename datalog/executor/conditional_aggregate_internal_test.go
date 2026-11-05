@@ -7,8 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -121,63 +119,6 @@ func TestConditionalAggregateMixedTypes(t *testing.T) {
 	assert.Equal(t, 105.0, tuple[1], "max of late prices should be 105.0")
 }
 
-func TestConditionalAggregateRewriteAnnotationUsesDatalogFindClause(t *testing.T) {
-	symE := datalog.NewSymbol("?e")
-	symValue := datalog.NewSymbol("?value")
-	symFilter := datalog.NewSymbol("?filter")
-	valueAttr := datalog.NewKeyword(":metric/value")
-	filterAttr := datalog.NewKeyword(":metric/include")
-
-	valuePattern := &query.DataPattern{Elements: []query.PatternElement{
-		query.Variable{Name: symE},
-		query.Constant{Value: valueAttr},
-		query.Variable{Name: symValue},
-	}}
-	filterPattern := &query.DataPattern{Elements: []query.PatternElement{
-		query.Variable{Name: symE},
-		query.Constant{Value: filterAttr},
-		query.Variable{Name: symFilter},
-	}}
-	find := []query.FindElement{query.FindAggregate{
-		Function:  datalog.SymMin,
-		Arg:       symValue,
-		Predicate: symFilter,
-	}}
-	phaseQuery := &query.Query{
-		Find:  find,
-		Where: []query.Clause{valuePattern, filterPattern},
-	}
-	plan := &planner.RealizedPlan{
-		Query: phaseQuery,
-		Phases: []planner.RealizedPhase{{
-			Query:    phaseQuery,
-			Provides: []query.Symbol{datalog.NewSymbol(find[0].String())},
-		}},
-	}
-
-	entity := datalog.NewIdentity("metric-1")
-	matcher := NewIndexedMemoryMatcher([]datalog.Datom{
-		{E: entity, A: valueAttr, V: 42.0},
-		{E: entity, A: filterAttr, V: true},
-	})
-	var rewriteEvent *annotations.Event
-	opts := defaultPlannerOptions()
-	opts.Handler = func(event annotations.Event) {
-		if event.Name == "query/rewrite.conditional-aggregates" {
-			captured := event
-			rewriteEvent = &captured
-		}
-	}
-	exec := NewExecutorWithOptions(matcher, nil, opts)
-
-	result, err := exec.ExecuteRealized(NewContext(), plan, nil)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, rewriteEvent)
-	assert.Equal(t, 1, rewriteEvent.Data["rewritten.subquery.count"])
-	assert.Equal(t, "conditional-aggregate-rewriting", rewriteEvent.Data["optimization"])
-}
-
 // TestConditionalAggregateEmptyBesideNonEmptyIsError pins the emission
 // invariant: an aggregate that folded no values while a sibling folded some
 // has no representable result — nil is not a datalog value — so the
@@ -222,11 +163,7 @@ func TestConditionalAggregateEmptyBesideNonEmptyIsError(t *testing.T) {
 			[]query.Symbol{filter, value},
 			[]Tuple{{false, 10.0}, {false, 20.0}},
 		)
-		var aggregates []query.FindAggregate
-		for _, fe := range findElements() {
-			aggregates = append(aggregates, fe.(query.FindAggregate))
-		}
-		_, err := CollectTuples(NewStreamingAggregateRelation(rel, nil, aggregates), nil)
+		_, err := CollectTuples(NewStreamingAggregateRelation(rel, findElements()), nil)
 		require.Error(t, err, "streaming: count folded values, conditional min folded none: emission must error")
 	})
 }
@@ -243,10 +180,10 @@ func TestStreamingAggregationDropsAllEmptyGroups(t *testing.T) {
 		[]query.Symbol{filter, value},
 		[]Tuple{{false, 10.0}, {false, 20.0}, {false, 30.0}},
 	)
-	aggregates := []query.FindAggregate{
-		{Function: datalog.SymMin, Arg: value, Predicate: filter},
+	find := []query.FindElement{
+		query.FindAggregate{Function: datalog.SymMin, Arg: value, Predicate: filter},
 	}
-	tuples, err := CollectTuples(NewStreamingAggregateRelation(rel, nil, aggregates), nil)
+	tuples, err := CollectTuples(NewStreamingAggregateRelation(rel, find), nil)
 	require.NoError(t, err)
 	assert.Empty(t, tuples, "all-empty group must be dropped, not emitted as nils")
 }

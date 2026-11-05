@@ -28,7 +28,7 @@ func TestOrDefaultJoinReplacesConsumedOuterWithoutRedundantJoin(t *testing.T) {
 	}
 	ctx := NewContext()
 	options := ExecutorOptions{Handler: handler}
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
+	exec := newQueryExecutor(nil, nil, options)
 	outer := NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity, name},
 		[]Tuple{{int64(1), "one"}, {int64(2), "two"}},
@@ -89,7 +89,7 @@ func TestOrDefaultReplacesEveryConsumedOuterGroup(t *testing.T) {
 	}
 	ctx := NewContext()
 	options := ExecutorOptions{Handler: handler}
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
+	exec := newQueryExecutor(nil, nil, options)
 	left := NewMaterializedRelationWithOptions(
 		[]query.Symbol{x},
 		[]Tuple{{int64(2)}},
@@ -146,7 +146,7 @@ func TestOrOuterReplacementPreservesDeferredOuterError(t *testing.T) {
 		[]query.Symbol{entity},
 		&failingIterator{inner: base.Iterator(), failAfter: 1},
 	)
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
+	exec := newQueryExecutor(nil, nil, options)
 	// Two branches to satisfy the declared-interface contract (the parser
 	// never accepted fewer); branch 1 always matches, so branch 2 is inert
 	// and the test still exercises deferred-error propagation through the
@@ -230,7 +230,7 @@ func TestReplaceConsumedGroupsStandsInForTheConsumedGroups(t *testing.T) {
 			replacements = append(replacements, event)
 		}
 	}}
-	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
+	exec := newQueryExecutor(nil, nil, options)
 	first := NewMaterializedRelationWithOptions([]query.Symbol{entity}, []Tuple{{int64(1)}}, options)
 	other := NewMaterializedRelationWithOptions([]query.Symbol{unrelated}, []Tuple{{"kept"}}, options)
 	last := NewMaterializedRelationWithOptions([]query.Symbol{value}, []Tuple{{int64(2)}}, options)

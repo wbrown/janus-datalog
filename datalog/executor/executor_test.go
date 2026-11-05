@@ -1,9 +1,10 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -23,11 +24,11 @@ func TestExecutorBasicQuery(t *testing.T) {
 		{E: bob, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find all names
 			q := &query.Query{
@@ -92,11 +93,11 @@ func TestExecutorJoinQuery(t *testing.T) {
 		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find friends of friends
 			// [?p1 :user/friend ?p2]
@@ -177,11 +178,11 @@ func TestExecutorWithFilter(t *testing.T) {
 		{E: charlie, A: ageAttr, V: int64(35), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find people younger than 30
 			q := &query.Query{
@@ -256,11 +257,11 @@ func TestExecutorMultipleFilters(t *testing.T) {
 		{E: david, A: salaryAttr, V: int64(55000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query: Find people aged 25-30 with salary > 50000
 			q := &query.Query{
@@ -345,11 +346,11 @@ func TestExecutorEmptyResult(t *testing.T) {
 		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Query for non-existent attribute
 			q := &query.Query{
@@ -367,14 +368,14 @@ func TestExecutorEmptyResult(t *testing.T) {
 				},
 			}
 
-			result, err := executor.Execute(q)
+			tuples, err := CollectTuples(executor.Execute(q))
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
 
 			// Should return empty result
-			if result.Size() != 0 {
-				t.Errorf("expected empty result, got %d tuples", result.Size())
+			if len(tuples) != 0 {
+				t.Errorf("expected empty result, got %d tuples", len(tuples))
 			}
 		})
 	}

@@ -37,6 +37,48 @@ func TestProjectOntoItsOwnSymbolsAnswersTheRelation(t *testing.T) {
 	require.Same(t, tainted, same, "the identity projection of tainted data is the tainted relation")
 }
 
+// A stream's, a lazy sequence's and a product's identity projection is the
+// relation itself; the projection of each onto a permutation of its symbols
+// is another relation holding the same tuples under the new order
+// (docs/proposals/BINDING_MATCH_PROOF.md, T1).
+func TestProjectOntoItsOwnSymbolsAnswersTheRelationOverAStream(t *testing.T) {
+	a, b := datalog.NewSymbol("?a"), datalog.NewSymbol("?b")
+	symbols := []query.Symbol{a, b}
+	stream := func() *StreamingRelation {
+		return NewStreamingRelationWithOptions(symbols, &sliceIterator{tuples: []Tuple{{int64(1), "x"}, {int64(2), "x"}}, pos: -1}, ExecutorOptions{})
+	}
+	cases := []struct {
+		name     string
+		relation func() Relation
+	}{
+		{"a stream", func() Relation { return stream() }},
+		{"a lazy sequence", func() Relation { return WrapStreamingAsLazy(stream()) }},
+		{"a product", func() Relation {
+			return NewProductRelation([]Relation{
+				NewStreamingRelationWithOptions([]query.Symbol{a}, &sliceIterator{tuples: []Tuple{{int64(1)}, {int64(2)}}, pos: -1}, ExecutorOptions{}),
+				NewMaterializedRelation([]query.Symbol{b}, []Tuple{{"x"}}),
+			})
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rel := c.relation()
+			same, err := rel.Project(symbols)
+			require.NoError(t, err)
+			require.Same(t, rel, same, "the identity projection is the relation itself")
+
+			rel = c.relation()
+			permuted, err := rel.Project([]query.Symbol{b, a})
+			require.NoError(t, err)
+			require.NotSame(t, rel, permuted, "a permutation is another relation")
+			require.Equal(t, []query.Symbol{b, a}, permuted.Symbols())
+			tuples, err := CollectTuples(permuted, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"x", int64(1)}, {"x", int64(2)}}, tuples)
+		})
+	}
+}
+
 // A selection rejecting nothing over a held relation is the relation itself,
 // with its deferred error; a selection rejecting a tuple is another relation
 // holding the survivors; a selection over a stream is a held relation holding

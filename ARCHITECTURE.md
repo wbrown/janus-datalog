@@ -368,12 +368,14 @@ structurally safe. This keeps the matcher contract Datalog-in/Datalog-out:
 storage may use those requirements to choose an order-satisfying index, while
 custom sources may ignore them and return no ordering guarantee.
 
-**Implementors**: `storage.PatternMatcher` (storage), `SourceRouter` (multi-source routing), `SliceSource[T]` (Go slices), `MemoryPatternMatcher` (in-memory datoms), `IndexedMemoryMatcher` (optimized in-memory)
+**Implementors**: `storage.PatternMatcher` (storage), `storage.Database` (a database passed as a source, memory databases and slice sources included), `SourceRouter` (multi-source routing)
 
 **Extended variants**:
 - `PredicateAwareMatcher` adds `MatchWithConstraints()` — predicate pushdown into storage
 - `EntityLookupMatcher` adds error-returning `LookupAttribute()` — single-value
-  lookups distinguish absence from storage/decode failure
+  lookups distinguish absence from storage/decode failure — and `LookupSource()`,
+  the lookup of the source a `get-else`, `missing?` or `get-some` names; a source
+  the matcher does not hold, or one without the capability, is an error naming it
 
 ### Relation — Tuple Set Abstraction
 

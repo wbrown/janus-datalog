@@ -75,14 +75,26 @@ const definitionWords = `[:db/ident :db/valueType :db/cardinality :db/unique :db
 // installedSchema is what a database runs with, published as one immutable
 // value: the effective schema, the engine's words over the definitions the
 // store carries as facts and the ones its ops infer, the stored definitions
-// themselves, and the set a wildcard pull resolves under them. installSchema
-// and adoptDeclarations publish a new value, and every reader loads the
-// current one in a single atomic operation, so a reader never pairs one
-// schema's declarations with another's definitions.
+// themselves, the schema a written value is checked against, the set a
+// wildcard pull resolves under them, and the set a refusing database admits.
+// installSchema and adoptDeclarations publish a new value, and every reader
+// loads the current one in a single atomic operation, so a reader never pairs
+// one schema's declarations with another's definitions.
 type installedSchema struct {
 	effective schema.SchemaProvider
 	declared  *schema.Schema
+	// admission is the schema a written value is checked against: the
+	// engine's words over the stored definitions. A definition inferred from
+	// the ops is a reading of the datoms, not a declaration, so it admits and
+	// refuses no value.
+	admission schema.SchemaProvider
 	wildcard  map[datalog.Keyword]struct{}
+	// vocabulary is the set a refusing database admits: the attributes the
+	// store declares with the engine's words, which is wildcard where that is
+	// not nil and engineVocabulary where the store declares nothing beyond
+	// them. A definition inferred from the ops is not a declaration and is not
+	// in it.
+	vocabulary map[datalog.Keyword]struct{}
 }
 
 // wildcardAttributes is the set a wildcard pull resolves under the stored
@@ -105,8 +117,8 @@ func wildcardAttributes(declared *schema.Schema) map[datalog.Keyword]struct{} {
 	if set == nil {
 		return nil
 	}
-	for _, definition := range engineSchema.Attributes() {
-		set[definition.Ident] = struct{}{}
+	for word := range engineVocabulary {
+		set[word] = struct{}{}
 	}
 	return set
 }
@@ -324,12 +336,11 @@ var errRefuseUnknownNeedsSchema = errors.New("RefuseUnknownAttributes requires a
 // hold, so the order the given schemas are recorded in is the order their
 // declarations are added in.
 //
-// With a schema given, the effective schema is the stored definitions. A
-// supplied schema is authoritative, so nothing is inferred. With none, the
-// effective schema is the stored definitions over the ones
+// The effective schema is the stored definitions over the ones
 // inferSchemaFromStore reads off the ops of attributes that have datoms and
-// no definition. Inferred definitions stay in memory: they are a reading of
-// the ops, never a declaration.
+// no definition, whether or not a schema is given. A given schema is declared
+// into the store, so it decides the idents it names. Inferred definitions
+// stay in memory: they are a reading of the ops, never a declaration.
 //
 // A rewind passes assertGiven false: nothing is written, and the database
 // runs with the declarations that survive, until SetSchema or an import
@@ -373,17 +384,20 @@ func (d *Database) installLocked(given schema.SchemaProvider, assertGiven bool) 
 		return err
 	}
 
-	effective := schema.Overlay(stored, engineSchema)
-	if given == nil {
-		inferred, err := inferSchemaFromStore(d.store)
-		if err != nil {
-			return fmt.Errorf("inferring schema from store: %w", err)
-		}
-		effective = schema.Overlay(schema.Overlay(inferred, stored), engineSchema)
+	inferred, err := inferSchemaFromStore(d.store)
+	if err != nil {
+		return fmt.Errorf("inferring schema from store: %w", err)
+	}
+	effective := schema.Overlay(schema.Overlay(inferred, stored), engineSchema)
+	admission := schema.Overlay(stored, engineSchema)
+	wildcard := wildcardAttributes(stored)
+	vocabulary := wildcard
+	if vocabulary == nil {
+		vocabulary = engineVocabulary
 	}
 
 	previous := d.installed.Load().effective
-	d.installed.Store(&installedSchema{effective: effective, declared: stored, wildcard: wildcardAttributes(stored)})
+	d.installed.Store(&installedSchema{effective: effective, declared: stored, admission: admission, wildcard: wildcard, vocabulary: vocabulary})
 	d.invalidateChangedDefinitions(previous, effective)
 	return nil
 }
@@ -497,6 +511,17 @@ var engineSchema = func() *schema.Schema {
 		Add(one(schema.DBDoc, schema.TypeString))
 }()
 
+// engineVocabulary is the engine's words as a set: every attribute
+// engineSchema declares. A refusing database on a store declaring nothing
+// beyond them admits these alone.
+var engineVocabulary = func() map[datalog.Keyword]struct{} {
+	words := make(map[datalog.Keyword]struct{})
+	for _, definition := range engineSchema.Attributes() {
+		words[definition.Ident] = struct{}{}
+	}
+	return words
+}()
+
 // engineWordRedeclared reports the first engine word a given schema declares,
 // which is refused where a schema is given, at open and at SetSchema: the
 // engine's words resolve by the engine's declaration alone.
@@ -518,7 +543,7 @@ func (m *PatternMatcher) RefusesUnknownAttributes(_ query.Symbol) bool {
 
 // UnknownAttributes implements executor.AttributeVocabulary. On a database
 // opened with RefuseUnknownAttributes it refuses every attribute of the
-// roster that the schema does not declare and the engine does not reserve,
+// roster that the store does not declare and the engine does not reserve,
 // joined in order. On any other database it refuses nothing, and the roster
 // is not read. The matcher is one source and answers for itself under any
 // name.
@@ -526,7 +551,7 @@ func (m *PatternMatcher) UnknownAttributes(_ query.Symbol, attrs []datalog.Keywo
 	if !m.refuseUnknown {
 		return nil
 	}
-	return unknownAttributes(m.schema, attrs)
+	return unknownAttributes(m.vocabulary, attrs)
 }
 
 // unknownPullAttributes is UnknownAttributes over a pull pattern's roster,
@@ -538,13 +563,14 @@ func (m *PatternMatcher) unknownPullAttributes(p *query.PullPattern) error {
 	return m.UnknownAttributes(datalog.SymDollar, query.PullPatternAttributes(p))
 }
 
-// unknownAttributes refuses every attribute of the roster that s, a running
-// schema with the engine's words declared in it, does not declare, joined in
-// order; nil when every attribute is known.
-func unknownAttributes(s schema.SchemaProvider, attrs []datalog.Keyword) error {
+// unknownAttributes refuses every attribute of the roster that vocabulary,
+// the attributes the store declares with the engine's words, does not hold,
+// joined in order; nil when every attribute is known. An attribute whose
+// definition the ops infer is not a declaration, so it is refused.
+func unknownAttributes(vocabulary map[datalog.Keyword]struct{}, attrs []datalog.Keyword) error {
 	var refusals []error
 	for _, attr := range attrs {
-		if s.GetAttribute(attr) == nil {
+		if _, declared := vocabulary[attr]; !declared {
 			refusals = append(refusals, &schema.UnknownAttributeError{Attribute: attr})
 		}
 	}

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -19,19 +21,20 @@ func TestPredicatePushdownTrace(t *testing.T) {
 			symbolEntity := datalog.NewIdentity("TEST")
 
 			tx := db.NewTransaction()
-			tx.Add(symbolEntity, datalog.NewKeyword(":symbol/ticker"), "TEST")
+			require.NoError(t, tx.Add(symbolEntity, datalog.NewKeyword(":symbol/ticker"), "TEST"))
 			if _, err := tx.Commit(); err != nil {
 				t.Fatalf("Failed to commit symbol: %v", err)
 			}
 
-			loc, _ := time.LoadLocation("America/New_York")
+			loc, err := time.LoadLocation("America/New_York")
+			require.NoError(t, err)
 			for day := 1; day <= 3; day++ {
 				tx = db.NewTransaction()
 				for i := 0; i < 100; i++ {
 					barEntity := datalog.NewIdentity(fmt.Sprintf("bar-%d-%d", day, i))
 					barTime := time.Date(2025, 6, day, 9, 30+i, 0, 0, loc)
-					tx.Add(barEntity, datalog.NewKeyword(":price/symbol"), symbolEntity)
-					tx.Add(barEntity, datalog.NewKeyword(":price/time"), barTime)
+					require.NoError(t, tx.Add(barEntity, datalog.NewKeyword(":price/symbol"), symbolEntity))
+					require.NoError(t, tx.Add(barEntity, datalog.NewKeyword(":price/time"), barTime))
 				}
 				if _, err := tx.Commit(); err != nil {
 					t.Fatalf("Failed to commit day %d: %v", day, err)
@@ -58,11 +61,13 @@ func TestPredicatePushdownTrace(t *testing.T) {
 			matcher := NewPatternMatcher(db.store)
 
 			// Get all bars (300 total)
-			symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)
+			symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)
+			require.NoError(t, err)
 			t.Logf("Symbol relation size: %d", symbolRel.Size())
 
-			// Check what strategy is selected
-			strategy, _ := matcher.analyzeReuseStrategy(timePattern, symbolRel)
+			// Check what strategy is selected; the binding relation it hands
+			// back stands in for the one passed.
+			strategy, symbolRel := matcher.analyzeReuseStrategy(timePattern, symbolRel)
 			t.Logf("Reuse strategy: Type=%s, Position=%d, Index=%d",
 				strategy.Type.String(), strategy.Position, strategy.Index)
 
@@ -84,14 +89,19 @@ func TestPredicatePushdownTrace(t *testing.T) {
 				t.Fatalf("Failed: %v", err)
 			}
 
-			count := 0
+			ti := query.SymbolIndex(timeRel.Symbols(), datalog.NewSymbol("?t"))
+			require.GreaterOrEqual(t, ti, 0, "the answer carries ?t; got %v", timeRel.Symbols())
+			days := map[int]int{}
 			it := timeRel.Iterator()
 			for it.Next() {
-				count++
+				days[it.Tuple()[ti].(time.Time).Day()]++
 			}
+			require.NoError(t, it.Error())
+			require.NoError(t, it.Close())
 			elapsed := time.Since(start)
 
-			t.Logf("Results: %d in %v", count, elapsed)
+			t.Logf("Results: %v in %v", days, elapsed)
+			assert.Equal(t, map[int]int{2: 100}, days, "the day-2 bars alone")
 
 			// Check if iterator reuse is actually happening
 			if strategy.Type == SinglePositionReuse {

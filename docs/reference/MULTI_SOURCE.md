@@ -54,6 +54,20 @@ The default source `$` is the calling database. Use it alongside named sources:
 
 You can omit `$` from `:in` — it's always available. But including it makes the query self-documenting.
 
+### Database Functions on a Named Source
+
+A database function's first argument is the source it reads, as a pattern's prefix is:
+
+```clojure
+[:find ?run ?failed
+ :in $ $build
+ :where [$build ?run :run/name _]
+        [(get-else $build ?run :run/failed "") ?failed]]
+```
+
+`get-else`, `get-some` and `missing?` look the attribute up in the source they name. A source that cannot look an attribute up is an error naming the source.
+With the algebra optimizer on, a `get-else` is rewritten into a scan of its source, joined to the query, only where the source answers that its match of the attribute gives, for every entity, the one value its lookup gives (`CanFuseAttributeFetch`). A database answers true for an attribute it resolves cardinality-one in its latest view, declared so or with no definition. On a cardinality-many attribute, a history or as-of handle, or a source without the capability, the `get-else` runs as a lookup per tuple. Both answer alike ([GET_ELSE_SCAN_REWRITE_PROOF.md](../proposals/GET_ELSE_SCAN_REWRITE_PROOF.md)).
+
 ### Combining Sources with Scalar/Collection Inputs
 
 Named sources and regular inputs coexist in `:in`:
@@ -90,6 +104,16 @@ qb.PatFrom(users, e, qb.Kw(":user/name"), name)
 ```
 
 Arguments after the source follow the same rules as `Pat()`: `*Var`, `Attr`, `Val`, `Blank()`, or raw Go values.
+
+### GetElseFrom(), MissingFrom(), GetSomeFrom()
+
+Database functions on a named source take the source first:
+
+```go
+build := qb.Source("$build")
+// [(get-else $build ?run :run/failed "") ?failed]
+qb.GetElseFrom(build, run, qb.Kw(":run/failed"), "").As(failed)
+```
 
 ### DB Constant
 
@@ -150,18 +174,30 @@ results, err := usersDB.Query(query,
 )
 ```
 
-### MemoryPatternMatcher
+### Memory database
 
-An in-memory set of datoms. Useful for caches, computed facts, or test data:
+Facts held in memory are a database `db.OpenMemory` opens, written through a transaction. Useful for caches, computed facts, or test data:
 
 ```go
-datoms := []datalog.Datom{
+cache, err := db.OpenMemory()
+if err != nil {
+    return err
+}
+defer cache.Close()
+tx := cache.NewTransaction()
+for _, fact := range []datalog.Datom{
     {E: datalog.NewIdentity("cache:1"), A: datalog.NewKeyword(":cache/user-id"), V: "uid-1"},
     {E: datalog.NewIdentity("cache:1"), A: datalog.NewKeyword(":cache/score"), V: int64(95)},
     {E: datalog.NewIdentity("cache:2"), A: datalog.NewKeyword(":cache/user-id"), V: "uid-2"},
     {E: datalog.NewIdentity("cache:2"), A: datalog.NewKeyword(":cache/score"), V: int64(82)},
+} {
+    if err := tx.Add(fact.E, fact.A, fact.V); err != nil {
+        return err
+    }
 }
-cache := executor.NewMemoryPatternMatcher(datoms)
+if _, err := tx.Commit(); err != nil {
+    return err
+}
 ```
 
 Pass as a named source:
@@ -174,9 +210,9 @@ results, err := d.Query(query,
 )
 ```
 
-### SliceSource[T]
+### Slice source
 
-Wraps a Go slice, making it queryable via an attribute schema. Each slice item becomes an entity with attributes defined by accessor functions. Multi-valued attributes (slices/arrays) are automatically expanded into multiple datoms.
+`db.NewSliceSource` opens a memory database holding a Go slice's facts under an attribute schema. The item at index i is the entity `"slice:i"`, holding at each attribute the value its accessor answers. An accessor that answers a slice or an array gives the item one fact per element, and an attribute at which one item holds two elements is cardinality-many. The caller closes the database.
 
 ```go
 type Rule struct {
@@ -189,10 +225,14 @@ rules := []Rule{
     {Key: "character-eval", DependsOn: []string{"character"}},
 }
 
-ruleSource := executor.NewSliceSource(rules, executor.AttributeSchema[Rule]{
+ruleSource, err := db.NewSliceSource(rules, db.AttributeSchema[Rule]{
     datalog.NewKeyword(":rule/key"):        func(r Rule) any { return r.Key },
     datalog.NewKeyword(":rule/depends-on"): func(r Rule) any { return r.DependsOn },
 })
+if err != nil {
+    return err
+}
+defer ruleSource.Close()
 ```
 
 Query it like any other source:
@@ -233,6 +273,7 @@ results, err := d.Query(query,
 ```
 
 `WithSources` values are extracted before mapping regular inputs to `:in` parameters. The order of `WithSources` relative to other inputs doesn't matter.
+`Explain`, `ExplainAlgebra` and `Analyze` take the same option and plan with the query's sources as `Query` does, so a `get-else` on a named source is explained as `Query` plans it.
 
 ### Source Validation
 
@@ -319,6 +360,9 @@ type PredicateAwareMatcher interface {
 
 If your source supports predicate pushdown, the `SourceRouter` will call `MatchWithConstraints` instead of `Match` when constraints are available.
 
+A source a database function names implements `EntityLookupMatcher`, which looks one entity's attribute up. The `SourceRouter` gives the function that source's lookup through `LookupSource`, and a source without the capability is an error naming it.
+A source may implement `AttributeFetchFusable`, answering whether its match of an attribute gives, for every entity, the one value its lookup gives. A true answer lets the executor fuse a same-entity fetch into the lookup and lets the optimizer rewrite a `get-else` on the source into a scan, so a source answers true only where that holds. A source without the capability answers false through the `SourceRouter`.
+
 Pass your custom source via `WithSources`:
 
 ```go
@@ -334,8 +378,8 @@ results, err := d.Query(query,
 | File | Purpose |
 |------|---------|
 | `executor/source_router.go` | Routes patterns to sources by `pattern.Source` field |
-| `executor/slice_source.go` | `SliceSource[T]` — Go slices as queryable sources |
-| `executor/pattern_match.go` | `NewMemoryPatternMatcher` — in-memory datom sets |
+| `storage/slice_source.go` | `NewSliceSource` — a Go slice's facts as a memory database |
+| `storage/facts.go` | `OpenFacts` — a memory database holding given facts |
 | `storage/database.go` | `WithSources`, `buildSourceMap`, `validateQuerySources` |
 | `qb/source.go` | `Source()`, `PatFrom()` — query builder support |
 | `query/types.go` | `DatabaseInput`, `DataPattern.Source` field |

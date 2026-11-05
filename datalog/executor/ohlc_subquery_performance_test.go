@@ -1,11 +1,13 @@
-package executor
+package executor_test
 
 import (
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -84,12 +86,12 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 		}
 	}
 
-	// Create memory matcher with our test data
-	matcher := NewMemoryPatternMatcher(datoms)
+	// A database holding the test data
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Test 1: Single subquery (just get the open price for each day)
 			t.Run("SingleSubquery", func(t *testing.T) {
@@ -117,13 +119,20 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 				}
 
 				start := time.Now()
-				result, err := exec.Execute(q)
+				tuples, err := CollectTuples(exec.Execute(q))
 				if err != nil {
 					t.Fatalf("Failed to execute query: %v", err)
 				}
 				duration := time.Since(start)
 
-				t.Logf("Single subquery returned %d tuples in %v", result.Size(), duration)
+				t.Logf("Single subquery returned %d tuples in %v", len(tuples), duration)
+
+				// Each day's lowest open is its minute-0 bar's.
+				var want [][]interface{}
+				for day := 1; day <= 5; day++ {
+					want = append(want, []interface{}{int64(day), 100.0 + float64(day) + float64(0)*0.1})
+				}
+				require.ElementsMatch(t, want, tuples, "each day takes its lowest open")
 			})
 
 			// Test 2: Multiple subqueries (open, high, low for each day)
@@ -173,14 +182,27 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 				}
 
 				start := time.Now()
-				result, err := exec.Execute(q)
+				tuples, err := CollectTuples(exec.Execute(q))
 				if err != nil {
 					t.Fatalf("Failed to execute query: %v", err)
 				}
 				duration := time.Since(start)
 
-				t.Logf("Multiple subqueries returned %d tuples in %v", result.Size(), duration)
-				t.Logf("This demonstrates the O(n×m) pattern: %d days × 3 aggregations", result.Size())
+				t.Logf("Multiple subqueries returned %d tuples in %v", len(tuples), duration)
+				t.Logf("This demonstrates the O(n×m) pattern: %d days × 3 aggregations", len(tuples))
+
+				// Each day's lowest open is its minute-0 bar's, and its highest
+				// high and lowest low are its minute-9 bar's.
+				var want [][]interface{}
+				for day := 1; day <= 5; day++ {
+					want = append(want, []interface{}{
+						int64(day),
+						100.0 + float64(day) + float64(0)*0.1,
+						102.0 + float64(day) + float64(9)*0.2,
+						98.0 + float64(day) - float64(9)*0.1,
+					})
+				}
+				require.ElementsMatch(t, want, tuples, "each day takes its lowest open, highest high and lowest low")
 			})
 		})
 	}
@@ -256,7 +278,7 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(b, datoms)
 	exec := NewExecutor(matcher, nil)
 
 	// Benchmark single subquery
@@ -279,7 +301,10 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 		      [?b :price/open ?o]]
 		     $ ?s ?day) [[?open]]]]`
 
-		q, _ := parser.ParseQuery(queryStr)
+		q, err := parser.ParseQuery(queryStr)
+		if err != nil {
+			b.Fatalf("parse: %v", err)
+		}
 
 		b.ReportAllocs()
 		b.ResetTimer()
@@ -335,7 +360,10 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 		      [?b :price/low ?l]]
 		     $ ?s ?day) [[?low]]]]`
 
-		q, _ := parser.ParseQuery(queryStr)
+		q, err := parser.ParseQuery(queryStr)
+		if err != nil {
+			b.Fatalf("parse: %v", err)
+		}
 
 		b.ReportAllocs()
 		b.ResetTimer()
@@ -381,7 +409,7 @@ func BenchmarkRelationInput(b *testing.B) {
 		}
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(b, datoms)
 
 	// Query with RelationInput iteration
 	queryStr := `[:find ?n ?y ?m (max ?age)
@@ -391,7 +419,10 @@ func BenchmarkRelationInput(b *testing.B) {
 	                     [?e :month ?m]
 	                     [?e :age ?age]]`
 
-	q, _ := parser.ParseQuery(queryStr)
+	q, err := parser.ParseQuery(queryStr)
+	if err != nil {
+		b.Fatalf("parse: %v", err)
+	}
 
 	// Input relation of 2400 tuples
 	var inputTuples []Tuple
@@ -408,9 +439,12 @@ func BenchmarkRelationInput(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
+		tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel}))
 		if err != nil {
 			b.Fatal(err)
+		}
+		if len(tuples) != len(inputTuples) {
+			b.Fatalf("expected one tuple per input tuple, %d, got %d", len(inputTuples), len(tuples))
 		}
 	}
 }

@@ -212,7 +212,8 @@ func (m *PatternMatcher) matchWithHashJoin(
 	}
 
 	// Return streaming relation
-	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
+	return executor.NewStreamingRelationWithProperties(symbols, iter, m.options,
+		executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}), nil
 }
 
 // keyScanBounds is one bound per key, each the bound the one-key narrowing
@@ -655,7 +656,8 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	}
 
 	// Return streaming relation
-	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
+	return executor.NewStreamingRelationWithProperties(symbols, iter, m.options,
+		executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}), nil
 }
 
 // hashJoinIterator performs lazy hash join iteration

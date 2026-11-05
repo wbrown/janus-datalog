@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
@@ -196,22 +197,54 @@ func TestBadgerStore(t *testing.T) {
 }
 
 func TestBadgerStoreCloseFlushesCommittedWrites(t *testing.T) {
-	store, err := NewBadgerStore(t.TempDir(), &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = store.Assert([]datalog.Datom{{
+	dir := t.TempDir()
+	written := datalog.Datom{
 		E:  datalog.NewIdentity("close-after-write"),
 		A:  datalog.NewKeyword(":close/value"),
 		V:  "committed",
 		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
-	}})
+	}
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Assert([]datalog.Datom{written}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
+
+	// A store reopened on the directory reads the write back.
+	reopened, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := reopened.Close(); err != nil {
+			t.Errorf("close the reopened store: %v", err)
+		}
+	})
+	it, err := reopened.Scan(ScanBound{Index: EAVT, Prefix: []datalog.Value{written.E, written.A}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for it.Next() {
+		d, err := it.Datom()
+		if err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, written, *d, "the reopened store reads the write back")
+		count++
+	}
+	if err := it.Error(); err != nil {
+		t.Fatal(err)
+	}
+	if err := it.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, 1, count, "the reopened store holds the one write")
 }
 
 // TestRetractWithDifferentTx tests that retraction works even when the caller

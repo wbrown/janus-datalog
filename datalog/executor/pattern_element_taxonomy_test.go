@@ -3,15 +3,13 @@ package executor
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // PatternElement is a closed taxonomy: Variable, Blank, Constant,
-// VectorConstant. The memory-matcher element handling previously absorbed
-// VectorConstant in silent defaults — matchesElement returned false (a
-// vector literal matched nothing) and extractPatternValue returned nil (a
-// vector literal was treated as unbound).
+// VectorConstant. matchesElement matches a vector literal against a vector
+// value by value equality, and a value that is no vector matches no vector
+// literal.
 
 func TestMatchesElementVectorConstant(t *testing.T) {
 	vec := []interface{}{"a", "b"}
@@ -24,9 +22,4 @@ func TestMatchesElementVectorConstant(t *testing.T) {
 	if matchesElement("scalar", query.VectorConstant{Values: []interface{}{"a"}}) {
 		t.Error("a non-vector value must not match a vector literal")
 	}
-}
-
-func TestExtractPatternValueVectorConstant(t *testing.T) {
-	got := extractPatternValue(query.VectorConstant{Values: []interface{}{"a"}})
-	require.Equal(t, []interface{}{"a"}, got)
 }

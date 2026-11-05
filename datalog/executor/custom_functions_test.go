@@ -1,9 +1,10 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -30,7 +31,7 @@ func TestCustomFunctionQueryEndToEnd(t *testing.T) {
 	laptop := datalog.NewIdentity("prod:laptop")
 	cable := datalog.NewIdentity("prod:cable")
 
-	matcher := NewMemoryPatternMatcher([]datalog.Datom{
+	matcher := factsDatabase(t, []datalog.Datom{
 		{E: laptop, A: nameAttr, V: "Laptop", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		{E: laptop, A: priceAttr, V: 1200.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		{E: cable, A: nameAttr, V: "Cable", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
@@ -46,17 +47,21 @@ func TestCustomFunctionQueryEndToEnd(t *testing.T) {
 			t.Fatalf("parse: %v", err)
 		}
 
-		for _, mode := range optimizerModes {
-			t.Run(mode.name, func(t *testing.T) {
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+		for _, mode := range OptimizerModes {
+			t.Run(mode.Name(), func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 				result, err := exec.Execute(q)
 				if err != nil {
 					t.Fatalf("execute: %v", err)
 				}
-				if result.Size() != 1 {
-					t.Fatalf("expected 1 expensive product, got %d", result.Size())
+				tuples, err := CollectTuples(result, nil)
+				if err != nil {
+					t.Fatalf("collect: %v", err)
 				}
-				if got := result.Get(0)[0].(string); got != "Laptop" {
+				if len(tuples) != 1 {
+					t.Fatalf("expected 1 expensive product, got %d", len(tuples))
+				}
+				if got := tuples[0][0].(string); got != "Laptop" {
 					t.Errorf("expected Laptop, got %s", got)
 				}
 			})
@@ -72,16 +77,19 @@ func TestCustomFunctionQueryEndToEnd(t *testing.T) {
 			t.Fatalf("parse: %v", err)
 		}
 
-		for _, mode := range optimizerModes {
-			t.Run(mode.name, func(t *testing.T) {
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+		for _, mode := range OptimizerModes {
+			t.Run(mode.Name(), func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 				result, err := exec.Execute(q)
 				if err != nil {
 					t.Fatalf("execute: %v", err)
 				}
+				tuples, err := CollectTuples(result, nil)
+				if err != nil {
+					t.Fatalf("collect: %v", err)
+				}
 				halves := make(map[string]float64)
-				for i := 0; i < result.Size(); i++ {
-					tuple := result.Get(i)
+				for _, tuple := range tuples {
 					halves[tuple[0].(string)] = tuple[1].(float64)
 				}
 				if halves["Laptop"] != 600.0 {

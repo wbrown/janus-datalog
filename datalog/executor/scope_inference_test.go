@@ -1,9 +1,10 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -18,15 +19,15 @@ func TestOrJoinWithARequiredOnlyHeaderFiltersTheOuter(t *testing.T) {
 		{E: datalog.NewIdentity("t:2"), A: nAttr, V: int64(2), Tx: tx},
 		{E: datalog.NewIdentity("t:5"), A: nAttr, V: int64(5), Tx: tx},
 	}
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	q, err := parser.ParseQuery(`[:find ?n :where [?e :t/n ?n] (or [(> ?n 3)] [(< ?n 2)])]`)
 	if err != nil {
 		t.Fatalf("ParseQuery: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := executor.Execute(q)
 			if err != nil {
 				t.Fatalf("Execute: %v", err)

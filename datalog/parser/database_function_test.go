@@ -35,8 +35,8 @@ func TestParseGetElse(t *testing.T) {
 				if getElse.Attr.String() != ":entity/name" {
 					t.Errorf("expected attr :entity/name, got %s", getElse.Attr.String())
 				}
-				if getElse.Default != "Unknown" {
-					t.Errorf("expected default 'Unknown', got %v", getElse.Default)
+				if want := (query.ConstantTerm{Value: "Unknown"}); getElse.Default != want {
+					t.Errorf("expected default %v, got %v", want, getElse.Default)
 				}
 				if binding, ok := expr.Binding.(query.Symbol); !ok || binding != datalog.NewSymbol("?name") {
 					t.Errorf("expected binding ?name, got %v", expr.Binding)
@@ -50,18 +50,8 @@ func TestParseGetElse(t *testing.T) {
 			validate: func(t *testing.T, q *query.Query) {
 				expr := q.Where[1].(*query.Expression)
 				getElse := expr.Function.(*query.GetElseFunction)
-				// Note: EDN parser may return int64 for integers
-				switch v := getElse.Default.(type) {
-				case int64:
-					if v != 0 {
-						t.Errorf("expected default 0, got %v", v)
-					}
-				case int:
-					if v != 0 {
-						t.Errorf("expected default 0, got %v", v)
-					}
-				default:
-					t.Errorf("expected numeric default, got %T", getElse.Default)
+				if want := (query.ConstantTerm{Value: int64(0)}); getElse.Default != want {
+					t.Errorf("expected default %v, got %v", want, getElse.Default)
 				}
 			},
 		},
@@ -72,7 +62,7 @@ func TestParseGetElse(t *testing.T) {
 			validate: func(t *testing.T, q *query.Query) {
 				expr := q.Where[1].(*query.Expression)
 				getElse := expr.Function.(*query.GetElseFunction)
-				if getElse.Default != "" {
+				if want := (query.ConstantTerm{Value: ""}); getElse.Default != want {
 					t.Errorf("expected empty string default, got %v", getElse.Default)
 				}
 			},
@@ -300,15 +290,26 @@ func TestParseGetSome(t *testing.T) {
 }
 
 func TestDatabaseFunctionRequiredSymbols(t *testing.T) {
-	// Test that RequiredSymbols correctly identifies the entity variable
+	// Test that RequiredSymbols correctly identifies the entity variable, and
+	// a get-else's default variable beside it
 	getElse := &query.GetElseFunction{
 		Entity:  query.VariableTerm{Symbol: datalog.NewSymbol("?e")},
 		Attr:    datalog.NewKeyword(":entity/name"),
-		Default: "",
+		Default: query.ConstantTerm{Value: ""},
 	}
 	syms := getElse.RequiredSymbols()
 	if len(syms) != 1 || syms[0] != datalog.NewSymbol("?e") {
 		t.Errorf("expected [?e], got %v", syms)
+	}
+
+	getElse = &query.GetElseFunction{
+		Entity:  query.VariableTerm{Symbol: datalog.NewSymbol("?e")},
+		Attr:    datalog.NewKeyword(":entity/name"),
+		Default: query.VariableTerm{Symbol: datalog.NewSymbol("?d")},
+	}
+	syms = getElse.RequiredSymbols()
+	if len(syms) != 2 || syms[0] != datalog.NewSymbol("?e") || syms[1] != datalog.NewSymbol("?d") {
+		t.Errorf("expected [?e ?d], got %v", syms)
 	}
 
 	missing := &query.MissingFunction{
@@ -338,7 +339,7 @@ func TestDatabaseFunctionString(t *testing.T) {
 	getElse := &query.GetElseFunction{
 		Entity:  query.VariableTerm{Symbol: datalog.NewSymbol("?e")},
 		Attr:    datalog.NewKeyword(":entity/name"),
-		Default: "Unknown",
+		Default: query.ConstantTerm{Value: "Unknown"},
 	}
 	str := getElse.String()
 	if !strings.Contains(str, "get-else") || !strings.Contains(str, ":entity/name") {

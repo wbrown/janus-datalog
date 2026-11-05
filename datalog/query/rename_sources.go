@@ -85,9 +85,10 @@ func renameSourcesBranches(branches [][]Clause, sources Substitution) ([][]Claus
 }
 
 // renameSourcesClause is the clause clause becomes: a pattern on a renamed
-// source naming the source standing for it, a form over its renamed branches,
-// a call passing a renamed source passing the one standing for it, and any
-// other clause itself.
+// source naming the source standing for it, a database function, as an
+// expression or as a predicate, reading a renamed source reading the source
+// standing for it, a form over its renamed branches, a call passing a renamed
+// source passing the one standing for it, and any other clause itself.
 func renameSourcesClause(clause Clause, sources Substitution) Clause {
 	switch c := clause.(type) {
 	case *DataPattern:
@@ -97,6 +98,16 @@ func renameSourcesClause(clause Clause, sources Substitution) Clause {
 		}
 		if to, ok := sources.Of(from); ok && to != from {
 			return &DataPattern{Source: to, Elements: c.Elements}
+		}
+	case *Expression:
+		if f, ok := c.Function.(DatabaseFunction); ok {
+			if to, ok := sources.Of(f.ReadsFrom()); ok && to != f.ReadsFrom() {
+				return &Expression{Function: f.OnSource(to), Binding: c.Binding}
+			}
+		}
+	case *DatabaseFunctionPredicate:
+		if to, ok := sources.Of(c.Function.ReadsFrom()); ok && to != c.Function.ReadsFrom() {
+			return &DatabaseFunctionPredicate{Function: c.Function.OnSource(to)}
 		}
 	case *OrClause:
 		if branches, changed := renameSourcesBranches(c.Branches, sources); changed {

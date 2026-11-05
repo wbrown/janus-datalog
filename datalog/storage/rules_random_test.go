@@ -1556,115 +1556,119 @@ func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing
 		t.Run(mode.name, func(t *testing.T) {
 			for _, span := range ruleSetSeeds {
 				for seed := span.start; seed < span.start+span.count; seed++ {
-					r := rand.New(rand.NewSource(int64(seed)))
-					predicates := []string{"p0", "p1", "p2", "p3"}
-					var rules string
-					switch span.templates {
-					case chainTemplates:
-						rules = chainRuleSet(r)
-						predicates = append(predicates, "w0")
-					case deepChainTemplates:
-						rules = deepChainRuleSet(r)
-						predicates = append(predicates, "w0", "w2")
-					default:
-						rules = randomRuleSet(r)
-					}
-					rs := mustRuleSet(t, rules)
-					plannerOpts := mode.plannerOptions()
-					plannerOpts.MaxRuleIterations = 500
-					d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: coloredGraphSchema(), PlannerOptions: &plannerOpts})
-					g, rg := writeRandomRuleGraph(t, d, r)
-					// tuplesOf runs text and renders its tuples; an error at the query
-					// or while its tuples are read is the check's failure.
-					tuplesOf := func(text string, inputs ...interface{}) ([]string, error) {
-						rel, err := d.Query(text, append([]interface{}{rs}, inputs...)...)
-						if err != nil {
-							return nil, err
+					// Each seed runs as a subtest. The database it opens closes when
+					// the seed's checks end, so the test holds one database at a time.
+					t.Run(fmt.Sprintf("seed %d", seed), func(t *testing.T) {
+						r := rand.New(rand.NewSource(int64(seed)))
+						predicates := []string{"p0", "p1", "p2", "p3"}
+						var rules string
+						switch span.templates {
+						case chainTemplates:
+							rules = chainRuleSet(r)
+							predicates = append(predicates, "w0")
+						case deepChainTemplates:
+							rules = deepChainRuleSet(r)
+							predicates = append(predicates, "w0", "w2")
+						default:
+							rules = randomRuleSet(r)
 						}
-						return g.render(rel)
-					}
-					check := func(label, text string, want []string, inputs ...interface{}) {
-						got, err := tuplesOf(text, inputs...)
-						if err != nil {
-							t.Errorf("%s: %v\n%s", label, err, rules)
-							return
+						rs := mustRuleSet(t, rules)
+						plannerOpts := mode.plannerOptions()
+						plannerOpts.MaxRuleIterations = 500
+						d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: coloredGraphSchema(), PlannerOptions: &plannerOpts})
+						g, rg := writeRandomRuleGraph(t, d, r)
+						// tuplesOf runs text and renders its tuples; an error at the query
+						// or while its tuples are read is the check's failure.
+						tuplesOf := func(text string, inputs ...interface{}) ([]string, error) {
+							rel, err := d.Query(text, append([]interface{}{rs}, inputs...)...)
+							if err != nil {
+								return nil, err
+							}
+							return g.render(rel)
 						}
-						if _, err := d.Explain(text, append([]interface{}{rs}, inputs...)...); err != nil {
-							t.Errorf("%s: Query answers and Explain refuses: %v\n%s", label, err, rules)
+						check := func(label, text string, want []string, inputs ...interface{}) {
+							got, err := tuplesOf(text, inputs...)
+							if err != nil {
+								t.Errorf("%s: %v\n%s", label, err, rules)
+								return
+							}
+							if _, err := d.Explain(text, append([]interface{}{rs}, inputs...)...); err != nil {
+								t.Errorf("%s: Query answers and Explain refuses: %v\n%s", label, err, rules)
+							}
+							sort.Strings(got)
+							sort.Strings(want)
+							if !equalStrings(got, want) {
+								t.Errorf("%s: tuples %v, the free evaluation gives %v\n%s", label, got, want, rules)
+							}
 						}
-						sort.Strings(got)
-						sort.Strings(want)
-						if !equalStrings(got, want) {
-							t.Errorf("%s: tuples %v, the free evaluation gives %v\n%s", label, got, want, rules)
+						// freeOf is a predicate's free tuples as pairs; a free invocation
+						// that fails is a failure and answers nothing.
+						freeOf := func(name string) (map[[2]string]bool, bool) {
+							rendered, err := tuplesOf(fmt.Sprintf(`[:find ?x ?y :in $ %% :where (%s ?x ?y)]`, name))
+							if err != nil {
+								t.Errorf("seed %d %s free: %v\n%s", seed, name, err, rules)
+								return nil, false
+							}
+							return pairsOf(rendered), true
 						}
-					}
-					// freeOf is a predicate's free tuples as pairs; a free invocation
-					// that fails is a failure and answers nothing.
-					freeOf := func(name string) (map[[2]string]bool, bool) {
-						rendered, err := tuplesOf(fmt.Sprintf(`[:find ?x ?y :in $ %% :where (%s ?x ?y)]`, name))
-						if err != nil {
-							t.Errorf("seed %d %s free: %v\n%s", seed, name, err, rules)
-							return nil, false
+						// Under the deep chain, the chain's free evaluation against the Go
+						// reference, and w2's tuples as the second predicate the shapes
+						// read.
+						var second map[[2]string]bool
+						if span.templates == deepChainTemplates {
+							for name, want := range deepChainReference(rg) {
+								free, ok := freeOf(name)
+								if !ok {
+									continue
+								}
+								if name == "w2" {
+									second = free
+								}
+								got, wantRendered := pairsRendered(free), pairsRendered(want)
+								sort.Strings(got)
+								sort.Strings(wantRendered)
+								if !equalStrings(got, wantRendered) {
+									t.Errorf("seed %d %s free: %v, Go computes %v\n%s", seed, name, got, wantRendered, rules)
+								}
+							}
 						}
-						return pairsOf(rendered), true
-					}
-					// Under the deep chain, the chain's free evaluation against the Go
-					// reference, and w2's tuples as the second predicate the shapes
-					// read.
-					var second map[[2]string]bool
-					if span.templates == deepChainTemplates {
-						for name, want := range deepChainReference(rg) {
+						for _, name := range predicates {
+							label := fmt.Sprintf("seed %d %s", seed, name)
 							free, ok := freeOf(name)
 							if !ok {
 								continue
 							}
-							if name == "w2" {
-								second = free
-							}
-							got, wantRendered := pairsRendered(free), pairsRendered(want)
-							sort.Strings(got)
-							sort.Strings(wantRendered)
-							if !equalStrings(got, wantRendered) {
-								t.Errorf("seed %d %s free: %v, Go computes %v\n%s", seed, name, got, wantRendered, rules)
-							}
-						}
-					}
-					for _, name := range predicates {
-						label := fmt.Sprintf("seed %d %s", seed, name)
-						free, ok := freeOf(name)
-						if !ok {
-							continue
-						}
-						for i, s := range rg.nodes {
-							reached := reachedFrom(free, s)
-							branch := append([]string{}, reached...)
-							for _, y := range rg.nodes {
-								if rg.edges[[2]string{s, y}] && !free[[2]string{s, y}] {
-									branch = append(branch, y)
+							for i, s := range rg.nodes {
+								reached := reachedFrom(free, s)
+								branch := append([]string{}, reached...)
+								for _, y := range rg.nodes {
+									if rg.edges[[2]string{s, y}] && !free[[2]string{s, y}] {
+										branch = append(branch, y)
+									}
+								}
+								var unreached []string
+								for _, y := range rg.nodes {
+									if !free[[2]string{s, y}] {
+										unreached = append(unreached, y)
+									}
+								}
+								check(label+" bound first from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where (%s ?s ?y)]`, name), reached, ruleGraphNode(i))
+								check(label+" bound second to "+s, fmt.Sprintf(`[:find ?x :in $ %% ?t :where (%s ?x ?t)]`, name), reaching(free, s), ruleGraphNode(i))
+								check(label+" as an or-join branch from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where (or-join [[?s] ?y] (%s ?s ?y) [?s :edge ?y])]`, name), branch, ruleGraphNode(i))
+								check(label+" under a not-join from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where [?y :color _] (not-join [?s ?y] (%s ?s ?y))]`, name), unreached, ruleGraphNode(i))
+								if second == nil {
+									continue
+								}
+								for _, shape := range boundShapes {
+									var inputs []interface{}
+									if shape.scalar {
+										inputs = append(inputs, ruleGraphNode(i))
+									}
+									check(label+" "+shape.name+" at "+s, fmt.Sprintf(shape.text, name, s, "w2"), shape.want(rg, free, second, s), inputs...)
 								}
 							}
-							var unreached []string
-							for _, y := range rg.nodes {
-								if !free[[2]string{s, y}] {
-									unreached = append(unreached, y)
-								}
-							}
-							check(label+" bound first from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where (%s ?s ?y)]`, name), reached, ruleGraphNode(i))
-							check(label+" bound second to "+s, fmt.Sprintf(`[:find ?x :in $ %% ?t :where (%s ?x ?t)]`, name), reaching(free, s), ruleGraphNode(i))
-							check(label+" as an or-join branch from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where (or-join [[?s] ?y] (%s ?s ?y) [?s :edge ?y])]`, name), branch, ruleGraphNode(i))
-							check(label+" under a not-join from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where [?y :color _] (not-join [?s ?y] (%s ?s ?y))]`, name), unreached, ruleGraphNode(i))
-							if second == nil {
-								continue
-							}
-							for _, shape := range boundShapes {
-								var inputs []interface{}
-								if shape.scalar {
-									inputs = append(inputs, ruleGraphNode(i))
-								}
-								check(label+" "+shape.name+" at "+s, fmt.Sprintf(shape.text, name, s, "w2"), shape.want(rg, free, second, s), inputs...)
-							}
 						}
-					}
+					})
 				}
 			}
 		})

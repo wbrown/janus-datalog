@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -151,11 +152,11 @@ func TestOHLCSymbolOrderBug(t *testing.T) {
 	// ?close-price = 102.50 (max close in 15:55-16:00 range = bar3.close)
 	// ?total-volume = 3050000 (sum of all volumes)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			t.Run("ParallelDecorrelation", func(t *testing.T) {
-				matcher := NewMemoryPatternMatcher(datoms)
-				exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+				matcher := factsDatabase(t, datoms)
+				exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 				result, err := exec.Execute(parsedQuery)
 				if err != nil {
@@ -235,8 +236,8 @@ func TestOHLCSymbolOrderBug(t *testing.T) {
 			})
 
 			t.Run("SequentialDecorrelation", func(t *testing.T) {
-				matcher := NewMemoryPatternMatcher(datoms)
-				exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+				matcher := factsDatabase(t, datoms)
+				exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 				result, err := exec.Execute(parsedQuery)
 				if err != nil {

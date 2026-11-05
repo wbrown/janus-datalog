@@ -27,7 +27,8 @@ func TestSortRelation_PropagatesIteratorError(t *testing.T) {
 
 func TestAggregationPropagatesIteratorAndCloseErrors(t *testing.T) {
 	x := datalog.NewSymbol("?x")
-	aggregate := []query.FindAggregate{{Function: datalog.SymCount, Arg: x}}
+	count := query.FindAggregate{Function: datalog.SymCount, Arg: x}
+	grouped := []query.FindElement{query.FindVariable{Symbol: x}, count}
 	closeErr := errors.New("aggregate close failure")
 
 	for _, failAfter := range []int{0, 2} {
@@ -38,7 +39,7 @@ func TestAggregationPropagatesIteratorAndCloseErrors(t *testing.T) {
 				Tuple{int64(2)},
 				Tuple{int64(3)},
 			)
-			result := NewStreamingAggregateRelation(source, []query.Symbol{x}, aggregate)
+			result := NewStreamingAggregateRelation(source, grouped)
 			require.ErrorIs(t, driveErr(result), errInjectedIterator)
 		})
 		t.Run(fmt.Sprintf("batch/fail_after_%d", failAfter), func(t *testing.T) {
@@ -48,7 +49,7 @@ func TestAggregationPropagatesIteratorAndCloseErrors(t *testing.T) {
 				Tuple{int64(2)},
 				Tuple{int64(3)},
 			)
-			result := executeGroupedAggregation(source, []query.Symbol{x}, aggregate)
+			result := executeGroupedAggregation(source, newAggregationLayout(grouped))
 			require.ErrorIs(t, driveErr(result), errInjectedIterator)
 		})
 	}
@@ -66,11 +67,11 @@ func TestAggregationPropagatesIteratorAndCloseErrors(t *testing.T) {
 			var result Relation
 			switch mode {
 			case "single":
-				result = executeSingleAggregation(source, aggregate)
+				result = executeSingleAggregation(source, newAggregationLayout([]query.FindElement{count}))
 			case "grouped":
-				result = executeGroupedAggregation(source, []query.Symbol{x}, aggregate)
+				result = executeGroupedAggregation(source, newAggregationLayout(grouped))
 			case "streaming":
-				result = NewStreamingAggregateRelation(source, []query.Symbol{x}, aggregate)
+				result = NewStreamingAggregateRelation(source, grouped)
 			}
 			require.ErrorIs(t, driveErr(result), closeErr)
 		})

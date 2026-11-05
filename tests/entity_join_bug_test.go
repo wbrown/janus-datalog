@@ -130,6 +130,7 @@ func testEntityJoinBug(t *testing.T, backend storage.Backend, mode optimizerMode
 
 	var joinEvents []annotations.Event
 	annotatedPopts := popts
+	annotatedPopts.EnableAttributeFetchFusion = false
 	annotatedPopts.Handler = func(event annotations.Event) {
 		if event.Name == annotations.JoinStrategy {
 			joinEvents = append(joinEvents, event)

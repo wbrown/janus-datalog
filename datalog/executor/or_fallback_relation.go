@@ -150,6 +150,10 @@ func NewOrFallbackRelation(
 		symbols,
 		shortCircuit && branchesAtMostOne,
 	)
+	// The branches run per window as the result is pulled.
+	for _, branch := range branches {
+		properties.Evaluates = properties.Evaluates || canFailOnAValue(branch, ctx.Rules())
+	}
 	deduplicate := len(branches) > 1
 	if shortCircuit {
 		deduplicate = len(outerRel.Properties().Keys) == 0
@@ -679,13 +683,15 @@ func (it *OrFallbackIterator) prefetchWindow(window []Tuple) error {
 
 // buildBranchFromEACache builds a window's tuples for a branch of the EA
 // arm's shape, one data pattern on the default source whose entity position
-// is a key symbol and whose attribute the matcher can serve by lookup, from
-// the entities of run, the window's keys, through LookupAttribute (EA
-// cache): one lookup per distinct entity, each found value one tuple over
-// the entity and value symbols. Returns the tuples and their symbols, nil
-// symbols when the prerequisites are not met (another branch shape, no
-// LookupAttribute, an attribute the matcher cannot serve by lookup), and
-// sets it.err on a failed lookup.
+// is a key symbol and whose attribute the matcher can serve by lookup, over
+// run, the window's keys, through LookupAttribute (EA cache): the relation
+// the branch's plan builds over the run. Each distinct entity is looked up
+// once. A run tuple whose entity carries a value is extended with it, over
+// the run's symbols and the value symbol, and when the run binds the value
+// symbol a run tuple is kept when its value is its entity's. Returns the
+// tuples and their symbols, nil symbols when the prerequisites are not met
+// (another branch shape, no LookupAttribute, an attribute the matcher cannot
+// serve by lookup), and sets it.err on a failed lookup.
 func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run *MaterializedRelation) ([]Tuple, []query.Symbol) {
 	if run == nil {
 		return nil, nil
@@ -711,35 +717,55 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run 
 		return nil, nil
 	}
 
-	branchSyms := []query.Symbol{eName, vName}
+	runSyms := run.Symbols()
+	vIdx := query.SymbolIndex(runSyms, vName)
+	branchSyms := runSyms
+	if vIdx < 0 {
+		branchSyms = append(append(make([]query.Symbol, 0, len(runSyms)+1), runSyms...), vName)
+	}
 	var collected []Tuple
 	if n := run.Size(); n >= 0 {
 		collected = make([]Tuple, 0, n)
 	}
-	// The run's tuples are distinct but the value at their entity position
-	// can repeat; one lookup and one tuple per distinct entity keeps the
-	// collected tuples a set.
-	seenEntities := make(map[datalog.Identity]struct{})
+	// The run's tuples are distinct but the entity at their entity position
+	// can repeat: each entity is looked up once, and a run tuple taking its
+	// entity's value keeps the collected tuples a set, as the run is.
+	type entityValue struct {
+		value interface{}
+		found bool
+	}
+	values := make(map[datalog.Identity]entityValue)
 	runIt := run.Iterator()
 	for runIt.Next() {
-		entity, ok := runIt.Tuple()[eIdx].(datalog.Identity)
+		tuple := runIt.Tuple()
+		entity, ok := tuple[eIdx].(datalog.Identity)
 		if !ok {
 			continue
 		}
-		if _, dup := seenEntities[entity]; dup {
+		looked, seen := values[entity]
+		if !seen {
+			value, found, err := lookupMatcher.LookupAttribute(entity, aKw)
+			if err != nil {
+				it.err = err
+				_ = runIt.Close()
+				return nil, nil
+			}
+			looked = entityValue{value: value, found: found}
+			values[entity] = looked
+		}
+		if !looked.found {
 			continue
 		}
-		seenEntities[entity] = struct{}{}
-		value, found, err := lookupMatcher.LookupAttribute(entity, aKw)
-		if err != nil {
-			it.err = err
-			_ = runIt.Close()
-			return nil, nil
-		}
-		if !found {
+		if vIdx >= 0 {
+			if datalog.ValuesEqual(tuple[vIdx], looked.value) {
+				collected = append(collected, copyTuple(tuple))
+			}
 			continue
 		}
-		collected = append(collected, Tuple{entity, value})
+		extended := make(Tuple, len(tuple)+1)
+		copy(extended, tuple)
+		extended[len(tuple)] = looked.value
+		collected = append(collected, extended)
 	}
 	runErr := runIt.Error()
 	closeErr := runIt.Close()
@@ -952,7 +978,11 @@ func (it *OrFallbackIterator) answer() bool {
 		if !advanced {
 			continue
 		}
-		if it.seen != nil {
+		// An output of a failed window tuple holds no value where its failing
+		// evaluation would have filled one, and it is never emitted as a
+		// tuple: Next answers it as the form's failed tuple. So it is not
+		// deduplicated.
+		if it.seen != nil && it.reader.failureAt(it.answering) == nil {
 			_, hash, held := it.seen.Find(it.currentTuple)
 			if held {
 				continue
@@ -971,7 +1001,7 @@ func (it *OrFallbackIterator) answer() bool {
 // when the window is answered.
 func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 	for it.windowPos < len(it.reader.window) {
-		outerTuple := it.reader.window[it.windowPos]
+		outerTuple := it.tupleToAnswer()
 		for it.unionBranchIdx < len(it.branches) {
 			branchIdx := it.unionBranchIdx
 			it.unionBranchIdx++
@@ -998,7 +1028,7 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 // see it. Returns false when the window is answered.
 func (it *OrFallbackIterator) nextShortCircuit() bool {
 	for it.windowPos < len(it.reader.window) {
-		outerTuple := it.reader.window[it.windowPos]
+		outerTuple := it.tupleToAnswer()
 		it.windowPos++
 		for branchIdx := range it.branches {
 			cb, built := it.branchCache[branchIdx]

@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"fmt"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -18,7 +19,7 @@ func chainsDatoms(edges int) []datalog.Datom {
 		base := chain * 11
 		for i := 0; i < 10; i++ {
 			tx := datalog.ElementID{Lamport: uint64(base + i + 1), ReplicaID: 1}
-			datoms = append(datoms, datalog.Datom{E: page(base + i), A: pageNext, V: page(base + i + 1), Tx: tx})
+			datoms = append(datoms, datalog.Datom{E: Page(base + i), A: PageNext, V: Page(base + i + 1), Tx: tx})
 		}
 	}
 	return datoms
@@ -29,18 +30,67 @@ func chainsDatoms(edges int) []datalog.Datom {
 // modes: semi-naive, the engine's evaluation through ExecuteWithRelations,
 // and naive, the same step driven with the full relation at every occurrence.
 func BenchmarkTransitiveClosure(b *testing.B) {
-	rs := mustRules(b, followsRulesText)
-	q := mustParse(b, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
+	rs := MustRules(b, FollowsRulesText)
+	q := MustParse(b, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
 	for _, edges := range []int{1000, 10000, 100000} {
-		matcher := NewMemoryPatternMatcher(chainsDatoms(edges))
+		matcher := factsDatabase(b, chainsDatoms(edges))
 		want := edges / 10 * 55
-		for _, mode := range optimizerModes {
-			b.Run(fmt.Sprintf("%d-edges/%s/semi-naive", edges, mode.name), func(b *testing.B) {
-				benchmarkSemiNaiveClosure(b, matcher, rs, q, mode.plannerOptions(), want)
+		for _, mode := range OptimizerModes {
+			b.Run(fmt.Sprintf("%d-edges/%s/semi-naive", edges, mode.Name()), func(b *testing.B) {
+				benchmarkSemiNaiveClosure(b, matcher, rs, q, mode.PlannerOptions(), want)
 			})
-			b.Run(fmt.Sprintf("%d-edges/%s/naive", edges, mode.name), func(b *testing.B) {
-				benchmarkNaiveClosure(b, matcher, rs, mode.plannerOptions(), want)
+			b.Run(fmt.Sprintf("%d-edges/%s/naive", edges, mode.Name()), func(b *testing.B) {
+				benchmarkNaiveClosure(b, matcher, rs, mode.PlannerOptions(), want)
 			})
+		}
+	}
+}
+
+// benchmarkNaiveClosure times the stratum's step with every occurrence
+// reading the full relation, each pass re-deriving every path, until a pass
+// derives nothing new.
+func benchmarkNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.RuleSet, opts planner.PlannerOptions, want int) {
+	exec := NewExecutorWithOptions(matcher, nil, opts)
+	follows := datalog.NewSymbol("follows")
+	ctx := NewContext().WithRules(rs)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		stratum := rs.Strata()[0]
+		bodies, err := planner.PlanStratum(exec.GetPlanner(), rs, stratum, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		eval := exec.PrepareStratum(rs, planner.PlannedStratum{Stratum: stratum, Bodies: bodies})
+		full := NewDerivedSet(eval.Symbols(follows))
+		seed, err := eval.Run(ctx, nil, eval.Bodies().Plain)
+		if err != nil {
+			b.Fatal(err)
+		}
+		for _, rel := range seed[follows] {
+			if _, err := full.Absorb(rel); err != nil {
+				b.Fatal(err)
+			}
+		}
+		for grew := true; grew; {
+			whole := full.Relation(exec.Options())
+			view := map[query.Symbol]Relation{follows: whole, query.DeltaSymbol(follows): whole}
+			got, err := eval.Run(ctx, view, eval.Bodies().Delta)
+			if err != nil {
+				b.Fatal(err)
+			}
+			grew = false
+			for _, rel := range got[follows] {
+				added, err := full.Absorb(rel)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if len(added) > 0 {
+					grew = true
+				}
+			}
+		}
+		if full.Len() != want {
+			b.Fatalf("got %d pairs, want %d", full.Len(), want)
 		}
 	}
 }
@@ -50,15 +100,15 @@ func BenchmarkTransitiveClosure(b *testing.B) {
 // start, so the derivation is the chain the start reaches, whatever the edge
 // count.
 func BenchmarkBoundInvocation(b *testing.B) {
-	rs := mustRules(b, followsRulesText)
-	q := mustParse(b, `[:find ?y :in $ % ?x :where (follows ?x ?y)]`)
+	rs := MustRules(b, FollowsRulesText)
+	q := MustParse(b, `[:find ?y :in $ % ?x :where (follows ?x ?y)]`)
 	for _, edges := range []int{1000, 10000, 100000} {
-		matcher := NewMemoryPatternMatcher(chainsDatoms(edges))
-		for _, mode := range optimizerModes {
-			b.Run(fmt.Sprintf("%d-edges/%s", edges, mode.name), func(b *testing.B) {
-				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-				inputs, err := createInputRelationsFromValuesWithOptions(q,
-					[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), page(0)}, exec.options)
+		matcher := factsDatabase(b, chainsDatoms(edges))
+		for _, mode := range OptimizerModes {
+			b.Run(fmt.Sprintf("%d-edges/%s", edges, mode.Name()), func(b *testing.B) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
+				inputs, err := CreateInputRelationsFromValuesWithOptions(q,
+					[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), Page(0)}, exec.Options())
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -88,55 +138,6 @@ func benchmarkSemiNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.R
 		}
 		if len(tuples) != want {
 			b.Fatalf("got %d pairs, want %d", len(tuples), want)
-		}
-	}
-}
-
-// benchmarkNaiveClosure times the stratum's step with every occurrence
-// reading the full relation, each pass re-deriving every path, until a pass
-// derives nothing new.
-func benchmarkNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.RuleSet, opts planner.PlannerOptions, want int) {
-	exec := NewExecutorWithOptions(matcher, nil, opts)
-	follows := datalog.NewSymbol("follows")
-	ctx := NewContext().WithRules(rs)
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		stratum := rs.Strata()[0]
-		bodies, err := planner.PlanStratum(exec.planner, rs, stratum, nil)
-		if err != nil {
-			b.Fatal(err)
-		}
-		eval := exec.prepareStratum(rs, planner.PlannedStratum{Stratum: stratum, Bodies: bodies})
-		full := newDerivedSet(eval.symbols[follows])
-		seed, err := eval.run(ctx, nil, eval.bodies.Plain)
-		if err != nil {
-			b.Fatal(err)
-		}
-		for _, rel := range seed[follows] {
-			if _, err := full.absorb(rel); err != nil {
-				b.Fatal(err)
-			}
-		}
-		for grew := true; grew; {
-			whole := full.relation(exec.options)
-			view := map[query.Symbol]Relation{follows: whole, query.DeltaSymbol(follows): whole}
-			got, err := eval.run(ctx, view, eval.bodies.Delta)
-			if err != nil {
-				b.Fatal(err)
-			}
-			grew = false
-			for _, rel := range got[follows] {
-				added, err := full.absorb(rel)
-				if err != nil {
-					b.Fatal(err)
-				}
-				if len(added) > 0 {
-					grew = true
-				}
-			}
-		}
-		if len(full.tuples) != want {
-			b.Fatalf("got %d pairs, want %d", len(full.tuples), want)
 		}
 	}
 }

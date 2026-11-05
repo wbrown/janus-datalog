@@ -92,7 +92,7 @@ func TestComposedIterators(t *testing.T) {
 		Op:    datalog.SymGTE,
 		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 		Right: query.ConstantTerm{Value: int64(30)},
-	})
+	}, nil, nil)
 
 	// Step 2: Project name and salary only
 	projectedSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?salary")}
@@ -195,7 +195,7 @@ func TestPredicateFilterIterator(t *testing.T) {
 	}
 
 	source := &sliceIterator{tuples: tuples, pos: -1}
-	predIter := NewPredicateFilterIterator(source, symbols, pred)
+	predIter := NewPredicateFilterIterator(source, symbols, pred, nil, nil)
 
 	// Collect filtered results
 	var results []Tuple
@@ -232,7 +232,7 @@ func TestFunctionEvaluatorIterator(t *testing.T) {
 	}
 
 	source := &sliceIterator{tuples: tuples, pos: -1}
-	evalIter := NewFunctionEvaluatorIterator(source, symbols, fn, datalog.NewSymbol("?sum"))
+	evalIter := NewFunctionEvaluatorIterator(source, symbols, &query.Expression{Function: fn, Binding: datalog.NewSymbol("?sum")}, nil, nil)
 
 	// Collect results with new symbol
 	var results []Tuple
@@ -242,7 +242,12 @@ func TestFunctionEvaluatorIterator(t *testing.T) {
 		copy(tupleCopy, tuple)
 		results = append(results, tupleCopy)
 	}
-	evalIter.Close()
+	if err := evalIter.Error(); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if err := evalIter.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
 
 	// Verify results
 	assert.Len(t, results, 3)
@@ -274,7 +279,7 @@ func TestFunctionEvaluatorIterator_UnifiesExistingSymbol(t *testing.T) {
 	}
 
 	source := &sliceIterator{tuples: tuples, pos: -1}
-	evalIter := NewFunctionEvaluatorIterator(source, symbols, fn, datalog.NewSymbol("?x"))
+	evalIter := NewFunctionEvaluatorIterator(source, symbols, &query.Expression{Function: fn, Binding: datalog.NewSymbol("?x")}, nil, nil)
 
 	var results []Tuple
 	for evalIter.Next() {
@@ -283,7 +288,12 @@ func TestFunctionEvaluatorIterator_UnifiesExistingSymbol(t *testing.T) {
 		copy(tupleCopy, tuple)
 		results = append(results, tupleCopy)
 	}
-	evalIter.Close()
+	if err := evalIter.Error(); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if err := evalIter.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
 
 	// All 3 tuples should pass (identity unification)
 	assert.Len(t, results, 3, "all tuples should pass identity unification")
@@ -313,7 +323,7 @@ func TestFunctionEvaluatorIterator_UnifiesFilters(t *testing.T) {
 	}
 
 	source := &sliceIterator{tuples: tuples, pos: -1}
-	evalIter := NewFunctionEvaluatorIterator(source, symbols, fn, datalog.NewSymbol("?x"))
+	evalIter := NewFunctionEvaluatorIterator(source, symbols, &query.Expression{Function: fn, Binding: datalog.NewSymbol("?x")}, nil, nil)
 
 	var results []Tuple
 	for evalIter.Next() {
@@ -322,7 +332,12 @@ func TestFunctionEvaluatorIterator_UnifiesFilters(t *testing.T) {
 		copy(tupleCopy, tuple)
 		results = append(results, tupleCopy)
 	}
-	evalIter.Close()
+	if err := evalIter.Error(); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if err := evalIter.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
 
 	// Only tuple {0, 0} passes: 0 + 0 == 0 == ?x
 	assert.Len(t, results, 1, "only tuples where function result matches existing binding should pass")
@@ -349,7 +364,7 @@ func BenchmarkIteratorComposition(b *testing.B) {
 				Op:    datalog.SymEQ,
 				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
 				Right: query.ConstantTerm{Value: int64(0)},
-			})
+			}, nil, nil)
 
 			// Wrap in a relation for projection
 			filteredRel := NewStreamingRelation(symbols, filterIter)

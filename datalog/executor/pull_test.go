@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -22,7 +23,7 @@ func TestPullExecutor_SimpleAttributes(t *testing.T) {
 		{E: alice, A: emailAttr, V: "alice@example.com", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pull pattern
@@ -68,7 +69,7 @@ func TestPullExecutor_Wildcard(t *testing.T) {
 		{E: alice, A: emailAttr, V: "alice@example.com", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse wildcard pattern
@@ -121,7 +122,7 @@ func TestPullExecutor_Wildcard_CardinalityMany(t *testing.T) {
 		{E: alice, A: tagAttr, V: "reviewer", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse wildcard pattern
@@ -191,7 +192,7 @@ func TestPullExecutor_NestedReference(t *testing.T) {
 		{E: entity, A: entityRegionAttr, V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Reference to region
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse nested pattern
@@ -247,7 +248,7 @@ func TestPullExecutor_CycleDetection(t *testing.T) {
 		{E: entity2, A: nextAttr, V: entity1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Circular reference back to entity1
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern that would recurse infinitely without cycle detection
@@ -303,7 +304,7 @@ func TestPullExecutor_MissingAttribute(t *testing.T) {
 		// No age attribute
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern requesting missing attribute
@@ -339,7 +340,7 @@ func TestPullExecutor_DefaultValue(t *testing.T) {
 		// No status attribute
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern with default value
@@ -369,7 +370,7 @@ func TestPullExecutor_NonExistentEntity(t *testing.T) {
 	// Create empty datoms
 	datoms := []datalog.Datom{}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern
@@ -402,7 +403,7 @@ func TestPullExecutor_PullMany(t *testing.T) {
 		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern
@@ -449,7 +450,7 @@ func TestPullExecutor_DeeplyNested(t *testing.T) {
 		{E: entity, A: entityRegionAttr, V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Parse 3-level nested pattern
@@ -509,7 +510,7 @@ func TestPullExecutor_AnnotationsEmitted(t *testing.T) {
 		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Capture events
@@ -581,9 +582,10 @@ func TestPullAttributeLookupReportsWhetherItFound(t *testing.T) {
 	alice := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")
 
-	matcher := NewIndexedMemoryMatcher([]datalog.Datom{
+	matcher := factsDatabase(t, []datalog.Datom{
 		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	})
+
 	puller := NewPullExecutor(matcher, nil)
 
 	var events []annotations.Event
@@ -638,7 +640,7 @@ func TestPullExecutor_NoEventsWhenHandlerNil(t *testing.T) {
 		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 	// Don't set handler - should use BasePullContext (no-op)
 
@@ -673,7 +675,7 @@ func TestPullExecutor_CycleDetectedEvent(t *testing.T) {
 		{E: entity2, A: nextAttr, V: entity1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Circular reference
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Capture events
@@ -723,7 +725,7 @@ func TestPullExecutor_NestedRefsEmitDepthEvents(t *testing.T) {
 		{E: entity, A: entityRegionAttr, V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewIndexedMemoryMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 	puller := NewPullExecutor(matcher, nil)
 
 	// Capture events

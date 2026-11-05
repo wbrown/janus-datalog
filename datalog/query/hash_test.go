@@ -61,7 +61,7 @@ func structuralFixture(functionsAsPointers bool) *Query {
 			&Expression{Function: plus, Binding: n},
 			&Expression{Function: concat, Binding: TupleBinding{Variables: []Symbol{w}}},
 			&Expression{Function: EnumerateFunction{VecTerm: VariableTerm{Symbol: v}}, Binding: RelationBinding{Variables: []Symbol{k, w}}},
-			&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: name, Default: "none"}, Binding: CollectionBinding{Variable: w}},
+			&Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: name, Default: ConstantTerm{Value: "none"}}, Binding: CollectionBinding{Variable: w}},
 			&Expression{Function: GroundFunction{Value: []interface{}{int64(1), "two"}}},
 			&NotClause{Clauses: []Clause{pattern(e, w)}},
 			&NotJoinClause{RequiredVars: []Symbol{e}, Clauses: []Clause{pattern(e, w)}},
@@ -176,7 +176,7 @@ func TestQueryIdentity_EveryPartDecidesIt(t *testing.T) {
 			q.Where[13] = &Expression{Function: EnumerateFunction{VecTerm: VariableTerm{Symbol: v}}, Binding: RelationBinding{Variables: []Symbol{k, n}}}
 		}},
 		{"a get-else's default", func(q *Query) {
-			q.Where[14] = &Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: name, Default: "some"}, Binding: CollectionBinding{Variable: w}}
+			q.Where[14] = &Expression{Function: &GetElseFunction{Entity: VariableTerm{Symbol: e}, Attr: name, Default: ConstantTerm{Value: "some"}}, Binding: CollectionBinding{Variable: w}}
 		}},
 		{"a ground's vector", func(q *Query) {
 			q.Where[15] = &Expression{Function: GroundFunction{Value: []interface{}{int64(1), "three"}}}
@@ -265,7 +265,7 @@ func TestQueryIdentity_EveryKindIsItself(t *testing.T) {
 		IndexOfFunction{VecTerm: term, ValueTerm: constant},
 		SubvecFunction{VecTerm: term, StartTerm: constant, EndTerm: constant},
 		EnumerateFunction{VecTerm: term},
-		&GetElseFunction{Entity: term, Attr: name, Default: int64(1)},
+		&GetElseFunction{Entity: term, Attr: name, Default: ConstantTerm{Value: int64(1)}},
 		&MissingFunction{Entity: term, Attr: name},
 		&GetSomeFunction{Entity: term, Attrs: []datalog.Keyword{name}},
 	}

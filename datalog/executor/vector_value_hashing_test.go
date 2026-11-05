@@ -176,8 +176,10 @@ func TestSignedZeroHashesConsistentlyAcrossSetOperations(t *testing.T) {
 			[]query.Symbol{value},
 			[]Tuple{{positive}, {negative}},
 		),
-		[]query.Symbol{value},
-		[]query.FindAggregate{{Function: datalog.SymCount, Arg: value}},
+		newAggregationLayout([]query.FindElement{
+			query.FindVariable{Symbol: value},
+			query.FindAggregate{Function: datalog.SymCount, Arg: value},
+		}),
 	)
 	if got := grouped.Size(); got != 1 {
 		t.Fatalf("signed zeros must form one aggregate group, got %d", got)

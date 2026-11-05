@@ -1,9 +1,10 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -20,7 +21,7 @@ func TestSingleBranchOrJoinExecutesAsItsBranch(t *testing.T) {
 		{E: datalog.NewIdentity("item:1"), A: valAttr, V: int64(1), Tx: tx},
 		{E: datalog.NewIdentity("item:2"), A: valAttr, V: int64(2), Tx: tx},
 	}
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	v := datalog.NewSymbol("?v")
 	e := datalog.NewSymbol("?e")
@@ -48,9 +49,9 @@ func TestSingleBranchOrJoinExecutesAsItsBranch(t *testing.T) {
 				Find:  []query.FindElement{query.FindVariable{Symbol: v}},
 				Where: []query.Clause{clause},
 			}
-			for _, mode := range optimizerModes {
-				t.Run(mode.name, func(t *testing.T) {
-					exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			for _, mode := range OptimizerModes {
+				t.Run(mode.Name(), func(t *testing.T) {
+					exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 					rel, err := exec.Execute(q)
 					if err != nil {
 						t.Fatalf("single-branch %s failed: %v", shapeName, err)

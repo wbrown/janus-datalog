@@ -73,12 +73,13 @@ func (a bindingAlignment) extensionSymbols() []query.Symbol {
 func (a bindingAlignment) extendsTuple() bool { return a.extensions > 0 }
 
 // bindingTuples is the tuples a function's result yields under an
-// expression's binding, the relation the scope joins: one tuple of the value
-// under a scalar binding, the one tuple the value destructures to under the
-// tuple form, one tuple per element of the value under the collection form,
-// and one tuple per inner vector of the value under the relation form. A
-// value of another shape than the binding's, or an inner vector of another
-// arity, is an error naming both. A tuple may share the value's slice.
+// expression's binding, the relation the scope joins, each tuple once: one
+// tuple of the value under a scalar binding, the one tuple the value
+// destructures to under the tuple form, one tuple per distinct element of the
+// value under the collection form, and one tuple per distinct inner vector of
+// the value under the relation form. A value of another shape than the
+// binding's, or an inner vector of another arity, is an error naming both. A
+// tuple may share the value's slice.
 func bindingTuples(binding interface{}, value interface{}) ([]Tuple, error) {
 	switch b := binding.(type) {
 	case query.Symbol:
@@ -101,7 +102,7 @@ func bindingTuples(binding interface{}, value interface{}) ([]Tuple, error) {
 		for i, element := range elements {
 			tuples[i] = Tuple{element}
 		}
-		return tuples, nil
+		return deduplicateTuples(tuples), nil
 	case query.RelationBinding:
 		vectors, ok := query.VectorElements(value)
 		if !ok {
@@ -118,7 +119,7 @@ func bindingTuples(binding interface{}, value interface{}) ([]Tuple, error) {
 			}
 			tuples[i] = values
 		}
-		return tuples, nil
+		return deduplicateTuples(tuples), nil
 	}
 	return nil, fmt.Errorf("unsupported binding type: %T", binding)
 }

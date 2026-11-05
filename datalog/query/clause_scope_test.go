@@ -521,7 +521,7 @@ func TestOrDefaultJoinValidate(t *testing.T) {
 					Function: &GetElseFunction{
 						Entity:  VariableTerm{Symbol: datalog.NewSymbol("?e")},
 						Attr:    datalog.NewKeyword(":a/b"),
-						Default: int64(0),
+						Default: ConstantTerm{Value: int64(0)},
 					},
 					Binding: datalog.NewSymbol("?out"),
 				}},

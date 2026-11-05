@@ -10,7 +10,6 @@ import (
 // These live outside package executor so unexported implementation details
 // cannot accidentally satisfy the contract.
 var (
-	_ executor.PatternMatcher      = (*executor.IndexedMemoryMatcher)(nil)
 	_ executor.PatternMatcher      = (*executor.SourceRouter)(nil)
 	_ executor.EntityLookupMatcher = (*executor.SourceRouter)(nil)
 	_ executor.Relation            = (*executor.MaterializedRelation)(nil)

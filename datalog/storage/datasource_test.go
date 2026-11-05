@@ -3,15 +3,11 @@ package storage
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
-
-func TestDatabaseImplementsPatternMatcher(t *testing.T) {
-	// Compile-time verification (also in database.go, but explicit in test)
-	var _ executor.PatternMatcher = (*Database)(nil)
-}
 
 func TestDatabaseMatch(t *testing.T) {
 	for _, mode := range optimizerModes {
@@ -23,10 +19,10 @@ func TestDatabaseMatch(t *testing.T) {
 			alice := datalog.NewIdentity("user:1")
 			bob := datalog.NewIdentity("user:2")
 
-			tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
-			tx.Add(alice, datalog.NewKeyword(":user/age"), int64(30))
-			tx.Add(bob, datalog.NewKeyword(":user/name"), "Bob")
-			tx.Add(bob, datalog.NewKeyword(":user/age"), int64(25))
+			require.NoError(t, tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice"))
+			require.NoError(t, tx.Add(alice, datalog.NewKeyword(":user/age"), int64(30)))
+			require.NoError(t, tx.Add(bob, datalog.NewKeyword(":user/name"), "Bob"))
+			require.NoError(t, tx.Add(bob, datalog.NewKeyword(":user/age"), int64(25)))
 
 			_, err := tx.Commit()
 			if err != nil {
@@ -51,18 +47,21 @@ func TestDatabaseMatch(t *testing.T) {
 				t.Fatal("expected non-nil result")
 			}
 
-			// Count results by iterating (relations may be lazy/streaming)
-			count := 0
+			// The match answers each user with their name.
+			ei := query.SymbolIndex(result.Symbols(), datalog.NewSymbol("?e"))
+			ni := query.SymbolIndex(result.Symbols(), datalog.NewSymbol("?name"))
+			if ei < 0 || ni < 0 {
+				t.Fatalf("the match carries ?e and ?name; got %v", result.Symbols())
+			}
+			var pairs [][]interface{}
 			it := result.Iterator()
 			for it.Next() {
-				_ = it.Tuple()
-				count++
+				tuple := it.Tuple()
+				pairs = append(pairs, []interface{}{tuple[ei], tuple[ni]})
 			}
-			it.Close()
-
-			if count != 2 {
-				t.Errorf("expected 2 results, got %d", count)
-			}
+			require.NoError(t, it.Error())
+			require.NoError(t, it.Close())
+			assert.ElementsMatch(t, [][]interface{}{{alice, "Alice"}, {bob, "Bob"}}, pairs)
 		})
 	}
 }
@@ -74,8 +73,8 @@ func TestDatabaseMatchWithConstantEntity(t *testing.T) {
 
 			alice := datalog.NewIdentity("user:alice")
 			tx := db.NewTransaction()
-			tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
-			tx.Add(alice, datalog.NewKeyword(":user/age"), int64(30))
+			require.NoError(t, tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice"))
+			require.NoError(t, tx.Add(alice, datalog.NewKeyword(":user/age"), int64(30)))
 			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
@@ -95,17 +94,23 @@ func TestDatabaseMatchWithConstantEntity(t *testing.T) {
 				t.Fatalf("Database.Match: unexpected error: %v", err)
 			}
 
-			count := 0
+			ai := query.SymbolIndex(result.Symbols(), datalog.NewSymbol("?a"))
+			vi := query.SymbolIndex(result.Symbols(), datalog.NewSymbol("?v"))
+			if ai < 0 || vi < 0 {
+				t.Fatalf("the match carries ?a and ?v; got %v", result.Symbols())
+			}
+			var pairs [][]interface{}
 			it := result.Iterator()
 			for it.Next() {
-				_ = it.Tuple()
-				count++
+				tuple := it.Tuple()
+				pairs = append(pairs, []interface{}{tuple[ai], tuple[vi]})
 			}
-			it.Close()
-
-			if count != 2 {
-				t.Errorf("expected 2 results (name + age), got %d", count)
-			}
+			require.NoError(t, it.Error())
+			require.NoError(t, it.Close())
+			assert.ElementsMatch(t, [][]interface{}{
+				{datalog.NewKeyword(":user/name"), "Alice"},
+				{datalog.NewKeyword(":user/age"), int64(30)},
+			}, pairs)
 		})
 	}
 }

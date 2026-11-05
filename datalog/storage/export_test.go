@@ -627,15 +627,19 @@ func TestImport_WithComments(t *testing.T) {
 }
 
 func TestImport_BatchBoundary(t *testing.T) {
-	// Generate exactly 5001 datoms (triggers second batch)
+	// Generate exactly 5001 datoms (triggers second batch). The first 5000
+	// carry the values 0-9; the 5001st, alone in the second batch, carries 10,
+	// which no datom of the first batch does.
 	var sb strings.Builder
 	id := datalog.NewIdentity("entity")
 	l85 := id.L85()
 
-	for i := 0; i < 5001; i++ {
+	for i := 0; i < 5000; i++ {
 		sb.WriteString(`[#identity "` + l85 + `" :test/idx ` + string(rune('0'+i%10)) + ` 1]`)
 		sb.WriteString("\n")
 	}
+	sb.WriteString(`[#identity "` + l85 + `" :test/idx 10 1]`)
+	sb.WriteString("\n")
 
 	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -643,6 +647,15 @@ func TestImport_BatchBoundary(t *testing.T) {
 
 			err := db.Import(strings.NewReader(sb.String()))
 			require.NoError(t, err)
+
+			// History holds every value written, both batches' included.
+			values, err := executor.CollectTuples(db.History().Query(`[:find ?v :where [?e :test/idx ?v]]`))
+			require.NoError(t, err)
+			var want [][]interface{}
+			for v := int64(0); v <= 10; v++ {
+				want = append(want, []interface{}{v})
+			}
+			assert.ElementsMatch(t, want, values)
 		})
 	}
 }
@@ -665,6 +678,15 @@ func TestImport_LargeFile(t *testing.T) {
 
 			err := db.Import(strings.NewReader(sb.String()))
 			require.NoError(t, err)
+
+			// Every datom landed: a thousand entities for each value.
+			counts, err := executor.CollectTuples(db.Query(`[:find ?v (count ?e) :where [?e :test/idx ?v]]`))
+			require.NoError(t, err)
+			var want [][]interface{}
+			for v := int64(0); v < 10; v++ {
+				want = append(want, []interface{}{v, int64(1000)})
+			}
+			assert.ElementsMatch(t, want, counts)
 		})
 	}
 }

@@ -246,13 +246,15 @@ The binding form reads the result, whatever the function. Under the tuple form, 
 ```clojure
 [(get-else $ ?e :person/nickname "unknown") ?nick]
 [(missing? $ ?e :person/email)]
-[(get-some $ ?e :person/nick :person/name :person/email) ?display]
+[(get-some $ ?e :person/nick :person/name :person/email) [?attr ?display]]
 ```
 
-`get-some` binds the first listed attribute's value that exists on the
-entity; when **none** exist, the tuple is dropped — a soft no-match, not an
-error and not a nil binding. Use `get-else` when every tuple must survive
-with a default.
+`get-some` binds the first listed attribute the entity carries and that
+attribute's value: under `[?attr ?display]` the attribute's keyword and the
+value, and under a single symbol the two as one pair, `[:person/nick "Ali"]`.
+When the entity carries **none** of them, the tuple is dropped — a soft
+no-match, not an error and not a nil binding. Use `get-else` when every tuple
+must survive with a default.
 
 **Subqueries** — nested queries whose results join the outer query:
 ```clojure

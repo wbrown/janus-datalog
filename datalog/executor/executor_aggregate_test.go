@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -17,11 +18,11 @@ func TestAggregateSum(t *testing.T) {
 		{E: datalog.NewIdentity("order:3"), A: datalog.NewKeyword(":order/total"), V: 300.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			queryStr := `[:find (sum ?total)
 			              :where [?o :order/total ?total]]`
@@ -49,11 +50,11 @@ func TestAggregateCount(t *testing.T) {
 		{E: datalog.NewIdentity("user:3"), A: datalog.NewKeyword(":user/name"), V: "Charlie", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			queryStr := `[:find (count ?user)
 			              :where [?user :user/name ?name]]`
@@ -81,11 +82,11 @@ func TestAggregateAvg(t *testing.T) {
 		{E: datalog.NewIdentity("score:3"), A: datalog.NewKeyword(":score/value"), V: 100.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			queryStr := `[:find (avg ?value)
 			              :where [?s :score/value ?value]]`
@@ -117,11 +118,11 @@ func TestAggregateMinMax(t *testing.T) {
 		{E: datalog.NewIdentity("event:3"), A: datalog.NewKeyword(":event/time"), V: t3, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			queryStr := `[:find (min ?time) (max ?time)
 			              :where [?e :event/time ?time]]`
@@ -157,11 +158,11 @@ func TestAggregateGroupBy(t *testing.T) {
 		{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/amount"), V: 2500.0, Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			queryStr := `[:find ?dept (sum ?amount)
 			              :where [?s :sale/dept ?dept]
@@ -203,11 +204,11 @@ func TestAggregateMixedWithNonAggregated(t *testing.T) {
 		{E: datalog.NewIdentity("product:3"), A: datalog.NewKeyword(":product/price"), V: 30.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
 			// Find category and average price
 			queryStr := `[:find ?category (avg ?price) (count ?p)

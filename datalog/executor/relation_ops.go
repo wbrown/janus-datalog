@@ -52,14 +52,27 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 // the environment into the operator, with the per-tuple bindings map as
 // operator-internal scratch.
 //
-// Eager: the scan completes before returning, so every error — predicate
-// evaluation, source iteration, close — is knowable synchronously and
-// returns in-band. The deferred-error convention is exclusively for
+// A filter whose result can fail as it is read, the predicate failing on a
+// value of the relation (canFailOnAValueOver) or the relation evaluating as
+// it is read, is a stream carrying the evaluating mark. Its failure is the
+// stream's error, raised where a reader that sees every other clause reads it
+// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the failure contract).
+//
+// Any other filter is eager: the scan completes before returning, so every
+// error — source iteration, close — is knowable synchronously and returns
+// in-band. The deferred-error convention is exclusively for
 // lazily-discovered errors on streaming relations; deferring a known error
 // here left it to consumers that inspect relations structurally (emptiness
 // branches) and laundered it into a silent empty
 // (BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY).
 func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, env Relation) (result Relation, resultErr error) {
+	if properties := rel.Properties(); properties.Evaluates || canFailOnAValueOver(pred, properties.Identities) {
+		properties = properties.clone()
+		properties.Evaluates = true
+		filter := NewPredicateFilterIterator(rel.Iterator(), rel.Symbols(), pred, lookup, env)
+		return NewStreamingRelationWithProperties(rel.Symbols(), filter, rel.Options(), properties), nil
+	}
+
 	symbols := rel.Symbols()
 	needsCopy := rel.RequiresCopy()
 	envSymbols, envTuple := environmentTuple(env)
@@ -132,150 +145,35 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 	return NewMaterializedRelationWithProperties(symbols, filtered, opts, rel.Properties()), nil
 }
 
-// evaluateExpressionWithLookup evaluates an expression with optional database lookup support.
-// If lookup is non-nil and the expression is a DatabaseFunction, it uses EvalWithLookup.
-// Otherwise, it falls back to the standard Eval method.
-// env is the query scope's environment relation (single-valued :in
-// parameters); its one tuple binds into every tuple's evaluation. The
-// environmentTuple locals are references into the relation, never copies —
-// the relation stays the single holder of its content.
-func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, env Relation) (result Relation, resultErr error) {
-	symbols := rel.Symbols()
-	envSymbols, envTuple := environmentTuple(env)
+// evaluateExpressionWithLookup answers rel joined with what expr's binding
+// reads from its value on each tuple, as a stream that evaluates as it is
+// pulled: a tuple nothing pulls is never evaluated, and an evaluation failure
+// surfaces when the result is driven. If lookup is non-nil and the expression
+// is a DatabaseFunction, it evaluates through EvalWithLookup. env is the
+// query scope's environment relation (single-valued :in parameters); its one
+// tuple binds into every tuple's evaluation.
+func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, env Relation) Relation {
+	evaluator := NewFunctionEvaluatorIterator(rel.Iterator(), rel.Symbols(), expr, lookup, env)
 
-	bindingSymbols := expr.BoundVariables()
-
-	// Bound binding symbols unify (filter); new ones extend the tuple.
-	align := alignBinding(symbols, bindingSymbols)
-	newSymbols := align.symbols
-
-	// Retained pass-through tuples (unify and no-binding cases) must be
-	// copied out of a workspace-reusing source; extension always allocates
-	// a fresh tuple in align.apply.
-	needsCopy := rel.RequiresCopy()
-
-	// Reuse single bindings map to avoid repeated allocations
-	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(envSymbols))
-
-	// Pre-allocate newTuples only for materialized relations to avoid forcing materialization
-	var newTuples []Tuple
-	if _, ok := rel.(*MaterializedRelation); ok {
-		if size := rel.Size(); size >= 0 {
-			newTuples = make([]Tuple, 0, size)
-		}
-	}
-
-	// Eager: the scan completes before returning, so evaluation and
-	// iteration errors are knowable synchronously and return in-band (the
-	// deferred-error convention is exclusively for lazily-discovered errors
-	// on streaming relations). Named return + closure so the deferred
-	// Close() also runs on panic (expression Function.Eval is user-supplied
-	// code and can panic), without losing the Close error.
-	var iterErr error
-	// The collection and relation forms read any number of tuples per input
-	// tuple, so the input's keys do not survive them; the scalar and tuple
-	// forms read one tuple by construction.
-	var expanded bool
-	switch expr.Binding.(type) {
-	case query.CollectionBinding, query.RelationBinding:
-		expanded = true
-	}
-	iter := rel.Iterator()
-	defer func() {
-		if closeErr := iter.Close(); closeErr != nil && resultErr == nil {
-			resultErr = closeErr
-		}
-	}()
-
-	for iter.Next() {
-		tuple := iter.Tuple()
-
-		// Clear and populate bindings map
-		for k := range bindings {
-			delete(bindings, k)
-		}
-		// Pre-populate from the environment's tuple (a relation symbol of
-		// the same name overwrites below — relation data wins locally)
-		for i := range envSymbols {
-			bindings[envSymbols[i]] = envTuple[i]
-		}
-		bindTuple(bindings, symbols, tuple)
-
-		// Evaluate the expression
-		// Check if this is a database function that needs lookup access
-		var evalResult interface{}
-		var err error
-		if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok && lookup != nil {
-			evalResult, err = dbFunc.EvalWithLookup(bindings, lookup)
-		} else {
-			evalResult, err = expr.Function.Eval(bindings)
-		}
-		if err != nil {
-			// Fail fast — expression eval errors are real errors. Surface
-			// to the consumer; do not silently drop the tuple.
-			iterErr = err
-			break
-		}
-
-		// Absence (get-some found no attribute) is a soft no-match: drop this
-		// tuple without surfacing an error.
-		value, found, admitErr := admitExpressionResult(expr.Function, evalResult)
-		if admitErr != nil {
-			iterErr = admitErr
-			break
-		}
-		if !found {
-			continue
-		}
-		evalResult = value
-
-		// Apply the result: bound binding positions unify (filter), new
-		// binding symbols extend the tuple, and each tuple the binding reads
-		// from the result is joined with the input tuple.
-		if len(bindingSymbols) == 0 {
-			// No binding, just keep original tuple
-			out := tuple
-			if needsCopy {
-				out = copyTuple(out)
-			}
-			newTuples = append(newTuples, out)
-			continue
-		}
-		bound, err := bindingTuples(expr.Binding, evalResult)
-		if err != nil {
-			iterErr = err
-			break
-		}
-		for _, boundTuple := range bound {
-			if out, ok := align.apply(tuple, boundTuple); ok {
-				if needsCopy && !align.extendsTuple() {
-					out = copyTuple(out)
-				}
-				newTuples = append(newTuples, out)
-			}
-		}
-	}
-	if iterErr == nil {
-		iterErr = iter.Error()
-	}
-	if iterErr != nil {
-		return nil, iterErr
-	}
-
-	// Extract options from source relation to preserve configuration.
 	// Only extension symbols touch the properties: bound positions are
 	// filtered, never rewritten, so orderings and keys naming them stay
-	// valid.
-	opts := rel.Options()
+	// valid. The expanding forms read any number of tuples per input tuple,
+	// so the input's keys do not survive them; the scalar and tuple forms
+	// read one tuple by construction.
 	properties := rel.Properties()
-	if expanded {
-		properties = expansionProperties(properties, bindingSymbols, newSymbols)
+	if evaluator.expands {
+		properties = expansionProperties(properties, expr.BoundVariables(), evaluator.Symbols())
 	} else {
-		for _, symbol := range align.extensionSymbols() {
+		for _, symbol := range evaluator.align.extensionSymbols() {
 			properties = properties.addSymbol(symbol)
 		}
 	}
-	return NewMaterializedRelationWithProperties(newSymbols, newTuples, opts, properties), nil
+	// The stream evaluates the expression as it is pulled, which can fail on
+	// a value unless the expression fails on no value over rel's identity
+	// symbols (expressionFailsOnNoValueOver).
+	properties = properties.clone()
+	properties.Evaluates = properties.Evaluates || !expressionFailsOnNoValueOver(expr, rel.Properties().Identities)
+	return NewStreamingRelationWithProperties(evaluator.Symbols(), evaluator, rel.Options(), properties)
 }
 
 // getUniqueCombinations extracts unique value combinations for the given symbols.

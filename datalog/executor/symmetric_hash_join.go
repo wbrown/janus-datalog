@@ -127,6 +127,10 @@ type symmetricHashJoinIterator struct {
 	outputSyms                []query.Symbol
 	resultQueue               []Tuple
 	leftDone, rightDone       bool
+	// leftYielded and rightYielded are set once their side yields a tuple: a
+	// side's failure is the join's only beside a side that yielded a tuple or
+	// failed (joinFailure).
+	leftYielded, rightYielded bool
 	batchSize                 int
 	resultPos                 int
 }
@@ -163,6 +167,7 @@ func (it *symmetricHashJoinIterator) Next() bool {
 func (it *symmetricHashJoinIterator) processLeftBatch() {
 	processed := 0
 	for processed < it.batchSize && it.leftIt.Next() {
+		it.leftYielded = true
 		leftTuple := it.leftIt.Tuple()
 
 		// Copy tuple since iterator might reuse buffer
@@ -195,6 +200,7 @@ func (it *symmetricHashJoinIterator) processLeftBatch() {
 func (it *symmetricHashJoinIterator) processRightBatch() {
 	processed := 0
 	for processed < it.batchSize && it.rightIt.Next() {
+		it.rightYielded = true
 		rightTuple := it.rightIt.Tuple()
 
 		// Copy tuple since iterator might reuse buffer
@@ -269,16 +275,17 @@ func (it *symmetricHashJoinIterator) Close() error {
 	return err2
 }
 
+// Error answers the join's failure under the failure contract (joinFailure),
+// from what each side yielded and the failure it ended with.
 func (it *symmetricHashJoinIterator) Error() error {
+	var leftErr, rightErr error
 	if it.leftIt != nil {
-		if err := it.leftIt.Error(); err != nil {
-			return err
-		}
+		leftErr = it.leftIt.Error()
 	}
 	if it.rightIt != nil {
-		return it.rightIt.Error()
+		rightErr = it.rightIt.Error()
 	}
-	return nil
+	return joinFailure(sideRead{yielded: it.leftYielded, err: leftErr}, sideRead{yielded: it.rightYielded, err: rightErr})
 }
 
 // ChooseJoinStrategy selects the appropriate join strategy based on relation types

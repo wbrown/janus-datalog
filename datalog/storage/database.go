@@ -76,7 +76,8 @@ type Database struct {
 	parseCache *ParseCache        // Shared query parse cache
 	// installed is the schema the database runs with and the definitions its
 	// store carries as facts, loaded as one value by every reader. It holds a
-	// value from construction on, the empty pair until installSchema publishes.
+	// value from construction on: the engine's schema and words until
+	// installSchema publishes.
 	installed atomic.Pointer[installedSchema]
 	// refuseUnknown is the RefuseUnknownAttributes option, read by every
 	// matcher the database mints.
@@ -370,8 +371,11 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		d.removePath = opts.Path
 	}
 	d.drainCond = sync.NewCond(&d.mu)
-	// The engine's schema is in force from construction, before any install.
-	d.installed.Store(&installedSchema{effective: engineSchema})
+	// The engine's schema is in force from construction, before any install,
+	// for reads and for a written value's check, and a refusing database
+	// admits the engine's words from then on: the install's query of the
+	// declarations names them.
+	d.installed.Store(&installedSchema{effective: engineSchema, admission: engineSchema, vocabulary: engineVocabulary})
 
 	// A dump's datoms, its writer's declarations among them, go into the store
 	// before the install.
@@ -642,12 +646,15 @@ func (d *Database) NewTransaction() *Transaction {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	installed := d.installed.Load()
 	tx := &Transaction{
 		db:                d,
 		datoms:            make([]datalog.Datom, 0),
 		retracts:          make([]datalog.Datom, 0),
 		lastVectorElement: make(map[entityAttrKey]datalog.ElementID),
 		doomed:            d.rollbackInProgress,
+		schema:            installed.effective,
+		admission:         installed.admission,
 	}
 
 	// A transaction born during a rollback is dropped (its writes return
@@ -702,20 +709,45 @@ func (d *Database) RefusesUnknownAttributes(_ query.Symbol) bool {
 
 // UnknownAttributes implements executor.AttributeVocabulary for a database
 // passed as a named source. Opened with RefuseUnknownAttributes, it refuses
-// every attribute of the roster that the schema it runs with does not declare
-// and the engine does not reserve, joined in order; otherwise it refuses
-// nothing, and the roster is not read.
+// every attribute of the roster that its store does not declare and the
+// engine does not reserve, joined in order; otherwise it refuses nothing, and
+// the roster is not read.
 func (d *Database) UnknownAttributes(_ query.Symbol, attrs []datalog.Keyword) error {
 	if !d.refuseUnknown {
 		return nil
 	}
-	return unknownAttributes(d.Schema(), attrs)
+	return unknownAttributes(d.installed.Load().vocabulary, attrs)
+}
+
+// LookupAttribute implements executor.EntityLookupMatcher for a database
+// passed as a named source, answering through its matcher.
+func (d *Database) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool, error) {
+	return d.Matcher().(executor.EntityLookupMatcher).LookupAttribute(entity, attr)
+}
+
+// LookupSource implements executor.EntityLookupMatcher for a database passed
+// as a named source: it is one source, so its matcher is the lookup of the
+// source under any name, and get-else, missing? and get-some on that source
+// read it, a get-else default typed by the schema it runs with.
+func (d *Database) LookupSource(source query.Symbol) (executor.EntityLookupMatcher, error) {
+	return d.Matcher().(executor.EntityLookupMatcher).LookupSource(source)
+}
+
+// CanFuseAttributeFetch implements executor.AttributeFetchFusable for a
+// database passed as a named source, answering through its matcher: whether a
+// match of attr on the database answers, per entity, the one value its lookup
+// answers, under the schema it runs with and in its view.
+func (d *Database) CanFuseAttributeFetch(source query.Symbol, attr datalog.Keyword) bool {
+	return d.Matcher().(executor.AttributeFetchFusable).CanFuseAttributeFetch(source, attr)
 }
 
 // Compile-time verification that Database implements PatternMatcher and
-// answers the attribute-vocabulary question as a named source.
+// answers the attribute-vocabulary, entity-lookup and attribute-fetch
+// questions as a named source.
 var _ executor.PatternMatcher = (*Database)(nil)
 var _ executor.AttributeVocabulary = (*Database)(nil)
+var _ executor.EntityLookupMatcher = (*Database)(nil)
+var _ executor.AttributeFetchFusable = (*Database)(nil)
 
 // AsOf returns a read-only Database handle that queries state as of the given
 // transaction. The returned handle uses CRDT resolution filtered to that point
@@ -835,6 +867,21 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 	return executor.NewExecutorWithOptions(matcher, d, opts)
 }
 
+// executorOverSources is the executor a query plans and runs through: matcher
+// at $ unless the query's WithSources sources bind it, beside those sources,
+// validated against the sources the query declares and routed by name, under
+// opts and the database's plan cache. Query passes its read session's
+// matcher. Explain, ExplainAlgebra and Analyze pass the database's, so a plan
+// they return is made for the sources the query runs over.
+func (d *Database) executorOverSources(q *query.Query, sources map[query.Symbol]executor.PatternMatcher, matcher executor.PatternMatcher, opts planner.PlannerOptions) (*executor.Executor, error) {
+	routed := buildSourceMap(sources, matcher)
+	if err := validateQuerySources(q, routed); err != nil {
+		return nil, err
+	}
+	opts.Cache = d.planCache
+	return executor.NewExecutorWithOptions(executor.NewSourceRouter(routed), d, opts), nil
+}
+
 // matcherWithExecOptions builds a fully-configured PatternMatcher using the
 // given planner options (converted through executor.ExecutorOptionsFromPlanner,
 // the single source of truth shared with the executor) while applying all
@@ -848,8 +895,10 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.PatternMatcher {
 	matcher := NewPatternMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
 	matcher.builderCache = d.builderCache
-	matcher.SetSchema(d.installed.Load().effective)
+	installed := d.installed.Load()
+	matcher.SetSchema(installed.effective)
 	matcher.refuseUnknown = d.refuseUnknown
+	matcher.vocabulary = installed.vocabulary
 	if d.cache != nil {
 		matcher.SetCache(d.cache)
 	}
@@ -1032,10 +1081,10 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate inputs match :in clause (same validation as Query). The options
-	// among the inputs carry nothing to plan with; the rule set declares the
-	// invocations' required positions, which decide their phases.
-	_, regularInputs := extractQueryOptions(inputs)
+	// Validate inputs match :in clause (same validation as Query). The query's
+	// WithSources sources are the sources it is planned for; the rule set
+	// declares the invocations' required positions, which decide their phases.
+	opts, regularInputs := extractQueryOptions(inputs)
 	_, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
@@ -1045,13 +1094,13 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 		return nil, err
 	}
 
-	// Create executor to get its planner (ensures same options as execution)
-	exec := d.NewExecutor()
-
-	// Get the query plan from the executor's planner (planning is not annotated
-	// on this plan-only path).
-	queryPlanner := exec.GetPlanner()
-	return queryPlanner.PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
+	// The executor over the query's sources, whose planner makes the plan the
+	// query runs (planning is not annotated on this plan-only path).
+	exec, err := d.executorOverSources(q, opts.sources, d.Matcher(), d.effectivePlannerOptions())
+	if err != nil {
+		return nil, err
+	}
+	return exec.GetPlanner().PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
 }
 
 // ExplainAlgebra returns, without executing, the full record of what planning
@@ -1081,10 +1130,10 @@ func (d *Database) ExplainAlgebra(queryInput interface{}, inputs ...interface{})
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate inputs match :in clause (same validation as Query). The options
-	// among the inputs carry nothing to plan with; the rule set declares the
-	// invocations' required positions, which decide their phases.
-	_, regularInputs := extractQueryOptions(inputs)
+	// Validate inputs match :in clause (same validation as Query). The query's
+	// WithSources sources are the sources it is planned for; the rule set
+	// declares the invocations' required positions, which decide their phases.
+	opts, regularInputs := extractQueryOptions(inputs)
 	_, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
@@ -1094,8 +1143,12 @@ func (d *Database) ExplainAlgebra(queryInput interface{}, inputs ...interface{})
 		return nil, err
 	}
 
-	// Create executor to get its planner (ensures same options as execution)
-	exec := d.NewExecutor()
+	// The executor over the query's sources, whose planner records what
+	// planning does for the sources the query runs over.
+	exec, err := d.executorOverSources(q, opts.sources, d.Matcher(), d.effectivePlannerOptions())
+	if err != nil {
+		return nil, err
+	}
 	return exec.GetPlanner().ExplainPlan(prepared, query.Bindings{Rules: rules})
 }
 
@@ -1264,9 +1317,9 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// The rule set the inputs carry, for the plan; the query path below
-	// converts the inputs again for execution.
-	_, regularInputs := extractQueryOptions(inputs)
+	// The rule set the inputs carry, and the query's WithSources sources, for
+	// the plan; the query path below converts the inputs again for execution.
+	queryOpts, regularInputs := extractQueryOptions(inputs)
 	_, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
@@ -1296,9 +1349,14 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		eventsMu.Unlock()
 	}
 
-	// The plan from a planner under the same options. The handler above
-	// captures execution annotations; planning here is not annotated.
-	plan, err := d.NewExecutorWithOptions(opts).GetPlanner().PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
+	// The plan from a planner over the query's sources under the same options.
+	// The handler above captures execution annotations; planning here is not
+	// annotated.
+	planning, err := d.executorOverSources(q, queryOpts.sources, d.matcherWithExecOptions(opts), opts)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := planning.GetPlanner().PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to plan query: %w", err)
 	}
@@ -1734,6 +1792,15 @@ type Transaction struct {
 	// DeleteSnapshot) and a branch's record (Fork), which write the engine's
 	// words (validateAttributeStorable).
 	engine bool
+	// schema is the schema the transaction's writes are written under: the
+	// database's effective schema, read once when the transaction opened,
+	// whose cardinality decides each write's op. An install while the
+	// transaction is open does not reach its writes.
+	schema schema.SchemaProvider
+	// admission is the schema each written value is checked against, read
+	// from the same installed value as schema: the engine's words over the
+	// stored definitions, with no inferred definition among them.
+	admission schema.SchemaProvider
 }
 
 // SetTime sets a custom transaction time for this transaction
@@ -1742,6 +1809,37 @@ func (t *Transaction) SetTime(txTime time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.txTime = &txTime
+}
+
+// writtenValue answers v as Add stores it at a, or the error Add answers for
+// it: the attribute is one the writer may write (validateAttributeStorable,
+// engine its flag), nil is no value, an integer's width is widened to int64
+// (datalog.NormalizeValue), a value no datom holds is refused
+// (validateValueStorable), and the value is one the schema s admits at a
+// (schema.ValidateDatom).
+func writtenValue(engine bool, s schema.SchemaProvider, a datalog.Keyword, v interface{}) (interface{}, error) {
+	if err := validateAttributeStorable(engine, a); err != nil {
+		return nil, err
+	}
+
+	// Nil values are not allowed in relational algebra - absence of fact represents "no value"
+	if v == nil {
+		return nil, fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
+	}
+
+	// Normalize integer width to canonical int64 at the API boundary, so a Go int
+	// stores and matches the same as int64 (and never reaches the encoder as a
+	// non-int64 width).
+	v = datalog.NormalizeValue(v)
+	if err := validateValueStorable(a, v); err != nil {
+		return nil, err
+	}
+
+	// Schema validation (if schema present)
+	if err := schema.ValidateDatom(s, a, v); err != nil {
+		return nil, fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
+	}
+	return v, nil
 }
 
 // Add adds a value using schema-aware CRDT semantics.
@@ -1765,37 +1863,18 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return ErrRollbackInProgress
 	}
 
-	if err := validateAttributeStorable(t, a); err != nil {
+	v, err := writtenValue(t.engine, t.admission, a, v)
+	if err != nil {
 		return err
-	}
-
-	// Nil values are not allowed in relational algebra - absence of fact represents "no value"
-	if v == nil {
-		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
-	}
-
-	// Normalize integer width to canonical int64 at the API boundary, so a Go int
-	// stores and matches the same as int64 (and never reaches the encoder as a
-	// non-int64 width).
-	v = datalog.NormalizeValue(v)
-	if err := validateValueStorable(a, v); err != nil {
-		return err
-	}
-
-	// Schema validation (if schema present)
-	if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
-		return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
 	}
 
 	// Check cardinality for CRDT semantics
 	var card datalog.Keyword
 	var def *schema.AttributeDefinition
 	hasSchema := false
-	if s := t.db.Schema(); s != nil {
-		if def = s.GetAttribute(a); def != nil {
-			card = def.Cardinality
-			hasSchema = true
-		}
+	if def = t.schema.GetAttribute(a); def != nil {
+		card = def.Cardinality
+		hasSchema = true
 	}
 
 	// Schema-aware behavior: Add() works for all cardinalities
@@ -1906,7 +1985,7 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 		return fmt.Errorf("transaction is closed")
 	}
 
-	if err := validateAttributeStorable(t, a); err != nil {
+	if err := validateAttributeStorable(t.engine, a); err != nil {
 		return err
 	}
 
@@ -1922,11 +2001,7 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 	}
 
 	// Determine cardinality for Remove semantics
-	s := t.db.Schema()
-	var def *schema.AttributeDefinition
-	if s != nil {
-		def = s.GetAttribute(a)
-	}
+	def := t.schema.GetAttribute(a)
 
 	// Determine cardinality: schemaless/undefined defaults to CardinalityOne
 	var card datalog.Keyword
@@ -2043,20 +2118,20 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 	return nil
 }
 
-// validateAttributeStorable rejects an attribute t may not write: a keyword
-// whose UTF-8 form is too long to store, since the storage Attribute is a
-// fixed [32]byte and a longer name would be silently truncated and alias
+// validateAttributeStorable rejects an attribute a writer may not write: a
+// keyword whose UTF-8 form is too long to store, since the storage Attribute
+// is a fixed [32]byte and a longer name would be silently truncated and alias
 // other attributes sharing its first 32 bytes (see datalog.MaxAttributeBytes);
-// and, for any transaction but one the engine opened for its own writes, one
-// of the engine's words (engineSchema), which the engine alone writes.
-func validateAttributeStorable(t *Transaction, a datalog.Keyword) error {
+// and, for any writer but the engine writing for itself (engine), one of the
+// engine's words (engineSchema), which the engine alone writes.
+func validateAttributeStorable(engine bool, a datalog.Keyword) error {
 	if a == nil {
 		return fmt.Errorf("nil attribute")
 	}
 	if err := datalog.ValidateAttributeWidth(a); err != nil {
 		return err
 	}
-	if !t.engine && engineSchema.GetAttribute(a) != nil {
+	if !engine && engineSchema.GetAttribute(a) != nil {
 		return fmt.Errorf("attribute %s is the engine's: the engine alone writes it", a)
 	}
 	return nil
@@ -2110,7 +2185,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("transaction is closed")
 	}
 
-	if err := validateAttributeStorable(t, a); err != nil {
+	if err := validateAttributeStorable(t.engine, a); err != nil {
 		return err
 	}
 
@@ -2119,25 +2194,18 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
 	}
 
-	// Normalize integer width to canonical int64 at the API boundary.
-	v = datalog.NormalizeValue(v)
-
 	// Check cardinality first - determines validation strategy
 	card := schema.CardinalityOne
-	if s := t.db.Schema(); s != nil {
-		if def := s.GetAttribute(a); def != nil {
-			card = def.Cardinality
-		}
+	if def := t.schema.GetAttribute(a); def != nil {
+		card = def.Cardinality
 	}
 
 	switch card {
 	case schema.CardinalityOne:
-		if err := validateValueStorable(a, v); err != nil {
+		// The value is admitted and written as Add admits and writes it.
+		var err error
+		if v, err = writtenValue(t.engine, t.admission, a, v); err != nil {
 			return err
-		}
-		// Schema validation for single value
-		if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
-			return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
 		}
 		// CRDT LWW semantics: just append, no retraction needed
 		// The storage layer will return only the highest ElementID on read
@@ -2165,15 +2233,17 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Each element is one datom's value.
-		for _, val := range newSlice {
-			if err := validateValueStorable(a, val); err != nil {
+		// Each element is one datom's value, admitted and written as Add
+		// admits and writes it.
+		admitted := make([]interface{}, len(newSlice))
+		for i, val := range newSlice {
+			written, err := writtenValue(t.engine, t.admission, a, val)
+			if err != nil {
 				return err
 			}
-			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
-				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
-			}
+			admitted[i] = written
 		}
+		newSlice = admitted
 
 		// Build set of new values for O(1) lookup, keyed by memberKey so
 		// non-comparable members like []byte can be map keys; the stored value
@@ -2290,15 +2360,17 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Each element is one datom's value.
-		for _, val := range newSlice {
-			if err := validateValueStorable(a, val); err != nil {
+		// Each element is one datom's value, admitted and written as Add
+		// admits and writes it.
+		admitted := make([]interface{}, len(newSlice))
+		for i, val := range newSlice {
+			written, err := writtenValue(t.engine, t.admission, a, val)
+			if err != nil {
 				return err
 			}
-			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
-				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
-			}
+			admitted[i] = written
 		}
+		newSlice = admitted
 
 		// Get current vector from cache (if enabled) or resolve directly
 		eBytes := e.Hash()
@@ -2307,7 +2379,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		key := CacheKey{E: Entity(eBytes), A: aBytes}
 
 		matcher := NewPatternMatcher(t.db.store)
-		matcher.SetSchema(t.db.Schema())
+		matcher.SetSchema(t.schema)
 		card := matcher.GetCardinality(a)
 
 		var entry *CacheEntry
@@ -2368,20 +2440,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		}
 
 		eaKey := entityAttrKey{E: e, A: a}
-		for _, val := range newSlice[commonPrefix:] {
-			elemID := t.db.clock.Next()
-
-			t.datoms = append(t.datoms, datalog.Datom{
-				E:        e,
-				A:        a,
-				V:        val,
-				Tx:       elemID,
-				Op:       datalog.OpRGAInsert,
-				AfterRef: afterRef,
-			})
-
-			afterRef = elemID
-		}
+		t.datoms, afterRef = appendVectorInserts(t.datoms, e, a, newSlice[commonPrefix:], afterRef, t.db.clock)
 		// Update lastVectorElement for subsequent Add() calls in same transaction
 		t.lastVectorElement[eaKey] = afterRef
 
@@ -2390,6 +2449,29 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 	}
 
 	return nil
+}
+
+// appendVectorInserts appends to datoms the OpRGAInsert datoms that write
+// elements at e and a as a vector's elements, in order: the first after the
+// element after names, HEAD where after is zero, and each later one after the
+// one before, each at the ElementID clock draws next. It answers the datoms and
+// the last element written, after itself where elements is empty.
+func appendVectorInserts(datoms []datalog.Datom, e datalog.Identity, a datalog.Keyword, elements []interface{}, after datalog.ElementID, clock *LamportClock) ([]datalog.Datom, datalog.ElementID) {
+	for _, element := range elements {
+		elemID := clock.Next()
+
+		datoms = append(datoms, datalog.Datom{
+			E:        e,
+			A:        a,
+			V:        element,
+			Tx:       elemID,
+			Op:       datalog.OpRGAInsert,
+			AfterRef: after,
+		})
+
+		after = elemID
+	}
+	return datoms, after
 }
 
 // vectorContainsValue checks if a value already exists in an ordered set (vector with unique elements).
@@ -2418,7 +2500,7 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 	cacheKey := CacheKey{E: Entity(eBytes), A: aBytes}
 
 	matcher := NewPatternMatcher(t.db.store)
-	matcher.SetSchema(t.db.Schema())
+	matcher.SetSchema(t.schema)
 	card := matcher.GetCardinality(a)
 
 	var entry *CacheEntry
@@ -2455,7 +2537,7 @@ func (t *Transaction) Retract(e datalog.Identity, a datalog.Keyword, v interface
 		return ErrRollbackInProgress
 	}
 
-	if err := validateAttributeStorable(t, a); err != nil {
+	if err := validateAttributeStorable(t.engine, a); err != nil {
 		return err
 	}
 
@@ -2533,7 +2615,8 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 //	id, err = tx.SaveStruct(&person)  // Updates name, age unchanged
 func (t *Transaction) SaveStruct(v interface{}) (datalog.Identity, error) {
 	matcher := t.db.Matcher().(*PatternMatcher)
-	return dlreflect.SaveStruct(t, matcher, v, t.db.Schema())
+	matcher.SetSchema(t.schema)
+	return dlreflect.SaveStruct(t, matcher, v, t.schema)
 }
 
 // Commit commits the transaction

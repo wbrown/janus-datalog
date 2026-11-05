@@ -1,10 +1,11 @@
-package executor
+package executor_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -51,7 +52,7 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 		datalog.Datom{E: symbol, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	)
 
-	matcher := NewMemoryPatternMatcher(datoms)
+	matcher := factsDatabase(t, datoms)
 
 	// OHLC query with 4 subqueries (decorrelates into 2 filter groups)
 	queryStr := `[:find ?datetime ?open-price ?hour-high ?hour-low ?close-price ?total-volume
@@ -149,11 +150,11 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, mode := range OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
 			// Test 1: Sequential decorrelation
 			t.Run("Sequential", func(t *testing.T) {
-				execSeq := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+				execSeq := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 				start := time.Now()
 				result, err := execSeq.Execute(q)
@@ -173,7 +174,7 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 			// Test 2: Parallel decorrelation
 			t.Run("Parallel", func(t *testing.T) {
-				execPar := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+				execPar := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 				start := time.Now()
 				result, err := execPar.Execute(q)
@@ -192,9 +193,9 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 			// Test 3: Verify results are identical
 			t.Run("ResultsMatch", func(t *testing.T) {
-				execSeq := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+				execSeq := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
-				execPar := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+				execPar := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
 				resultSeq, err := execSeq.Execute(q)
 				if err != nil {
