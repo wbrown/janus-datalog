@@ -66,9 +66,8 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte, report *scanReport
 // - Op is OpRGAInsert (3) or OpRGATombstone (4)
 // - AfterRef is the position reference for inserts, or the target element ID for tombstones
 //
-// IMPORTANT: Handles deduplication by element ID. When the same element has multiple
-// versions (e.g., original + tombstoned), the tombstoned version takes precedence.
-// This supports Set() which writes a tombstone record for the element being deleted.
+// The elements are gathered by vectorElements.gather, so an element keeps the
+// place its insert names whether its withdrawal or its insert is read first.
 //
 // Returns the run it walked alongside the elements, and accrues the scan's
 // index intake into the report. An RGA group is every insert and tombstone ever
@@ -100,20 +99,11 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte, report *scanRepo
 	}
 	defer iter.Close()
 
-	// Use map to deduplicate by element ID
-	// For inserts: ID is Datom.Tx, AfterRef is position reference
-	// For tombstones: ID is Datom.AfterRef (the element being deleted), TombstoneID is Datom.Tx
-	elemByID := make(map[datalog.ElementID]RGAElement)
-
+	elemByID := make(vectorElements)
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
 			return nil, bound, fmt.Errorf("decode RGA element: %w", err)
-		}
-
-		// Only process RGA operations
-		if datom.Op != datalog.OpRGAInsert && datom.Op != datalog.OpRGATombstone {
-			continue
 		}
 
 		// Apply temporal filtering for AsOf queries
@@ -121,54 +111,7 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte, report *scanRepo
 			continue
 		}
 
-		if datom.Op == datalog.OpRGAInsert {
-			// Insert: ID is Tx, AfterRef is position reference
-			rgaElem := RGAElement{
-				ID:       datom.Tx,
-				Value:    datom.V,
-				AfterRef: datom.AfterRef,
-				// Tombstone is nil for inserts
-			}
-
-			// Check if this element was already tombstoned
-			existing, exists := elemByID[rgaElem.ID]
-			if !exists {
-				elemByID[rgaElem.ID] = rgaElem
-			} else if existing.Tombstone == nil {
-				// Prefer the insert if no tombstone yet
-				elemByID[rgaElem.ID] = rgaElem
-			}
-			// If existing has tombstone, keep the tombstoned version
-
-		} else if datom.Op == datalog.OpRGATombstone {
-			// Tombstone: AfterRef is the ID of the element being deleted
-			// Tx is the tombstone operation's ID
-			targetID := datom.AfterRef
-			tombstoneID := datom.Tx
-
-			existing, exists := elemByID[targetID]
-			if !exists {
-				// No insert record yet - create tombstoned placeholder
-				elemByID[targetID] = RGAElement{
-					ID:        targetID,
-					Value:     datom.V,             // Value from tombstone record
-					AfterRef:  datalog.ElementID{}, // Unknown until we see insert
-					Tombstone: &tombstoneID,
-				}
-			} else {
-				// Update existing with tombstone
-				if existing.Tombstone == nil || existing.Tombstone.Less(tombstoneID) {
-					existing.Tombstone = &tombstoneID
-					// Preserve the value from the original insert if available
-					if existing.Value != nil {
-						// Keep existing value
-					} else {
-						existing.Value = datom.V
-					}
-					elemByID[targetID] = existing
-				}
-			}
-		}
+		elemByID.gather(datom)
 	}
 	if err := iter.Error(); err != nil {
 		return nil, bound, fmt.Errorf("decode RGA element: %w", err)

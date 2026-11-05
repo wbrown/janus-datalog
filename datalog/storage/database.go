@@ -463,7 +463,8 @@ func (d *Database) Cache() *Cache {
 // to avoid cold-start latency on first access.
 //
 // For each attribute, this scans all entities and populates per-(E,A) cache
-// entries with resolved CRDT values.
+// entries with resolved CRDT values, each resolved through the handle's own
+// matcher, so an as-of handle's entries hold the values as of its target.
 //
 // This is O(n) where n = total datoms for the specified attributes.
 // Call during application startup, not on the hot path.
@@ -477,8 +478,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 		return nil
 	}
 
-	matcher := NewPatternMatcher(d.store)
-	matcher.SetSchema(d.Schema())
+	matcher := d.Matcher().(*PatternMatcher)
 
 	for _, attr := range attributes {
 		// Cache keys carry the storage projection of the attribute, so it is
@@ -527,12 +527,14 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 	return nil
 }
 
-// GetVectorNth returns the nth element of a vector attribute.
-// Uses the cache for O(1) access when the cache is fresh.
-// Returns nil if index is out of bounds or attribute is not a vector. An
-// attribute wider than storage holds is refused before any read, and a
-// database that refuses unknown attributes refuses an attribute its schema
-// does not declare, as every typed accessor does.
+// GetVectorNth returns the nth element of a vector attribute as the handle
+// reads it, through the handle's own matcher, so an as-of handle answers as of
+// its target. Uses the cache for O(1) access when the cache is fresh.
+// Returns nil if the index is out of bounds or the attribute holds no vector,
+// and an error if the attribute is not a vector. An attribute wider than
+// storage holds is refused before any read, and a database that refuses
+// unknown attributes refuses an attribute its schema does not declare, as
+// every typed accessor does.
 func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) (any, error) {
 	if err := datalog.ValidateAttributeWidth(a); err != nil {
 		return nil, err
@@ -547,8 +549,7 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	matcher := NewPatternMatcher(d.store)
-	matcher.SetSchema(d.Schema())
+	matcher := d.Matcher().(*PatternMatcher)
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
 	// is set (d.cache == nil), resolve the entry directly from storage via
@@ -583,12 +584,13 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	return vec[n], nil
 }
 
-// GetVectorLength returns the length of a vector attribute.
-// Uses the cache for O(1) access when the cache is fresh.
-// Returns 0 if the attribute is not a vector or doesn't exist. An attribute
-// wider than storage holds is refused before any read, and a database that
-// refuses unknown attributes refuses an attribute its schema does not
-// declare, as every typed accessor does.
+// GetVectorLength returns the length of a vector attribute as the handle reads
+// it, through the handle's own matcher, so an as-of handle answers as of its
+// target. Uses the cache for O(1) access when the cache is fresh.
+// Returns 0 if the attribute holds no vector, and an error if the attribute is
+// not a vector. An attribute wider than storage holds is refused before any
+// read, and a database that refuses unknown attributes refuses an attribute
+// its schema does not declare, as every typed accessor does.
 func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64, error) {
 	if err := datalog.ValidateAttributeWidth(a); err != nil {
 		return 0, err
@@ -603,8 +605,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	matcher := NewPatternMatcher(d.store)
-	matcher.SetSchema(d.Schema())
+	matcher := d.Matcher().(*PatternMatcher)
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
 	// is set (d.cache == nil), resolve the entry directly from storage via
@@ -2036,80 +2037,38 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 			Op: datalog.OpCRDTRemove,
 		})
 	case schema.CardinalityVector:
-		// RGA LIFO Remove: tombstone the most recently added element matching value
-		// O(k) via EAVT scan where k = entries for this (E, A, V) combination
+		// RGA LIFO Remove: tombstone the most recently added element matching
+		// value, the live element of the value with the highest ElementID in
+		// the vector this transaction holds (effectiveVector), its own earlier
+		// writes to the vector included.
 		//
-		// Design decision: Remove() uses LIFO (most recent) semantics because:
-		// 1. O(k) performance - direct index lookup, no RGA reconstruction
-		// 2. CRDT-friendly - "most recent" = "the one I most recently added"
-		// 3. LIFO/Stack pattern - useful for undo operations
-		// Users wanting to remove the FIRST occurrence must use read-modify-write via Set()
-
-		// Build set of element IDs that have pending tombstones in this transaction
-		// This allows multiple Remove() calls in the same transaction to work correctly
-		pendingTombstones := make(map[datalog.ElementID]bool)
-		for _, d := range t.datoms {
-			if d.A.Matches(a) && e.Equal(d.E) && d.Op == datalog.OpRGATombstone {
-				pendingTombstones[d.AfterRef] = true
-			}
-		}
-
-		// Bind [E][A][V] on EAVT for an O(k) scan of this element's writes.
-		// EAVT orders Tx descending after V, so the highest Tx comes first and
-		// a tombstone is seen before the insert it deletes.
-		iter, err := OpenScan(t.db.store, DiscardIntake, ScanBound{
-			Index:  EAVT,
-			Prefix: []datalog.Value{e, a, v},
-		})
+		// LIFO is CRDT-friendly ("most recent" = "the one I most recently
+		// added") and serves the stack pattern, such as undo operations. Users
+		// wanting to remove the FIRST occurrence must use read-modify-write via
+		// Set().
+		vector, err := t.effectiveVector(e, a)
 		if err != nil {
-			return fmt.Errorf("EAVT scan for vector Remove failed: %w", err)
+			return err
 		}
-		defer iter.Close()
-
-		// Scan in Tx descending order:
-		// - Tombstones (higher Tx) come before the inserts they delete
-		// - Collect tombstone AfterRefs, stop at first non-tombstoned insert
-		tombstonedIDs := make(map[datalog.ElementID]bool)
-		var targetID datalog.ElementID
-		var targetValue interface{}
-
-		for iter.Next() {
-			datom, err := iter.Datom()
-			if err != nil {
-				return fmt.Errorf("EAVT scan for vector Remove failed: %w", err)
+		var target *RGAElement
+		for i := range vector {
+			if held := &vector[i].Element; datalog.ValuesEqual(held.Value, v) && (target == nil || target.ID.Less(held.ID)) {
+				target = held
 			}
-
-			if datom.Op == datalog.OpRGATombstone {
-				// Record this tombstone's target
-				tombstonedIDs[datom.AfterRef] = true
-			} else if datom.Op == datalog.OpRGAInsert {
-				// Check if this insert is tombstoned (committed or pending)
-				if !tombstonedIDs[datom.Tx] && !pendingTombstones[datom.Tx] {
-					// Found the most recent non-tombstoned insert
-					targetID = datom.Tx
-					targetValue = datom.V
-					break // Early termination - no need to scan further
-				}
-			}
-		}
-		if err := iter.Error(); err != nil {
-			return fmt.Errorf("EAVT scan for vector Remove failed: %w", err)
 		}
 
 		// If no matching element found, Remove is a no-op (not an error)
-		if targetID.IsZero() {
+		if target == nil {
 			return nil
 		}
 
-		// Write tombstone for the target element
-		tombstoneID := t.db.clock.Next()
 		t.datoms = append(t.datoms, datalog.Datom{
 			E:        e,
 			A:        a,
-			V:        targetValue, // Raw value (for verification/debugging)
-			Tx:       tombstoneID, // New tombstone ID
+			V:        target.Value, // Raw value (for verification/debugging)
+			Tx:       t.db.clock.Next(),
 			Op:       datalog.OpRGATombstone,
-			AfterRef: targetID, // ID of element being tombstoned
+			AfterRef: target.ID, // ID of element being tombstoned
 		})
 	default:
 		return fmt.Errorf("Remove not valid for cardinality %v", def.Cardinality)
@@ -2372,41 +2331,25 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		}
 		newSlice = admitted
 
-		// Get current vector from cache (if enabled) or resolve directly
-		eBytes := e.Hash()
-		var aBytes Attribute
-		copy(aBytes[:], a.String())
-		key := CacheKey{E: Entity(eBytes), A: aBytes}
-
-		matcher := NewPatternMatcher(t.db.store)
-		matcher.SetSchema(t.schema)
-		card := matcher.GetCardinality(a)
-
-		var entry *CacheEntry
-		var err error
-		if t.db.cache != nil {
-			entry, err = t.db.cache.GetOrResolve(key, card, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
-		} else {
-			// Cache disabled - resolve directly from storage
-			entry, err = ResolveEntry(key, card, matcher, DiscardIntake)
-		}
+		// The vector this transaction holds (effectiveVector), its own earlier
+		// writes to the vector included, is what the diff below is computed
+		// against. A failed read of it would rewrite the whole vector as if it
+		// had been empty.
+		vector, err := t.effectiveVector(e, a)
 		if err != nil {
-			// The prior vector is what the RGA diff below is computed against.
-			// A failed read of it would silently rewrite the whole vector as if
-			// it had been empty.
-			return fmt.Errorf("resolve current vector for %s: %w", a.String(), err)
+			return err
+		}
+		oldList := make([]any, len(vector))
+		oldIndex := make([]datalog.ElementID, len(vector))
+		for i, held := range vector {
+			oldList[i] = held.Element.Value
+			oldIndex[i] = held.Element.ID
 		}
 
-		var oldList []any
-		var oldIndex []datalog.ElementID
-		if entry != nil && entry.Cardinality() == schema.CardinalityVector {
-			oldList = entry.VectorList()
-			oldIndex = entry.VectorIndex()
-		}
-
-		// Find common prefix - elements that don't need to change
-		// RGA constraint: we can only keep a PREFIX because descendants of
-		// tombstoned elements become unreachable in the DFS traversal.
+		// Find common prefix - elements that don't need to change. An element
+		// chained after the prefix's last element is placed somewhere after
+		// it, so every element after the prefix is tombstoned and the rest of
+		// the new vector is inserted after the prefix.
 		commonPrefix := 0
 		maxPrefix := len(oldList)
 		if len(newSlice) < maxPrefix {
@@ -2474,54 +2417,50 @@ func appendVectorInserts(datoms []datalog.Datom, e datalog.Identity, a datalog.K
 	return datoms, after
 }
 
-// vectorContainsValue checks if a value already exists in an ordered set (vector with unique elements).
-// It checks both committed data (via cache) and pending datoms in this transaction.
-//
-// The error is not an addition of scope: this reads the committed vector through
-// GetOrResolve, so once that reports failure instead of returning nil, the only
-// alternative to returning it here is to answer false — which would insert a
-// duplicate into a set the schema declares unique, on a read that never
-// succeeded. There is no non-swallowing signature that stays a bare bool.
-func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword, v interface{}) (bool, error) {
-	// Check pending datoms in this transaction first
+// effectiveVector answers e's vector at a as this transaction holds it: the
+// committed datoms of (e, a) and the transaction's own, gathered by
+// vectorElements.gather and ordered by ReconstructRGAWithIDs. That is the
+// vector the readers resolve once the transaction commits.
+func (t *Transaction) effectiveVector(e datalog.Identity, a datalog.Keyword) ([]RGAElementWithPosition, error) {
 	eHash := e.Hash()
-	for _, d := range t.datoms {
-		if d.A == a && d.E.Hash() == eHash && d.Op == datalog.OpRGAInsert {
-			if datalog.ValuesEqual(d.V, v) {
-				return true, nil
-			}
-		}
-	}
-
-	// Check committed data via cache (if enabled) or direct resolution
-	eBytes := e.Hash()
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
-	cacheKey := CacheKey{E: Entity(eBytes), A: aBytes}
-
-	matcher := NewPatternMatcher(t.db.store)
-	matcher.SetSchema(t.schema)
-	card := matcher.GetCardinality(a)
-
-	var entry *CacheEntry
-	var err error
-	if t.db.cache != nil {
-		entry, err = t.db.cache.GetOrResolve(cacheKey, card, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
-	} else {
-		entry, err = ResolveEntry(cacheKey, card, matcher, DiscardIntake)
-	}
+	committed, _, err := NewPatternMatcher(t.db.store).loadRGAElements(eHash[:], aBytes[:], DiscardIntake)
 	if err != nil {
-		return false, fmt.Errorf("resolve current vector for %s: %w", a.String(), err)
+		return nil, fmt.Errorf("resolve current vector for %s: %w", a.String(), err)
 	}
 
-	if entry != nil && entry.Cardinality() == schema.CardinalityVector {
-		for _, existing := range entry.VectorList() {
-			if datalog.ValuesEqual(existing, v) {
-				return true, nil
-			}
+	elements := make(vectorElements, len(committed))
+	for _, c := range committed {
+		elements[c.ID] = c
+	}
+	for i := range t.datoms {
+		if d := &t.datoms[i]; d.E == e && d.A == a {
+			elements.gather(d)
 		}
 	}
 
+	gathered := make([]RGAElement, 0, len(elements))
+	for _, el := range elements {
+		gathered = append(gathered, el)
+	}
+	return ReconstructRGAWithIDs(gathered), nil
+}
+
+// vectorContainsValue answers whether the ordered set e's attribute a holds v
+// in the vector this transaction holds (effectiveVector). A failed read of that
+// vector is its error, since answering false would admit a duplicate to a set
+// the schema declares unique.
+func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword, v interface{}) (bool, error) {
+	vector, err := t.effectiveVector(e, a)
+	if err != nil {
+		return false, err
+	}
+	for _, held := range vector {
+		if datalog.ValuesEqual(held.Element.Value, v) {
+			return true, nil
+		}
+	}
 	return false, nil
 }
 

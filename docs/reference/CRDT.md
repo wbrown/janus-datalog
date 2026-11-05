@@ -178,6 +178,11 @@ Each vector element has:
 
 The vector is a linked list where each element points to its predecessor.
 
+An inserted element is guaranteed only to land somewhere after the element
+its AfterRef names. The elements inserted after one element are ordered by
+ElementID, whichever writers wrote them. A tombstoned element keeps its place,
+so the elements after it stay where they are.
+
 ### Storage Format
 
 ```
@@ -299,9 +304,9 @@ tx.Add(entity, ":prefs", "compact")     // Added
 tx.Add(entity, ":prefs", "dark-mode")   // No-op: already exists
 ```
 
-The uniqueness check examines:
-1. Pending datoms in the current transaction
-2. Committed data via cache
+The uniqueness check examines the vector the transaction holds: its
+committed elements with the transaction's own earlier inserts and tombstones
+added, resolved as the readers resolve them once it commits.
 
 ### Using with Reflect Package
 
@@ -486,34 +491,32 @@ tx.Add(entity, ":skills", "stealth")
 tx.Set(entity, ":skills", []any{"stealth", "magic"})
 ```
 
-1. **Read current from cache**: Get `vectorList` and `vectorIndex`
+1. **Resolve the vector the transaction holds**: its committed elements with the transaction's own earlier writes to (E, A) added, resolved as the readers resolve them once it commits, each value with its ElementID
 2. **Compute diff**: Find common prefix, elements to tombstone, elements to insert
 3. **Write tombstones**: For each removed element, write OpRGATombstone with AfterRef = element's ID
 4. **Write inserts**: For each new element, write OpRGAInsert chained after appropriate predecessor
 
-**Why vectorIndex matters**: To tombstone element at position N, you need its ElementID. The cache's `vectorIndex` provides O(1) lookup: `vectorIndex[N]` = ElementID to tombstone.
+**Why the ElementIDs matter**: To tombstone the element at position N, you need its ElementID, which the resolved vector carries beside each value.
 
 ### Set() Diff Algorithm
 
 For efficiency, Set() computes minimal diff rather than full replacement.
 
-#### Why Prefix-Only (RGA Constraint)
+#### Why Prefix-Only
 
-In RGA, each element chains off its predecessor via AfterRef. When you tombstone an element, **its descendants become orphaned** during DFS reconstruction:
+An element inserted after the prefix's last element is guaranteed only to land somewhere after it, so an element kept after the prefix can end up on either side of it:
 
 ```
 Old: [a, b, c] with chain: HEAD → a → b → c
+New: [a, X, c], keeping "c" and inserting "X" after "a"
 
-If we tombstone "b":
-- children[a] = [] (b is filtered out as tombstoned)
-- children[b] = [c] (c still points to b)
-- DFS from HEAD visits: a, then a's children (empty)
-- "c" is NEVER visited - it's orphaned
+- children[a] = [b, X], with c following b
+- DFS from HEAD visits: a, b (tombstoned), c, X
 
-Result: [a] - we lost "c"!
+Result: [a, c, X] - not the new vector
 ```
 
-**This means we can only preserve a PREFIX** - elements that chain from HEAD through kept elements. A common suffix cannot be preserved because suffix elements chain from tombstoned elements.
+**So Set preserves only a PREFIX**: it tombstones every element after the prefix and inserts the rest of the new vector after the prefix's last element. A tombstoned element keeps its place, so nothing after it is lost. A kept suffix stays where it was, ahead of the new elements.
 
 #### Algorithm
 
@@ -676,7 +679,8 @@ This section provides formal complexity analysis for all CRDT operations.
 | Operation | Time | Space | Notes |
 |-----------|------|-------|-------|
 | **Write** `Add(e, a, v)` (append) | O(1) | O(1) | Single RGAInsert datom |
-| **Write** `Set(e, a, vals)` (replace) | O(k + k') | O(k') | See diff algorithm below |
+| **Write** `Set(e, a, vals)` (replace) | O((n + d) log (n + d) + k') | O(n + d + k') | Resolves the vector the transaction holds, then the diff below |
+| **Write** `Remove(e, a, v)` | O((n + d) log (n + d)) | O(n + d) | Resolves the vector the transaction holds |
 | **Read** (cache hit) | O(1) | O(1) | Return cached vectorList |
 | **Read** (cache miss) | O(n log n) | O(n) | RGA reconstruction |
 | **Cache rebuild** | O(n log n) | O(k) | Sort + DFS traversal |
@@ -686,7 +690,9 @@ This section provides formal complexity analysis for all CRDT operations.
 
 **RGA reconstruction**: O(n) to load all elements, O(n log n) to sort children by ElementID at each node, O(k) DFS to produce ordered output.
 
-**Set() diff complexity**:
+**The vector the transaction holds**: O(n) to load the committed elements, O(d) to gather the transaction's own datoms of (E, A) from its d pending datoms, and O((n + d) log (n + d)) to reconstruct. `Set`, `Remove` and an ordered set's `Add` each resolve it.
+
+**Set() diff complexity**, after that resolution:
 
 | Scenario | Tombstones | Inserts | Total |
 |----------|------------|---------|-------|
@@ -700,19 +706,13 @@ This section provides formal complexity analysis for all CRDT operations.
 
 | Operation | Time | Space | Notes |
 |-----------|------|-------|-------|
-| **Write** `Add(e, a, v)` | O(d + k) | O(1) | Uniqueness check + insert |
-| **Write** `Set(e, a, vals)` | O(k + k') | O(k') | Same as Vector |
+| **Write** `Add(e, a, v)` | O((n + d) log (n + d)) | O(n + d) | Uniqueness check + insert |
+| **Write** `Set(e, a, vals)` | O((n + d) log (n + d) + k') | O(n + d + k') | Same as Vector |
 | **Read** (cache hit) | O(1) | O(1) | Same as Vector |
 | **Read** (cache miss) | O(n log n) | O(n) | Same as Vector |
-| **Uniqueness check** | O(d + k) | O(1) | Scan pending + cached |
+| **Uniqueness check** | O((n + d) log (n + d)) | O(n + d) | Resolves the vector the transaction holds |
 
-**Uniqueness check breakdown**:
-- Scan pending transaction datoms: O(d)
-- Cache lookup: O(1) hit, O(n log n) miss
-- Scan cached vectorList: O(k)
-- Total: O(d + k) assuming cache hit
-
-**Trade-off**: Regular Vector Add is O(1). OrderedSet Add is O(d + k) due to uniqueness enforcement. For small vectors (k < 100), overhead is negligible.
+**Trade-off**: Regular Vector Add is O(1). OrderedSet Add resolves the vector the transaction holds to check uniqueness, so its cost grows with every insert and tombstone the vector has had.
 
 ### Index Operations
 
@@ -757,9 +757,9 @@ This section provides formal complexity analysis for all CRDT operations.
 | One | O(1) | O(1) | O(1) | Optimal for single values |
 | Many | O(1) | O(n) | O(1) | Write-optimized, read rebuilds |
 | Vector | O(1) | O(n log n) | O(1) | Write-optimized, expensive rebuild |
-| OrderedSet | O(d+k) | O(n log n) | O(1) | Uniqueness costs at write time |
+| OrderedSet | O((n+d) log (n+d)) | O(n log n) | O(1) | Uniqueness costs at write time |
 
-**Key insight**: The system is write-optimized. Writes are always O(1) or O(d+k) for OrderedSet. Read performance depends on cache hit rate. For read-heavy workloads, use `d.WarmCache()` at startup.
+**Key insight**: A vector's `Add` writes without reading, in O(1). Its `Set` and `Remove`, and an ordered set's `Add`, resolve the vector the transaction holds, in O((n + d) log (n + d)). Read performance depends on cache hit rate. For read-heavy workloads, use `d.WarmCache()` at startup.
 
 ---
 

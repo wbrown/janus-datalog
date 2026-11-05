@@ -1,9 +1,21 @@
-# A vector Remove misses its own transaction's inserts
+# A vector write or read answers a vector the transaction or the view does not hold
 
-**Status**: Open, recorded 2026-11-03 against janus-datalog v0.16.1. Found by
-the Starflight disassembler (`disasm`), which records a Forth machine's stacks
-as vectors and reads them back as of each step. Worked around there
-(`factWriter.remove` commits before such a pop); the fix belongs here.
+**Status**: Open. The Starflight disassembler (`disasm`) meets the `Remove`
+defect below on janus-datalog v0.16.1. It records a Forth machine's stacks as
+vectors and reads them back as of each step. It works around the defect by
+committing before such a pop (`factWriter.remove`), and the fix belongs here.
+The record covers four defects, which the tests under "Reproducer"
+reproduce:
+
+1. `Transaction.Remove`, `Transaction.Set` and an ordered set's `Add` each
+   read the vector without some of the transaction's own earlier writes to
+   it.
+2. On a handle from `Database.AsOf`, `GetVectorLength`, `GetVectorNth` and
+   `WarmCache` resolve through a matcher of the latest view.
+3. Three arms of the pattern matcher answer no vector for an emptied one.
+4. `loadRGAElements` and `ResolveRGAFromDatoms` place a withdrawn element at
+   HEAD when they read its withdrawal before its insert, so the readers
+   through them answer an order the vector's datoms do not give.
 
 `Transaction.Remove` on a cardinality-vector attribute tombstones "the most
 recently added element matching value". It finds that element by scanning the
@@ -15,8 +27,7 @@ committed element of the same value. Both are silent: Remove returns nil.
 
 ## The route
 
-The vector arm of `Transaction.Remove` (`datalog/storage/database.go`, lines
-1963-2038 at v0.16.1):
+The vector arm of `Transaction.Remove` (`datalog/storage/database.go`):
 
 1. It collects `pendingTombstones`, the `AfterRef` of every `OpRGATombstone`
    in `t.datoms` for this (E, A), so that "multiple Remove() calls in the same
@@ -28,7 +39,7 @@ The vector arm of `Transaction.Remove` (`datalog/storage/database.go`, lines
 4. With no target, "Remove is a no-op (not an error)".
 
 `t.datoms` is read for tombstones only. An `OpRGAInsert` that `Add` appended
-to `t.datoms` (lines 1826-1869) is never a candidate, so:
+to `t.datoms` (the vector arm of `Transaction.Add`) is never a candidate, so:
 
 - If no committed insert of the value is live, there is no target and no
   tombstone. The element added in this transaction stays.
@@ -36,8 +47,9 @@ to `t.datoms` (lines 1826-1869) is never a candidate, so:
   element added in this transaction stays, and the older one goes.
 
 `Add` reads no storage and chains each element after the last one added in
-the transaction (`lastVectorElement`), so the pending insert is already the
-newest element of the vector by ElementID. The scan simply never looks there.
+the transaction (`lastVectorElement`). In the cases observed below, the
+pending insert is the element of the value with the highest ElementID, and
+the scan never looks there.
 
 ## What was observed
 
@@ -81,113 +93,215 @@ the same batch.
 
 ## Reach
 
-Any caller that adds and removes the same vector value in one transaction:
-a stack, an undo log, a work queue. `TestVectorRemoveMostRecent` and
-`TestVectorRemoveNonExistent` commit their Adds before the Remove, so no test
-in the repository reaches the route. The answer is wrong at every read
-afterward (latest, `AsOf`, `PullInto`), since the datoms themselves are wrong:
-a tombstone is missing, or names the wrong element.
+- `Remove`: any caller that adds and removes the same vector value in one
+  transaction, such as a stack, an undo log or a work queue.
+  `TestVectorRemoveMostRecent` and `TestVectorRemoveNonExistent` commit their
+  `Add`s before the `Remove`.
+- `Set` and `SaveStruct`: any transaction that writes a vector's whole value
+  after another write to the same vector.
+- An ordered set's `Add`: any transaction that adds a value it removed, or
+  set away, earlier.
+- For each writer the answer is wrong at every read afterward, on the latest
+  view, as of the commit and through `PullInto`, since the datoms themselves
+  are wrong. A tombstone is missing or names the wrong element, or an insert
+  is missing or repeated.
+- The as-of accessors: any reader of an as-of handle whose cache
+  `GetVectorLength`, `GetVectorNth` or `WarmCache` filled, and those
+  accessors on a cold cache.
+- The emptied vector: any pattern `[?e :a ?v]`, its value unbound, whose
+  entity is an input, bound by a join or unbound.
+- The withdrawn element: any vector two writers add to at once, once an
+  element that another element follows is withdrawn.
 
-## What was not established
+## Set, SaveStruct and an ordered set's Add
 
-The vector arm of `Transaction.Set` (lines 2303-2386) reads the current
-vector through the EA cache (`GetOrResolve`) or `ResolveEntry`, both over
-committed state, and diffs the new slice against it. It applies no pending
-operation of the transaction, where the cardinality-many arm does (lines
-2199-2222: "This ensures Set() sees Add/Remove ops from earlier in the same
-transaction"). By reading, a vector `Set` after an `Add` or a `Set` of the
-same (E, A) in one transaction diffs against the wrong vector. That was read
-in the code and not run.
+The transaction's other vector writers each read the vector without some of
+its earlier writes, by a rule of its own.
+
+- The vector arm of `Transaction.Set` diffs the new slice against the
+  committed vector, read through `Cache.GetOrResolve` or `ResolveEntry`. It
+  applies none of the transaction's pending writes. The cardinality-many arm
+  applies them: "This ensures Set() sees Add/Remove ops from earlier in the
+  same transaction".
+- `SaveStruct` writes a vector field through `Transaction.Set`
+  (`StructWriter.updateSliceField` and `StructWriter.updateOrderedSetField`,
+  `datalog/reflect`), so it diffs against the same vector.
+- An ordered set's `Add` writes nothing for a value
+  `Transaction.vectorContainsValue` finds. That function finds any pending
+  insert of the value, whether or not a pending tombstone names it. Failing
+  that, it finds the value in the committed vector, whether or not a pending
+  tombstone names its element.
+
+Each row is one transaction over a committed vector:
+
+| Committed | Writes | Answer | Expected |
+|---|---|---|---|
+| `[a]` | `Add b`, `Set [a b c]` | `[a b c b]` | `[a b c]` |
+| `[a]` | `Add b`, `SaveStruct [a b c]` | `[a b c b]` | `[a b c]` |
+| `[a]` | `Set [a b]`, `Set [a c]` | `[a b c]` | `[a c]` |
+| `[a b]` | `Remove b`, `Set [a b]` | `[a]` | `[a b]` |
+| `[a]` | `Set [a b]`, `Remove b` | `[a b]` | `[a]` |
+| ordered set `[a]` | `Remove a`, `Add a` | `[]` | `[a]` |
+| ordered set `[a b]` | `Set [b]`, `Add a` | `[b]` | `[b a]` |
+
+## An as-of handle's vector accessors and WarmCache
+
+`Database.AsOf` gives the handle a cache of its own (`cache: NewCache()`),
+whatever the parent's `DisableCache`. `PatternMatcher.cacheKey` keys it by
+(E, A) as the latest cache is keyed, and states the design: the two "live in
+separate Cache instances ... so the key never crosses snapshots".
+
+- `Database.GetVectorLength` and `Database.GetVectorNth` resolve through
+  `NewPatternMatcher(d.store)`, a matcher of the latest view, into
+  `d.cache`. On an as-of handle `d.cache` is the handle's cache.
+- `Database.WarmCache` fills `d.cache` through the same latest matcher.
+- So on an as-of handle each leaves the latest vector in the handle's cache,
+  and the accessors answer it.
+- The handle's cache-first readers then answer the latest vector from that
+  entry: `LookupAttribute`, `ResolveEntityAttributes`, `Pull`, `PullMany`,
+  `PullInto`, a query's pull, get-else, and a query naming the entity as a
+  constant.
+- Where the handle's own readers fill the entry first, the accessors read
+  the as-of vector from it. An absent vector is never cached, so as of a
+  commit before the vector's first write the accessors answer the latest
+  vector whatever came before.
+
+Observed on a vector holding `[a b c]` as of one commit and `[a c]` after the
+next. As of the first commit, after `Cache().Clear()` and a read through the
+accessors, or after `WarmCache`, the readers above answer `[a c]`.
+
+`Database.GetString`, `Database.GetStrings` and the other typed accessors
+read through the handle's own query path (`QueryOneInto`, `QueryInto`).
+`Database.LookupAttribute` reads through `d.Matcher()`, which carries the
+handle's mode and target (`Database.matcherWithExecOptions`).
+
+## An emptied vector at the pattern arms
+
+A vector whose every element is withdrawn holds the empty vector, and the
+empty vector is a value:
+
+- `VectorResolutionResult.Present`: "the first has no value, the second has
+  the empty vector".
+- `PatternMatcher.ResolveRGA`: "An all-tombstoned vector resolves to the
+  empty vector, which is a value and not an absence."
+- `PatternMatcher.LookupAttribute`: it answers a vector "once the vector has
+  been written, an emptied vector included".
+
+The pattern matcher's vector arms answer it by two rules:
+
+- `matchCardinalityVectorAsRelation`, for a pattern whose entity is given,
+  binds the empty vector.
+- `matchVectorWithBindings`, for an entity a binding carries, and
+  `vectorScanAllEntitiesIterator.Next`, for an unbound entity, skip it when
+  the pattern's value is unbound ("Unbound V: skip empty vectors").
+
+Observed after a commit that withdraws a vector's last element, and after an
+empty `Set`: the queries naming the entity as an input, binding it by a join
+and leaving it unbound answer no vector. The query naming the entity as a
+constant, the query whose attribute is a variable, and every API reader
+answer `[]`.
+
+`[?e :a []]` matches the emptied vector (`TestVectorLiteralMatch`, "string/
+empty literal matches only empty vector"). A pattern that holds with the
+constant `[]` at its value position holds with a variable there bound to
+`[]`, so the skip contradicts that match. Three subtests of
+`TestVectorLiteralMatch` assert the skip: "string/unbound V returns all
+vectors", "int64/unbound V returns all non-empty" and "keyword/unbound V
+returns all non-empty". Each binds the entity by a join.
+
+## A withdrawn element read before its insert
+
+`ReconstructRGA` and `ReconstructRGAWithIDs` place each element after the
+element its insert names. A withdrawn element keeps its place, so the
+elements that follow it stay reachable. The readers first gather a vector's
+elements from its datoms, and they gather a withdrawn element by two rules:
+
+- `PatternMatcher.loadRGAElements` and `ResolveRGAFromDatoms` make a
+  placeholder for a withdrawal read before the insert it names. The
+  placeholder follows the zero ElementID, HEAD ("Unknown until we see
+  insert"). The insert read after it is passed over ("If existing has
+  tombstone, keep the tombstoned version"), so the element stays at HEAD.
+- `CRDTResolvingIterator.resolveRGAGroup` merges the insert into that
+  placeholder ("Merge value/afterRef if we have it"), so the element follows
+  the element its insert names.
+
+A withdrawal is written after the insert it names, so its ElementID is the
+higher of the two. EATV reads a vector's datoms highest ElementID first, so
+`loadRGAElements` reads every withdrawal before its insert.
+
+Observed on one database, with two transactions open at once:
+
+1. T1 adds a, then b following a, then c following b.
+2. T2 adds x at HEAD, drawing an ElementID between a's and b's.
+3. Both commit, and every reader answers `[a b c x]`.
+4. A third transaction removes b.
+
+b keeps its place after a, so c comes before x, and the vector is
+`[a c x]`. On both optimizer paths, with the cache on and off, the query
+whose attribute is a variable answers `[a c x]`. Every other reader answers
+`[a x c]`, the order that b's placement at HEAD gives: b after x, and c
+following b.
 
 ## The fix, if taken
 
-In the vector arm of `Remove`, before the store scan: walk `t.datoms` from
-the newest back, and take the first `OpRGAInsert` for (E, A) whose value
-matches and whose Tx is not in `pendingTombstones`. Only when none is found,
-scan the store as now. A pending insert always has a higher ElementID than
-any committed one, so the newest match is in the transaction whenever there
-is one there. This is the order the cardinality-many arm of `Set` already
-uses: the transaction's pending operations over the committed state.
-
-The same overlay would give the vector arm of `Set` the effective vector
-(committed, then the transaction's inserts and tombstones) to diff against.
+- The vector a transaction holds for (E, A) at a write is the resolution of
+  every datom of (E, A) it knows, the committed ones and its own pending
+  ones, by the rule the readers resolve a vector with. One computation
+  answers it to `Remove`, `Set` and `vectorContainsValue`. The
+  cardinality-many arm of `Set` resolves the committed set with the
+  transaction's pending operations the same way.
+- `Remove` withdraws the live element of its value with the highest
+  ElementID in that vector. `Set` diffs against it. `vectorContainsValue`
+  answers whether it holds the value.
+- `loadRGAElements`, `ResolveRGAFromDatoms` and the transaction's vector
+  gather a vector's elements from its datoms by one rule. An insert gives its
+  element's value and the element it follows, and a withdrawal marks the
+  element, whichever of the two is read first.
+- `GetVectorLength`, `GetVectorNth` and `WarmCache` resolve through the
+  handle's own matcher, `d.Matcher()`. An as-of handle then resolves as of
+  its target, and a history handle reads past the cache, as
+  `LookupAttribute` does.
+- `matchVectorWithBindings` and `vectorScanAllEntitiesIterator.Next` bind an
+  emptied vector as `matchCardinalityVectorAsRelation` does, and skip only a
+  vector no write reached. The three subtests of `TestVectorLiteralMatch`
+  named above then answer the emptied vector's entity too.
 
 ## Reproducer
 
-Written for the `storage` package against v0.16.1 and not run there. The
-three cases were observed in the application through the same calls
-(`Add`, `Remove`, `Commit`, `PullInto`) on an in-memory database.
-
-```go
-package storage
-
-import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/schema"
-)
-
-// TestVectorRemoveSeesItsOwnTransactionsInserts pins that a vector Remove
-// takes the most recently added element of the value when that element was
-// added earlier in the same transaction.
-func TestVectorRemoveSeesItsOwnTransactionsInserts(t *testing.T) {
-	type stack struct {
-		Cells []string `datalog:"stack/cells"`
-	}
-	for _, c := range []struct {
-		name  string
-		first []string // added and committed first
-		then  []string // added in the open transaction, then the last removed, then "9" added
-		want  []string
-	}{
-		{"an insert in the same transaction", nil, []string{"5", "7", "5"}, []string{"5", "7", "9"}},
-		{"an equal value committed before", []string{"5"}, []string{"7", "5"}, []string{"5", "7", "9"}},
-		{"inserts after a commit", []string{"5", "6"}, []string{"7", "8"}, []string{"5", "6", "7", "9"}},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			s, err := schema.NewBuilder().
-				Attribute(":stack/cells").Type(schema.TypeString).Vector().Add().
-				Build()
-			require.NoError(t, err)
-			db, err := NewDatabaseWithOptions(DatabaseOptions{Store: NewBadgerEmulatorStore(nil), Schema: s})
-			require.NoError(t, err)
-			defer db.Close()
-			cells := datalog.NewKeyword(":stack/cells")
-			e := datalog.NewIdentity("vector-remove:stack")
-
-			tx := db.NewTransaction()
-			for _, v := range c.first {
-				require.NoError(t, tx.Add(e, cells, v))
-			}
-			_, err = tx.Commit()
-			require.NoError(t, err)
-
-			tx = db.NewTransaction()
-			for _, v := range c.then {
-				require.NoError(t, tx.Add(e, cells, v))
-			}
-			require.NoError(t, tx.Remove(e, cells, c.then[len(c.then)-1]))
-			require.NoError(t, tx.Add(e, cells, "9"))
-			_, err = tx.Commit()
-			require.NoError(t, err)
-
-			var got stack
-			require.NoError(t, db.PullInto(e, &got))
-			assert.Equal(t, c.want, got.Cells)
-		})
-	}
-}
-```
-
-Expected to fail on all three cases, answering `[5 7 5 9]`, `[7 5 9]` and
-`[5 6 7 8 9]`.
+- `TestVectorRemoveSeesItsOwnTransactionsInserts`
+  (`datalog/storage/crdt_vector_test.go`) writes the three cases under "What
+  was observed" and reads them through `PullInto`. On the unmodified writers
+  it answers `[5 7 5 9]`, `[7 5 9]` and `[5 6 7 8 9]`.
+- `TestVectorWritesReadBackAlikeThroughEveryReader`
+  (`datalog/storage/vector_writes_test.go`) writes named scenarios of `Add`,
+  `Remove`, `Set` and `SaveStruct` to a plain vector and an ordered set.
+  After each commit, and as of each commit, it reads the vector through
+  queries, pulls, the entity resolvers, `LookupAttribute` and the vector
+  accessors. It reads with the cache on and off, and again after clearing
+  and after warming the cache, on both optimizer paths. A reference model of
+  the vector computes each scenario's stated vectors.
+- `TestVectorWritesOnRandomRunsReadBackAsTheReference`
+  (`datalog/storage/vector_writes_random_test.go`) writes generated
+  transactions to two attributes of one entity and one of a second entity,
+  and reads every vector back as the matrix does, against the reference
+  model.
+- `TestVectorConcurrentTransactionsReadBackAlikeThroughEveryReader`
+  (`datalog/storage/vector_writes_test.go`) writes one vector from
+  transactions open at once and reads it back as the matrix does, against
+  the vectors the RGA rule resolves each case's datoms to. It writes the four
+  steps under "A withdrawn element read before its insert". It also writes
+  a `Set`, and a `SaveStruct`, of `[x y]` by a transaction that added `y`
+  before another transaction added `x` and committed. On the unmodified
+  writers every reader answers `[y x y]` there, where the vector is `[x y]`.
 
 ## Related
 
-`TestVectorRemoveMostRecent` (`crdt_vector_test.go`) is the LIFO contract
-across transactions, which holds. `TestAsOfVectorResolution`
-(`asof_vector_test.go`) covers as-of reads of vectors written by whole-vector
-`Set`, one per transaction, which this route does not touch.
+- `TestVectorRemoveMostRecent` (`crdt_vector_test.go`) is the LIFO contract
+  across transactions, which holds.
+- `TestAsOfVectorResolution` (`asof_vector_test.go`) reads as-of vectors
+  through `LookupAttribute` on the handle's own matcher and through
+  `PullInto`. It reads through neither the vector accessors nor `WarmCache`.
+- `docs/bugs/resolved/BUG_EMPTY_VECTOR_LITERAL_MATCHES_NONEMPTY.md` records
+  the fix that made the literal `[]` match only an emptied vector. The skip
+  at `matchVectorWithBindings` and `vectorScanAllEntitiesIterator.Next` came
+  in with that fix (a48e83d).

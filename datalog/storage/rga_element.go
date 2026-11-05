@@ -117,3 +117,28 @@ func (e RGAElement) String() string {
 	}
 	return fmt.Sprintf("RGA[%s after %s: %v%s]", e.ID.String(), e.AfterRef.String(), e.Value, deleted)
 }
+
+// vectorElements is a vector's elements by ElementID, gathered from its
+// datoms in any order. An insert gives its element's value and the element it
+// follows, and a withdrawal marks the element it names, so an element keeps
+// the place its insert names whichever of the two is gathered first.
+type vectorElements map[ElementID]RGAElement
+
+// gather adds d to the elements. A datom whose op is neither an insert nor a
+// withdrawal is passed over.
+func (es vectorElements) gather(d *datalog.Datom) {
+	switch d.Op {
+	case datalog.OpRGAInsert:
+		e := es[d.Tx]
+		e.ID, e.Value, e.AfterRef = d.Tx, d.V, d.AfterRef
+		es[d.Tx] = e
+	case datalog.OpRGATombstone:
+		e := es[d.AfterRef]
+		e.ID = d.AfterRef
+		if e.Tombstone == nil || e.Tombstone.Less(d.Tx) {
+			withdrawal := d.Tx
+			e.Tombstone = &withdrawal
+		}
+		es[d.AfterRef] = e
+	}
+}

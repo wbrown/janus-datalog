@@ -843,6 +843,65 @@ func TestVectorRemoveAllOccurrences(t *testing.T) {
 	}
 }
 
+// TestVectorRemoveSeesItsOwnTransactionsInserts pins that a vector Remove
+// takes the most recently added element of the value when that element was
+// added earlier in the same transaction, as it does when the element was
+// committed before.
+func TestVectorRemoveSeesItsOwnTransactionsInserts(t *testing.T) {
+	type stack struct {
+		ID    datalog.Identity `datalog:"-,id"`
+		Cells []string         `datalog:"stack/cells"`
+	}
+	cases := []struct {
+		name  string
+		first []string // added and committed first
+		then  []string // added in the open transaction, then the last of them removed, then "9" added
+		want  []string
+	}{
+		{"an insert in the same transaction", nil, []string{"5", "7", "5"}, []string{"5", "7", "9"}},
+		{"an equal value committed before", []string{"5"}, []string{"7", "5"}, []string{"5", "7", "9"}},
+		{"inserts after a commit", []string{"5", "6"}, []string{"7", "8"}, []string{"5", "6", "7", "9"}},
+	}
+	s, err := schema.NewBuilder().
+		Attribute(":stack/cells").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+	cells := datalog.NewKeyword(":stack/cells")
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, c := range cases {
+				t.Run(c.name, func(t *testing.T) {
+					db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
+					e := datalog.NewIdentity("vector-remove:stack")
+
+					if len(c.first) > 0 {
+						tx := db.NewTransaction()
+						for _, v := range c.first {
+							require.NoError(t, tx.Add(e, cells, v))
+						}
+						_, err := tx.Commit()
+						require.NoError(t, err)
+					}
+
+					tx := db.NewTransaction()
+					for _, v := range c.then {
+						require.NoError(t, tx.Add(e, cells, v))
+					}
+					require.NoError(t, tx.Remove(e, cells, c.then[len(c.then)-1]))
+					require.NoError(t, tx.Add(e, cells, "9"))
+					_, err := tx.Commit()
+					require.NoError(t, err)
+
+					var got stack
+					require.NoError(t, db.PullInto(e, &got))
+					assert.Equal(t, c.want, got.Cells,
+						"the Remove takes the element of the value its own transaction added last")
+				})
+			}
+		})
+	}
+}
+
 // TestAddSchemaAwareVector verifies Add() properly handles vector cardinality
 func TestAddSchemaAwareVector(t *testing.T) {
 	for _, mode := range optimizerModes {
@@ -2308,11 +2367,10 @@ func TestVectorLiteralMatch(t *testing.T) {
 			t.Run("string/unbound V returns all vectors", func(t *testing.T) {
 				names := collectNames(t,
 					`[:find ?name :where [?e :entity/name ?name] [?e :entity/lore ?lore]]`)
-				// Empty vectors produce zero tuples (treated as "not found"),
-				// so unbound V only returns entities with non-empty vectors.
-				assert.Len(t, names, 2, "should find HasLore, TwoLore (empty vectors produce no tuples)")
-				assert.Contains(t, names, "HasLore")
-				assert.Contains(t, names, "TwoLore")
+				// An emptied vector is a value, so an unbound V binds it as the
+				// literal [] matches it. A vector never written binds nothing.
+				assert.ElementsMatch(t, []string{"HasLore", "TwoLore", "EmptyLore"}, names,
+					"unbound V binds every written vector, the emptied one included")
 			})
 
 			// --- Int64 vector tests ---
@@ -2347,12 +2405,11 @@ func TestVectorLiteralMatch(t *testing.T) {
 				assert.Empty(t, names)
 			})
 
-			t.Run("int64/unbound V returns all non-empty", func(t *testing.T) {
+			t.Run("int64/unbound V returns every written vector", func(t *testing.T) {
 				names := collectNames(t,
 					`[:find ?name :where [?e :entity/name ?name] [?e :entity/scores ?s]]`)
-				assert.Len(t, names, 2, "should find HasScores, TwoScores")
-				assert.Contains(t, names, "HasScores")
-				assert.Contains(t, names, "TwoScores")
+				assert.ElementsMatch(t, []string{"HasScores", "TwoScores", "EmptyScores"}, names,
+					"unbound V binds every written vector, the emptied one included")
 			})
 
 			// --- Keyword vector tests ---
@@ -2387,12 +2444,11 @@ func TestVectorLiteralMatch(t *testing.T) {
 				assert.Empty(t, names)
 			})
 
-			t.Run("keyword/unbound V returns all non-empty", func(t *testing.T) {
+			t.Run("keyword/unbound V returns every written vector", func(t *testing.T) {
 				names := collectNames(t,
 					`[:find ?name :where [?e :entity/name ?name] [?e :entity/flags ?f]]`)
-				assert.Len(t, names, 2, "should find HasFlags, TwoFlags")
-				assert.Contains(t, names, "HasFlags")
-				assert.Contains(t, names, "TwoFlags")
+				assert.ElementsMatch(t, []string{"HasFlags", "TwoFlags", "EmptyFlags"}, names,
+					"unbound V binds every written vector, the emptied one included")
 			})
 		})
 	}

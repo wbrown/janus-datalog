@@ -1982,8 +1982,8 @@ func (m *PatternMatcher) matchVectorWithBindings(
 	// One RGA resolution per binding tuple, each walking its own run, so this
 	// names no index and reports the count instead. An RGA group is every insert
 	// and tombstone ever written for the (E, A), and the exits below that
-	// produce no tuple — never set, empty, bound V mismatched — are where the
-	// gap between what was read and what came out is widest.
+	// produce no tuple — never set, bound V mismatched — are where the gap
+	// between what was read and what came out is widest.
 	var opened time.Time
 	report := DiscardIntake
 	var resolutions, elementsResolved int
@@ -2045,12 +2045,7 @@ func (m *PatternMatcher) matchVectorWithBindings(
 		}
 
 		// If V is bound, compare the resolved vector against bound value
-		if v != nil {
-			if !datalog.ValuesEqual(resolved, v) {
-				continue
-			}
-		} else if len(result.Elements) == 0 {
-			// Unbound V: skip entities with empty vectors
+		if v != nil && !datalog.ValuesEqual(resolved, v) {
 			continue
 		}
 
@@ -2452,13 +2447,8 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 
 		resolved := typedVector(result.Elements, it.valueType)
 
-		if it.v != nil {
-			// V is bound — compare
-			if !datalog.ValuesEqual(resolved, it.v) {
-				continue
-			}
-		} else if len(result.Elements) == 0 {
-			// Unbound V: skip empty vectors
+		// V is bound — compare
+		if it.v != nil && !datalog.ValuesEqual(resolved, it.v) {
 			continue
 		}
 
