@@ -232,6 +232,8 @@ Since `(5, 100) < (5, 200)` (same Lamport, lower ReplicaID wins):
 
 **Result on ALL replicas**: `["stealth", "magic"]`
 
+Two transactions open at once on one database behave as two replicas do. Each writes against the vector as it stood when the transaction began, with its own writes applied, so an element the other commits after that is one it never saw. The merge keeps both writers' elements.
+
 ### Concurrent Update to Same Position
 
 When two replicas modify the same position concurrently:
@@ -304,9 +306,10 @@ tx.Add(entity, ":prefs", "compact")     // Added
 tx.Add(entity, ":prefs", "dark-mode")   // No-op: already exists
 ```
 
-The uniqueness check examines the vector the transaction holds: its
-committed elements with the transaction's own earlier inserts and tombstones
-added, resolved as the readers resolve them once it commits.
+The uniqueness check finds the value when the vector the transaction holds
+has a live element carrying it. It reads the newest live element of the
+value, which [Asymptotic Complexity Analysis](#asymptotic-complexity-analysis)
+defines.
 
 ### Using with Reflect Package
 
@@ -351,7 +354,9 @@ Replica B: tx.Add(e, :prefs, "X")  // Succeeds (no local "X")
 After sync: ["X", "X"]  // Both inserts preserved by RGA
 ```
 
-For strict uniqueness across replicas, application-level conflict resolution is required after merge.
+An `Add` also writes a second copy of a value that another transaction open on the same database committed after this one began (see [Concurrent Append Behavior](#concurrent-append-behavior)).
+
+For strict uniqueness across replicas or concurrent transactions, application-level conflict resolution is required after merge.
 
 ---
 
@@ -491,7 +496,7 @@ tx.Add(entity, ":skills", "stealth")
 tx.Set(entity, ":skills", []any{"stealth", "magic"})
 ```
 
-1. **Resolve the vector the transaction holds**: its committed elements with the transaction's own earlier writes to (E, A) added, resolved as the readers resolve them once it commits, each value with its ElementID
+1. **Read the vector the transaction holds**, each value with its ElementID, as [Asymptotic Complexity Analysis](#asymptotic-complexity-analysis) defines it
 2. **Compute diff**: Find common prefix, elements to tombstone, elements to insert
 3. **Write tombstones**: For each removed element, write OpRGATombstone with AfterRef = element's ID
 4. **Write inserts**: For each new element, write OpRGAInsert chained after appropriate predecessor
@@ -679,8 +684,8 @@ This section provides formal complexity analysis for all CRDT operations.
 | Operation | Time | Space | Notes |
 |-----------|------|-------|-------|
 | **Write** `Add(e, a, v)` (append) | O(1) | O(1) | Single RGAInsert datom |
-| **Write** `Set(e, a, vals)` (replace) | O((n + d) log (n + d) + k') | O(n + d + k') | Resolves the vector the transaction holds, then the diff below |
-| **Write** `Remove(e, a, v)` | O((n + d) log (n + d)) | O(n + d) | Resolves the vector the transaction holds |
+| **Write** `Set(e, a, vals)` (replace) | O(d + k + k') from a fresh cache entry, O(n log n + d + k') otherwise | O(n + d + k') | Reads the vector the transaction holds, then the diff below |
+| **Write** `Remove(e, a, v)` | O(d + n_v) | O(d + n_v) | Reads the newest live element of v, n_v = inserts and tombstones of the elements holding v |
 | **Read** (cache hit) | O(1) | O(1) | Return cached vectorList |
 | **Read** (cache miss) | O(n log n) | O(n) | RGA reconstruction |
 | **Cache rebuild** | O(n log n) | O(k) | Sort + DFS traversal |
@@ -690,9 +695,15 @@ This section provides formal complexity analysis for all CRDT operations.
 
 **RGA reconstruction**: O(n) to load all elements, O(n log n) to sort children by ElementID at each node, O(k) DFS to produce ordered output.
 
-**The vector the transaction holds**: O(n) to load the committed elements, O(d) to gather the transaction's own datoms of (E, A) from its d pending datoms, and O((n + d) log (n + d)) to reconstruct. `Set`, `Remove` and an ordered set's `Add` each resolve it.
+**The vector the transaction holds** is the vector as of the transaction's start, less the elements its own tombstones name, followed by its own inserts in the order it wrote them, less those its tombstones name. `Set` reads it.
 
-**Set() diff complexity**, after that resolution:
+- Every element the transaction writes is drawn after it began, so it lands after its anchor's whole subtree.
+- Everything after that subtree is already tombstoned in the transaction's view. The anchor is HEAD for the transaction's first `Add`, the element its last `Add` or `Set` ended on, or a `Set`'s prefix end, after which that `Set` tombstoned the rest.
+- An element another transaction commits after the transaction began is not in its view.
+- The vector as of the start is the cached entry when no datom of (E, A) was drawn after the start, O(1). Otherwise it is resolved as of the start, O(n log n).
+- Dropping the tombstoned elements and appending the transaction's inserts is O(k + d).
+
+**Set() diff complexity**, after reading that vector:
 
 | Scenario | Tombstones | Inserts | Total |
 |----------|------------|---------|-------|
@@ -702,17 +713,23 @@ This section provides formal complexity analysis for all CRDT operations.
 | Full replace (p=0) | k | k' | O(k + k') |
 | No change | 0 | 0 | O(1) |
 
+**The newest live element of a value** is what `Remove` and an ordered set's `Add` read.
+
+- When the transaction holds a live insert of v, its newest one is the answer, since every element the transaction writes outranks the start's: O(d).
+- Otherwise it is the first insert on v's EAVT run that neither a tombstone in the start's view nor one of the transaction's own names. The run is read newest first and passes over datoms drawn after the start: O(d + n_v).
+- A tombstone carries the value of the element it names and is written after that element's insert, so the run reads it before the insert.
+
 ### Vector + UniqueElements (OrderedSet)
 
 | Operation | Time | Space | Notes |
 |-----------|------|-------|-------|
-| **Write** `Add(e, a, v)` | O((n + d) log (n + d)) | O(n + d) | Uniqueness check + insert |
-| **Write** `Set(e, a, vals)` | O((n + d) log (n + d) + k') | O(n + d + k') | Same as Vector |
+| **Write** `Add(e, a, v)` | O(d + n_v) | O(d + n_v) | Uniqueness check + insert |
+| **Write** `Set(e, a, vals)` | O(d + k + k') from a fresh cache entry, O(n log n + d + k') otherwise | O(n + d + k') | Same as Vector |
 | **Read** (cache hit) | O(1) | O(1) | Same as Vector |
 | **Read** (cache miss) | O(n log n) | O(n) | Same as Vector |
-| **Uniqueness check** | O((n + d) log (n + d)) | O(n + d) | Resolves the vector the transaction holds |
+| **Uniqueness check** | O(d + n_v) | O(d + n_v) | Reads the newest live element of v |
 
-**Trade-off**: Regular Vector Add is O(1). OrderedSet Add resolves the vector the transaction holds to check uniqueness, so its cost grows with every insert and tombstone the vector has had.
+**Trade-off**: Regular Vector Add is O(1). OrderedSet Add reads the datoms of the value it adds to check uniqueness, so its cost grows with the inserts and tombstones of that value.
 
 ### Index Operations
 
@@ -757,9 +774,14 @@ This section provides formal complexity analysis for all CRDT operations.
 | One | O(1) | O(1) | O(1) | Optimal for single values |
 | Many | O(1) | O(n) | O(1) | Write-optimized, read rebuilds |
 | Vector | O(1) | O(n log n) | O(1) | Write-optimized, expensive rebuild |
-| OrderedSet | O((n+d) log (n+d)) | O(n log n) | O(1) | Uniqueness costs at write time |
+| OrderedSet | O(d + n_v) | O(n log n) | O(1) | Uniqueness costs at write time |
 
-**Key insight**: A vector's `Add` writes without reading, in O(1). Its `Set` and `Remove`, and an ordered set's `Add`, resolve the vector the transaction holds, in O((n + d) log (n + d)). Read performance depends on cache hit rate. For read-heavy workloads, use `d.WarmCache()` at startup.
+**Key insight**:
+
+- A vector's `Add` writes without reading, in O(1).
+- A vector's `Remove`, and an ordered set's `Add`, read the datoms of one value, in O(d + n_v).
+- A vector's `Set` reads the vector the transaction holds, in O(d + k) from a fresh cache entry and O(n log n + d) when it resolves the vector as of the transaction's start.
+- Read performance depends on cache hit rate. For read-heavy workloads, use `d.WarmCache()` at startup.
 
 ---
 

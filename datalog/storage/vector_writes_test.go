@@ -611,6 +611,15 @@ var vectorWritesScenarios = []vectorScenario{
 	{"remove the last added of committed equal values", vectorWritesCells,
 		[][]vectorOp{{vecAdd("a"), vecAdd("b"), vecAdd("a")}, {vecRemove("a")}},
 		[][]string{{"a", "b", "a"}, {"a", "b"}}},
+	{"remove again after a commit removed the last added", vectorWritesCells,
+		[][]vectorOp{{vecAdd("a"), vecAdd("b"), vecAdd("a")}, {vecRemove("a")}, {vecRemove("a")}},
+		[][]string{{"a", "b", "a"}, {"a", "b"}, {"b"}}},
+	{"remove twice in one transaction, of committed equal values", vectorWritesCells,
+		[][]vectorOp{{vecAdd("a"), vecAdd("b"), vecAdd("a")}, {vecRemove("a"), vecRemove("a")}},
+		[][]string{{"a", "b", "a"}, {"b"}}},
+	{"remove twice in one transaction, its own element and then a committed one", vectorWritesCells,
+		[][]vectorOp{{vecAdd("a"), vecAdd("b")}, {vecAdd("a"), vecRemove("a"), vecRemove("a")}},
+		[][]string{{"a", "b"}, {"b"}}},
 	{"remove a value the vector does not hold", vectorWritesCells,
 		[][]vectorOp{{vecAdd("a")}, {vecRemove("z")}},
 		[][]string{{"a"}, {"a"}}},
@@ -662,6 +671,9 @@ var vectorWritesScenarios = []vectorScenario{
 	{"ordered set, add a value a set in the transaction wrote", vectorWritesSet,
 		[][]vectorOp{{vecAdd("a")}, {vecSet("a", "b"), vecAdd("b")}},
 		[][]string{{"a"}, {"a", "b"}}},
+	{"ordered set, add a value a commit removed", vectorWritesSet,
+		[][]vectorOp{{vecAdd("a")}, {vecRemove("a")}, {vecAdd("a")}},
+		[][]string{{"a"}, {}, {"a"}}},
 }
 
 // TestVectorWritesReadBackAlikeThroughEveryReader writes each scenario's
@@ -691,22 +703,40 @@ func TestVectorWritesReadBackAlikeThroughEveryReader(t *testing.T) {
 	}
 }
 
+// concurrentStepKind is what one step of a run of transactions open at once
+// does.
+type concurrentStepKind int
+
+const (
+	// concurrentBeginStep opens the step's transaction. A transaction also
+	// opens at its first write, so a begin step opens one earlier.
+	concurrentBeginStep concurrentStepKind = iota
+	// concurrentWriteStep makes the step's write in its transaction.
+	concurrentWriteStep
+	// concurrentCommitStep commits the step's transaction, after which the
+	// latest view's vector is the step's want.
+	concurrentCommitStep
+)
+
 // concurrentStep is one step of a run of transactions open at once on one
-// database: a write by transaction tx, or tx's commit, after which the latest
-// view's vector is want.
+// database, taken by transaction tx.
 type concurrentStep struct {
-	tx     int
-	commit bool
-	op     vectorOp
-	want   []string
+	tx   int
+	kind concurrentStepKind
+	op   vectorOp
+	want []string
+}
+
+func concurrentBegin(tx int) concurrentStep {
+	return concurrentStep{tx: tx, kind: concurrentBeginStep}
 }
 
 func concurrentWrite(tx int, op vectorOp) concurrentStep {
-	return concurrentStep{tx: tx, op: op}
+	return concurrentStep{tx: tx, kind: concurrentWriteStep, op: op}
 }
 
 func concurrentCommit(tx int, want ...string) concurrentStep {
-	return concurrentStep{tx: tx, commit: true, want: want}
+	return concurrentStep{tx: tx, kind: concurrentCommitStep, want: want}
 }
 
 // TestVectorConcurrentTransactionsReadBackAlikeThroughEveryReader writes one
@@ -715,12 +745,15 @@ func concurrentCommit(tx int, want ...string) concurrentStep {
 // as of each commit once all have committed, with the cache on and off. Each
 // vector a case states is the one its datoms resolve to: an element follows
 // the element its insert names, the elements following one element are in
-// ElementID order, and a withdrawn element keeps its place.
+// ElementID order, and a withdrawn element keeps its place. A transaction
+// writes against the vector as it stood when the transaction began, with its
+// own writes applied, so an element another transaction commits after that is
+// one it never saw.
 func TestVectorConcurrentTransactionsReadBackAlikeThroughEveryReader(t *testing.T) {
 	s := vectorWritesSchema(t)
-	attr := vectorWritesCells
 	cases := []struct {
 		name  string
+		attr  vectorAttr
 		steps []concurrentStep
 		asOf  [][]string // the vector as of each commit, in the order of the commits
 	}{
@@ -730,6 +763,7 @@ func TestVectorConcurrentTransactionsReadBackAlikeThroughEveryReader(t *testing.
 			// keeps its place, so c stays before x. As of the first commit
 			// the view holds x, whose ElementID is below that commit's.
 			name: "a withdrawn element keeps its place before a concurrent transaction's element",
+			attr: vectorWritesCells,
 			steps: []concurrentStep{
 				concurrentWrite(0, vecAdd("a")),
 				concurrentWrite(1, vecAdd("x")),
@@ -743,31 +777,99 @@ func TestVectorConcurrentTransactionsReadBackAlikeThroughEveryReader(t *testing.
 			asOf: [][]string{{"a", "b", "c", "x"}, {"a", "b", "c", "x"}, {"a", "c", "x"}},
 		},
 		{
-			// y and x both follow HEAD, y first by ElementID, so the
-			// transaction that sets [x y] holds [y x] and writes the vector
-			// again in the order it asks for. As of the first commit the view
-			// holds y, whose ElementID is below that commit's.
-			name: "a set diffs against a vector holding a concurrent transaction's element",
+			// Transaction 0 began before transaction 1 committed x, so it
+			// holds [y], its own element alone. Its Set of [x y] withdraws y
+			// and writes x and y after HEAD, drawn after transaction 1's x,
+			// which comes first: [x x y]. As of the first commit the view
+			// holds y and x, whose ElementIDs are below that commit's, y
+			// first by ElementID: [y x].
+			name: "a set leaves a concurrent transaction's element it never saw",
+			attr: vectorWritesCells,
 			steps: []concurrentStep{
 				concurrentWrite(0, vecAdd("y")),
 				concurrentWrite(1, vecAdd("x")),
 				concurrentCommit(1, "x"),
 				concurrentWrite(0, vecSet("x", "y")),
-				concurrentCommit(0, "x", "y"),
+				concurrentCommit(0, "x", "x", "y"),
 			},
-			asOf: [][]string{{"y", "x"}, {"x", "y"}},
+			asOf: [][]string{{"y", "x"}, {"x", "x", "y"}},
 		},
 		{
 			// The case above, written through SaveStruct.
-			name: "a save diffs against a vector holding a concurrent transaction's element",
+			name: "a save leaves a concurrent transaction's element it never saw",
+			attr: vectorWritesCells,
 			steps: []concurrentStep{
 				concurrentWrite(0, vecAdd("y")),
 				concurrentWrite(1, vecAdd("x")),
 				concurrentCommit(1, "x"),
 				concurrentWrite(0, vecSave("x", "y")),
+				concurrentCommit(0, "x", "x", "y"),
+			},
+			asOf: [][]string{{"y", "x"}, {"x", "x", "y"}},
+		},
+		{
+			// Both x's follow HEAD. Transaction 0 began before transaction 1
+			// committed its x, so the newest x transaction 0 holds is its own,
+			// and the Remove takes it. b keeps its place after that x, and
+			// transaction 1's x, drawn after both, follows them: [b x]. As of
+			// the first commit the view holds transaction 0's x and b, whose
+			// ElementIDs are below that commit's: [x b x].
+			name: "a remove takes its own element of the value, not one a concurrent transaction committed",
+			attr: vectorWritesCells,
+			steps: []concurrentStep{
+				concurrentWrite(0, vecAdd("x")),
+				concurrentWrite(0, vecAdd("b")),
+				concurrentWrite(1, vecAdd("x")),
+				concurrentCommit(1, "x"),
+				concurrentWrite(0, vecRemove("x")),
+				concurrentCommit(0, "b", "x"),
+			},
+			asOf: [][]string{{"x", "b", "x"}, {"b", "x"}},
+		},
+		{
+			// Transaction 0 began before transaction 1 committed x, so it
+			// holds no element of x, and its Remove writes nothing: [x].
+			name: "a remove of a value only a concurrent transaction committed writes nothing",
+			attr: vectorWritesCells,
+			steps: []concurrentStep{
+				concurrentBegin(0),
+				concurrentWrite(1, vecAdd("x")),
+				concurrentCommit(1, "x"),
+				concurrentWrite(0, vecRemove("x")),
+				concurrentCommit(0, "x"),
+			},
+			asOf: [][]string{{"x"}, {"x"}},
+		},
+		{
+			// Transaction 0 began before transaction 1 committed x and has
+			// written nothing to the vector, so it holds the empty vector, and
+			// its Set of [y] writes y after HEAD, drawn after x: [x y].
+			name: "a set by a transaction holding no element keeps a concurrent transaction's element",
+			attr: vectorWritesCells,
+			steps: []concurrentStep{
+				concurrentBegin(0),
+				concurrentWrite(1, vecAdd("x")),
+				concurrentCommit(1, "x"),
+				concurrentWrite(0, vecSet("y")),
 				concurrentCommit(0, "x", "y"),
 			},
-			asOf: [][]string{{"y", "x"}, {"x", "y"}},
+			asOf: [][]string{{"x"}, {"x", "y"}},
+		},
+		{
+			// Transaction 0 began before transaction 1 committed x, so its
+			// ordered set holds no x, and its Add writes one after HEAD, drawn
+			// after transaction 1's: [x x], the merge of two writers adding
+			// one value at once.
+			name: "an ordered set's add writes a value a concurrent transaction committed",
+			attr: vectorWritesSet,
+			steps: []concurrentStep{
+				concurrentBegin(0),
+				concurrentWrite(1, vecAdd("x")),
+				concurrentCommit(1, "x"),
+				concurrentWrite(0, vecAdd("x")),
+				concurrentCommit(0, "x", "x"),
+			},
+			asOf: [][]string{{"x"}, {"x", "x"}},
 		},
 	}
 	for _, c := range cases {
@@ -789,18 +891,21 @@ func TestVectorConcurrentTransactionsReadBackAlikeThroughEveryReader(t *testing.
 								tx = d.NewTransaction()
 								txs[step.tx] = tx
 							}
-							if !step.commit {
-								require.NoError(t, writeVectorOp(tx, e, attr, step.op), "step %d, transaction %d, %s", i, step.tx, step.op)
-								continue
+							switch step.kind {
+							case concurrentBeginStep:
+								// Opening the transaction above is the whole step.
+							case concurrentWriteStep:
+								require.NoError(t, writeVectorOp(tx, e, c.attr, step.op), "step %d, transaction %d, %s", i, step.tx, step.op)
+							case concurrentCommitStep:
+								id, err := tx.Commit()
+								require.NoError(t, err, "step %d, the commit of transaction %d", i, step.tx)
+								commits = append(commits, id)
+								checkVectorReaders(t, fmt.Sprintf("after step %d, the commit of transaction %d", i, step.tx), d, e, c.attr, step.want)
 							}
-							id, err := tx.Commit()
-							require.NoError(t, err, "step %d, the commit of transaction %d", i, step.tx)
-							commits = append(commits, id)
-							checkVectorReaders(t, fmt.Sprintf("after step %d, the commit of transaction %d", i, step.tx), d, e, attr, step.want)
 						}
 						require.Len(t, commits, len(c.asOf), "the case states the vector as of each commit")
 						for k, id := range commits {
-							checkVectorReaders(t, fmt.Sprintf("as of commit %d", k), d.AsOf(id), e, attr, c.asOf[k])
+							checkVectorReaders(t, fmt.Sprintf("as of commit %d", k), d.AsOf(id), e, c.attr, c.asOf[k])
 						}
 					})
 				}

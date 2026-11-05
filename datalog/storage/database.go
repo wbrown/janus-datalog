@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -656,6 +657,7 @@ func (d *Database) NewTransaction() *Transaction {
 		doomed:            d.rollbackInProgress,
 		schema:            installed.effective,
 		admission:         installed.admission,
+		start:             datalog.ElementID{Lamport: d.clock.Current(), ReplicaID: ^uint64(0)},
 	}
 
 	// A transaction born during a rollback is dropped (its writes return
@@ -1802,6 +1804,12 @@ type Transaction struct {
 	// from the same installed value as schema: the engine's words over the
 	// stored definitions, with no inferred definition among them.
 	admission schema.SchemaProvider
+	// start is when the transaction opened, as the greatest ElementID at the
+	// clock's Lamport time then: every datom drawn by that time is at or
+	// before it, and every datom the transaction draws is after it. The
+	// vector writers read the store as of start, so every element they find
+	// precedes every element the transaction writes.
+	start datalog.ElementID
 }
 
 // SetTime sets a custom transaction time for this transaction
@@ -1925,7 +1933,7 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 			// OrderedSet uniqueness check: if UniqueElements is true, check if value already exists
 			if def.UniqueElements {
-				contains, err := t.vectorContainsValue(e, a, v)
+				_, contains, err := t.newestLiveElement(e, a, v)
 				if err != nil {
 					return err
 				}
@@ -2038,34 +2046,28 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 		})
 	case schema.CardinalityVector:
 		// RGA LIFO Remove: tombstone the most recently added element matching
-		// value, the live element of the value with the highest ElementID in
-		// the vector this transaction holds (effectiveVector), its own earlier
-		// writes to the vector included.
+		// value, the live element of the value with the highest ElementID this
+		// transaction knows (newestLiveElement), its own earlier writes to the
+		// vector included.
 		//
 		// LIFO is CRDT-friendly ("most recent" = "the one I most recently
 		// added") and serves the stack pattern, such as undo operations. Users
 		// wanting to remove the FIRST occurrence must use read-modify-write via
 		// Set().
-		vector, err := t.effectiveVector(e, a)
+		target, found, err := t.newestLiveElement(e, a, v)
 		if err != nil {
 			return err
 		}
-		var target *RGAElement
-		for i := range vector {
-			if held := &vector[i].Element; datalog.ValuesEqual(held.Value, v) && (target == nil || target.ID.Less(held.ID)) {
-				target = held
-			}
-		}
 
 		// If no matching element found, Remove is a no-op (not an error)
-		if target == nil {
+		if !found {
 			return nil
 		}
 
 		t.datoms = append(t.datoms, datalog.Datom{
 			E:        e,
 			A:        a,
-			V:        target.Value, // Raw value (for verification/debugging)
+			V:        target.Value, // The element's value, which puts the tombstone in the value's EAVT run
 			Tx:       t.db.clock.Next(),
 			Op:       datalog.OpRGATombstone,
 			AfterRef: target.ID, // ID of element being tombstoned
@@ -2335,15 +2337,9 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		// writes to the vector included, is what the diff below is computed
 		// against. A failed read of it would rewrite the whole vector as if it
 		// had been empty.
-		vector, err := t.effectiveVector(e, a)
+		oldList, oldIndex, err := t.effectiveVector(e, a)
 		if err != nil {
 			return err
-		}
-		oldList := make([]any, len(vector))
-		oldIndex := make([]datalog.ElementID, len(vector))
-		for i, held := range vector {
-			oldList[i] = held.Element.Value
-			oldIndex[i] = held.Element.ID
 		}
 
 		// Find common prefix - elements that don't need to change. An element
@@ -2368,7 +2364,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			t.datoms = append(t.datoms, datalog.Datom{
 				E:        e,
 				A:        a,
-				V:        oldList[i],  // Raw value (for verification/debugging)
+				V:        oldList[i],  // The element's value, which puts the tombstone in the value's EAVT run
 				Tx:       tombstoneID, // New tombstone ID
 				Op:       datalog.OpRGATombstone,
 				AfterRef: oldIndex[i], // ID of element being tombstoned
@@ -2417,51 +2413,119 @@ func appendVectorInserts(datoms []datalog.Datom, e datalog.Identity, a datalog.K
 	return datoms, after
 }
 
-// effectiveVector answers e's vector at a as this transaction holds it: the
-// committed datoms of (e, a) and the transaction's own, gathered by
-// vectorElements.gather and ordered by ReconstructRGAWithIDs. That is the
-// vector the readers resolve once the transaction commits.
-func (t *Transaction) effectiveVector(e datalog.Identity, a datalog.Keyword) ([]RGAElementWithPosition, error) {
+// effectiveVector answers e's vector at a as this transaction holds it, its
+// values in order with their ElementIDs: the vector as of the transaction's
+// start less the elements its own tombstones name, followed by its own inserts
+// in the order it wrote them less those its tombstones name. That is the
+// resolution of the datoms it holds, the start's and its own. Every element
+// the transaction writes is drawn after its start, so it lands after its
+// anchor's whole subtree, and everything after that subtree in its view is
+// already withdrawn: its anchor is HEAD for the first Add, the element the
+// last Add or Set ended on, or a Set's prefix end, after which that Set
+// withdrew the rest. The vector as of the start is the cached one when no
+// datom of (e, a) was drawn after the start.
+func (t *Transaction) effectiveVector(e datalog.Identity, a datalog.Keyword) ([]any, []datalog.ElementID, error) {
 	eHash := e.Hash()
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
-	committed, _, err := NewPatternMatcher(t.db.store).loadRGAElements(eHash[:], aBytes[:], DiscardIntake)
+	key := CacheKey{E: Entity(eHash), A: aBytes}
+
+	matcher := NewPatternMatcher(t.db.store)
+	matcher.SetSchema(t.schema)
+	atStart := matcher.AsOf(t.start)
+	card := atStart.GetCardinality(a)
+
+	var entry *CacheEntry
+	var err error
+	if t.db.cache != nil {
+		entry, err = t.db.cache.GetOrResolve(key, card, atStart, &t.start, t.db.plannerOptions.Handler, DiscardIntake)
+	} else {
+		entry, err = ResolveEntry(key, card, atStart, DiscardIntake)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("resolve current vector for %s: %w", a.String(), err)
+		return nil, nil, fmt.Errorf("resolve the vector of %s as of the transaction's start: %w", a.String(), err)
 	}
 
-	elements := make(vectorElements, len(committed))
-	for _, c := range committed {
-		elements[c.ID] = c
+	tombstoned := make(map[datalog.ElementID]bool)
+	for i := range t.datoms {
+		if d := &t.datoms[i]; d.Op == datalog.OpRGATombstone && d.E == e && d.A == a {
+			tombstoned[d.AfterRef] = true
+		}
+	}
+	var values []any
+	var ids []datalog.ElementID
+	if entry != nil {
+		list, index := entry.VectorList(), entry.VectorIndex()
+		for i, id := range index {
+			if !tombstoned[id] {
+				values = append(values, list[i])
+				ids = append(ids, id)
+			}
+		}
 	}
 	for i := range t.datoms {
-		if d := &t.datoms[i]; d.E == e && d.A == a {
-			elements.gather(d)
+		if d := &t.datoms[i]; d.Op == datalog.OpRGAInsert && d.E == e && d.A == a && !tombstoned[d.Tx] {
+			values = append(values, d.V)
+			ids = append(ids, d.Tx)
 		}
 	}
-
-	gathered := make([]RGAElement, 0, len(elements))
-	for _, el := range elements {
-		gathered = append(gathered, el)
-	}
-	return ReconstructRGAWithIDs(gathered), nil
+	return values, ids, nil
 }
 
-// vectorContainsValue answers whether the ordered set e's attribute a holds v
-// in the vector this transaction holds (effectiveVector). A failed read of that
-// vector is its error, since answering false would admit a duplicate to a set
-// the schema declares unique.
-func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword, v interface{}) (bool, error) {
-	vector, err := t.effectiveVector(e, a)
-	if err != nil {
-		return false, err
-	}
-	for _, held := range vector {
-		if datalog.ValuesEqual(held.Element.Value, v) {
-			return true, nil
+// newestLiveElement answers the live element of e's vector at a that holds v
+// and has the highest ElementID among the elements this transaction holds: its
+// own, and the committed ones as of its start. Every element the transaction
+// writes is drawn after its start, so its own newest live element holding v,
+// when it has one, is the answer. Otherwise the value's own datoms as of the
+// start decide it: its inserts, and the tombstones naming them, since a
+// tombstone carries the value of the element it names. found is false when no
+// element holding v is live.
+func (t *Transaction) newestLiveElement(e datalog.Identity, a datalog.Keyword, v interface{}) (newest RGAElement, found bool, err error) {
+	pendingTombstoned := make(map[datalog.ElementID]bool)
+	for i := range t.datoms {
+		if d := &t.datoms[i]; d.Op == datalog.OpRGATombstone && d.E == e && d.A == a {
+			pendingTombstoned[d.AfterRef] = true
 		}
 	}
-	return false, nil
+	// The transaction appends its datoms in the order it draws their
+	// ElementIDs, so its last live insert holding v is its newest.
+	for i := len(t.datoms) - 1; i >= 0; i-- {
+		if d := &t.datoms[i]; d.Op == datalog.OpRGAInsert && d.E == e && d.A == a && !pendingTombstoned[d.Tx] && datalog.ValuesEqual(d.V, v) {
+			return RGAElement{ID: d.Tx, Value: d.V, AfterRef: d.AfterRef}, true, nil
+		}
+	}
+
+	// EAVT orders Tx descending after V, so a tombstone of an element holding v
+	// is read before that element's insert, and the first insert no tombstone
+	// names, committed or the transaction's own, is the newest live element
+	// holding v. A datom drawn after the start is not in the transaction's view.
+	iter, err := OpenScan(t.db.store, DiscardIntake, ScanBound{Index: EAVT, Prefix: []datalog.Value{e, a, v}})
+	if err != nil {
+		return RGAElement{}, false, fmt.Errorf("scan the elements of %s holding a value: %w", a.String(), err)
+	}
+	committedTombstoned := make(map[datalog.ElementID]bool)
+	for iter.Next() {
+		var d *datalog.Datom
+		if d, err = iter.Datom(); err != nil {
+			break
+		}
+		if t.start.Less(d.Tx) {
+			continue
+		}
+		if d.Op == datalog.OpRGATombstone {
+			committedTombstoned[d.AfterRef] = true
+		} else if d.Op == datalog.OpRGAInsert && !committedTombstoned[d.Tx] && !pendingTombstoned[d.Tx] {
+			newest, found = RGAElement{ID: d.Tx, Value: d.V, AfterRef: d.AfterRef}, true
+			break
+		}
+	}
+	if err == nil {
+		err = iter.Error()
+	}
+	if err = errors.Join(err, iter.Close()); err != nil {
+		return RGAElement{}, false, fmt.Errorf("scan the elements of %s holding a value: %w", a.String(), err)
+	}
+	return newest, found, nil
 }
 
 // Retract removes a datom

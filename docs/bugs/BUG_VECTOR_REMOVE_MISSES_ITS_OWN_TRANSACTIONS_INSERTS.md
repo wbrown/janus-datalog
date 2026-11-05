@@ -126,11 +126,10 @@ its earlier writes, by a rule of its own.
 - `SaveStruct` writes a vector field through `Transaction.Set`
   (`StructWriter.updateSliceField` and `StructWriter.updateOrderedSetField`,
   `datalog/reflect`), so it diffs against the same vector.
-- An ordered set's `Add` writes nothing for a value
-  `Transaction.vectorContainsValue` finds. That function finds any pending
-  insert of the value, whether or not a pending tombstone names it. Failing
-  that, it finds the value in the committed vector, whether or not a pending
-  tombstone names its element.
+- An ordered set's `Add` writes nothing for a value its uniqueness check
+  finds. The check finds any pending insert of the value, whether or not a
+  pending tombstone names it. Failing that, it finds the value in the
+  committed vector, whether or not a pending tombstone names its element.
 
 Each row is one transaction over a committed vector:
 
@@ -244,19 +243,28 @@ following b.
 
 ## The fix, if taken
 
-- The vector a transaction holds for (E, A) at a write is the resolution of
-  every datom of (E, A) it knows, the committed ones and its own pending
-  ones, by the rule the readers resolve a vector with. One computation
-  answers it to `Remove`, `Set` and `vectorContainsValue`. The
-  cardinality-many arm of `Set` resolves the committed set with the
-  transaction's pending operations the same way.
+- A transaction writes against a vector as it stood when the transaction
+  began, with its own writes applied. `NewTransaction` records its start,
+  and its writers read the store as of it.
+- Every element a transaction writes is drawn after it began, so it lands
+  after its anchor's whole subtree, and everything after that subtree is
+  already withdrawn in its view. So the vector it holds for (E, A) is the
+  vector as of its start, less the elements its own withdrawals name,
+  followed by its own inserts in the order it wrote them, less those its
+  withdrawals name. `Set` diffs against it.
 - `Remove` withdraws the live element of its value with the highest
-  ElementID in that vector. `Set` diffs against it. `vectorContainsValue`
-  answers whether it holds the value.
-- `loadRGAElements`, `ResolveRGAFromDatoms` and the transaction's vector
-  gather a vector's elements from its datoms by one rule. An insert gives its
-  element's value and the element it follows, and a withdrawal marks the
-  element, whichever of the two is read first.
+  ElementID among the elements the transaction holds. Its own newest live
+  element of the value, when it has one, outranks every element of the
+  start. Otherwise the value's run on EAVT as of the start decides it,
+  since a withdrawal carries the value of the element it names. An ordered
+  set's `Add` writes nothing when a live element holds its value.
+- An element another transaction commits after a transaction began is not
+  in its view, so the merge keeps both writers' elements, as two replicas'
+  writes are kept.
+- `loadRGAElements` and `ResolveRGAFromDatoms` gather a vector's elements
+  from its datoms by one rule. An insert gives its element's value and the
+  element it follows, and a withdrawal marks the element, whichever of the
+  two is read first.
 - `GetVectorLength`, `GetVectorNth` and `WarmCache` resolve through the
   handle's own matcher, `d.Matcher()`. An as-of handle then resolves as of
   its target, and a history handle reads past the cache, as
@@ -292,7 +300,11 @@ following b.
   steps under "A withdrawn element read before its insert". It also writes
   a `Set`, and a `SaveStruct`, of `[x y]` by a transaction that added `y`
   before another transaction added `x` and committed. On the unmodified
-  writers every reader answers `[y x y]` there, where the vector is `[x y]`.
+  writers every reader answers `[y x y]` there, where the vector is
+  `[x x y]`: the transaction that sets `[x y]` began before the other
+  committed `x`. Its other cases write a `Remove`, a `Set` and an ordered
+  set's `Add` by a transaction that began before another committed the
+  value they touch.
 
 ## Related
 
