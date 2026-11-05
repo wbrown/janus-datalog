@@ -380,8 +380,8 @@ func (m *PatternMatcher) matchUnboundScan(
 	}
 
 	// CACHE OPTIMIZATION: When E and A are bound, use the cache for O(1)
-	// access instead of storage scans. Concrete AsOf matchers use
-	// transaction-scoped cache keys; History matchers bypass cache.
+	// access instead of storage scans. An as-of matcher reads its view's cache
+	// (Cache.ForView); History matchers bypass cache.
 	if m.cache != nil && m.mode != historyMode && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {

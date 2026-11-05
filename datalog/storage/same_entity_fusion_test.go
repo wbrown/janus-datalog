@@ -531,7 +531,7 @@ func TestFusionLookupFailureIsNotAttributeAbsence(t *testing.T) {
 					// Force the bound lookup to reach storage rather than the write-
 					// warmed cache, then close through Janus. Both paths must
 					// return ErrDBClosed rather than panic or report attribute absence.
-					db.cache = NewCache()
+					db.cache = NewCache(db.clock)
 					require.NoError(t, db.Close())
 					require.NoError(t, db.Close(), "Database.Close must be idempotent")
 

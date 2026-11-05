@@ -232,7 +232,7 @@ Since `(5, 100) < (5, 200)` (same Lamport, lower ReplicaID wins):
 
 **Result on ALL replicas**: `["stealth", "magic"]`
 
-Two transactions open at once on one database behave as two replicas do. Each writes against the vector as it stood when the transaction began, with its own writes applied, so an element the other commits after that is one it never saw. The merge keeps both writers' elements.
+Two transactions open at once on one database behave as two replicas do. Each writes against the vector as of the ElementID it began at, with its own writes applied. An element the other draws after that is one it never saw, and the merge keeps both writers' elements. An element the other drew before it is in that view, whenever it is committed.
 
 ### Concurrent Update to Same Position
 
@@ -354,7 +354,7 @@ Replica B: tx.Add(e, :prefs, "X")  // Succeeds (no local "X")
 After sync: ["X", "X"]  // Both inserts preserved by RGA
 ```
 
-An `Add` also writes a second copy of a value that another transaction open on the same database committed after this one began (see [Concurrent Append Behavior](#concurrent-append-behavior)).
+An `Add` also writes a second copy of a value that another transaction open on the same database drew after this one began (see [Concurrent Append Behavior](#concurrent-append-behavior)).
 
 For strict uniqueness across replicas or concurrent transactions, application-level conflict resolution is required after merge.
 
@@ -368,12 +368,13 @@ The cache provides O(1) access to resolved CRDT views.
 
 ```go
 type CacheEntry struct {
-    version     ElementID           // Max ElementID when computed
+    version     ElementID           // Highest ElementID among the datoms the resolution read
+    fence       ElementID           // In an as-of view's cache: the read point the resolution began at
     cardinality Cardinality
 
     // One of these is populated based on cardinality:
     oneValue    any                 // Cardinality-One: current value
-    manySet     map[any]bool        // Cardinality-Many: set members
+    manySet     map[string]any      // Cardinality-Many: member key → member
     vectorList  []any               // Cardinality-Vector: ordered values
     vectorIndex []ElementID         // Cardinality-Vector: position → ElementID
 }
@@ -401,7 +402,7 @@ Query: [?e :character/skills ?skills]
       ┌─────────┴─────────┐
       │                   │
   Cache Hit?          Cache Miss
-  (version == max)        │
+  (datoms ≤ read point)   │
       │                   ▼
       │        ┌─────────────────────┐
       │        │ rebuildVector()     │
@@ -416,16 +417,16 @@ Query: [?e :character/skills ?skills]
 
 ### Freshness Tracking
 
-```go
-// Per (E,A) max ElementID - updated on every write
-maxVersions sync.Map  // map[CacheKey]ElementID
+The datoms of a key can arrive below the highest ElementID among those already present: two transactions open at once, an import, and a merge each bring them. So the highest ElementID among a key's datoms does not identify the set of them, and the cache records each commit's arrival instead.
 
-// Freshness check is O(1):
-if entry.version == maxVersions[key] {
-    return entry  // Fresh
-}
-// Stale - rebuild
-```
+- **Arrival**: once a commit's datoms are readable, it draws an ElementID from the database's clock and raises the version of each key it touched to that ElementID. Recording the arrival clears the key's entry.
+- **Read point**: a reader takes its read point from the clock before it reads, or before its read session opens.
+- **Serve**: an entry serves a reader when every datom its resolution read lies at or below the reader's read point.
+- **Store**: a resolution is stored only when no arrival on its key lies above the reader's read point. A key with no slot reads the cache's floor, which starts at the clock's read point when the cache is made and rises before `Clear`, `InvalidateAttribute` and `InvalidateRewind` drop slots.
+
+### As-of Views
+
+An as-of handle (`d.AsOf(target)`) and a matcher's as-of copy keep their resolutions in a cache of their own (`Cache.ForView`), which holds only resolutions as of the view's target and is freed with the view. It records no arrival: it reads the database cache's record of each key. Each entry records the read point its resolution began at, and it serves while no arrival on its key, and no drop of the key's slot, lies above that read point. With the database's cache disabled, an as-of handle has none.
 
 ### Write Flow
 
@@ -433,17 +434,18 @@ if entry.version == maxVersions[key] {
 tx.Add(e, :skills, "archery")
             │
             ▼
-    ┌───────────────────┐
-    │ Generate ElementID│
-    │ Write to storage  │
-    └───────────────────┘
+    ┌──────────────────────────────┐
+    │ Draw ElementID, buffer datom │
+    └──────────────────────────────┘
             │
             ▼
-    ┌───────────────────┐
-    │ Commit():         │
-    │ UpdateMaxVersion()│ ← Marks cache stale
-    │ Invalidate(key)   │ ← Removes entry
-    └───────────────────┘
+    ┌────────────────────────────────┐
+    │ Commit():                      │
+    │ BeginInFlight(keys)            │ ← readers resolve from storage
+    │ write to storage               │
+    │ UpdateMaxVersion(key, arrival) │ ← records the arrival, clears the entry
+    │ Invalidate(keys)               │ ← clears the in-flight sentinels
+    └────────────────────────────────┘
 ```
 
 Next read triggers rebuild with fresh data.
@@ -456,7 +458,7 @@ Next read triggers rebuild with fresh data.
 // Writing to (Entity1, :name) does NOT invalidate (Entity2, :skills)
 tx.Set(entity1, ":name", "Alice")
 tx.Commit()
-// Only maxVersions[(entity1, :name)] is updated
+// Only the slot of (entity1, :name) records the arrival
 // Cache entry for (entity2, :skills) remains fresh
 ```
 
@@ -469,7 +471,7 @@ tx.Commit()
 For databases with millions of entities, this could consume significant memory. Future implementations may add configurable eviction policies.
 
 **Process Restart**: Cache is empty after restart:
-- `maxVersions` map starts empty
+- The cache starts with no slots, its floor at the clock's read point when the database opens
 - First access to each (E, A) triggers rebuild from storage
 - Use `d.WarmCache(attributes)` for performance-critical attributes
 
@@ -699,7 +701,7 @@ This section provides formal complexity analysis for all CRDT operations.
 
 - Every element the transaction writes is drawn after it began, so it lands after its anchor's whole subtree.
 - Everything after that subtree is already tombstoned in the transaction's view. The anchor is HEAD for the transaction's first `Add`, the element its last `Add` or `Set` ended on, or a `Set`'s prefix end, after which that `Set` tombstoned the rest.
-- An element another transaction commits after the transaction began is not in its view.
+- An element another transaction draws after the transaction began is not in its view. One it drew before is in the view, whenever it is committed.
 - The vector as of the start is the cached entry when no datom of (E, A) was drawn after the start, O(1). Otherwise it is resolved as of the start, O(n log n).
 - Dropping the tombstoned elements and appending the transaction's inserts is O(k + d).
 
@@ -745,9 +747,9 @@ This section provides formal complexity analysis for all CRDT operations.
 
 | Operation | Time | Notes |
 |-----------|------|-------|
-| Cache lookup | O(1) | Hash map by (E, A) |
-| Freshness check | O(1) | Compare version to maxVersions |
-| Invalidation | O(1) | Delete entry, update maxVersions |
+| Cache lookup | O(1) | Hash trie by (E, A) |
+| Freshness check | O(1) | Compare the entry's version to the read point |
+| Invalidation | O(1) | Raise the slot's version to the arrival, clear the entry |
 | Full rebuild (One) | O(1) | Single index seek |
 | Full rebuild (Many) | O(n) | Add-wins resolution |
 | Full rebuild (Vector) | O(n log n) | RGA reconstruction |
@@ -765,7 +767,7 @@ This section provides formal complexity analysis for all CRDT operations.
 
 **Storage note**: All historical writes are preserved (append-only). Storage grows with n (total operations), not k (current size). Compaction/GC is not currently implemented.
 
-**Cache note**: Cache stores only resolved current state, not history. Memory usage is O(k) per cached (E, A) pair.
+**Cache note**: A database's cache stores resolved latest state, not history, and an as-of view's cache stores its view's. Memory usage is O(k) per cached (E, A) pair.
 
 ### Summary: Write vs Read Trade-offs
 
@@ -895,7 +897,7 @@ asOfResult, _ := asOf.Query(
 | As-of | `d.AsOf(elemID).Query(q)` | `asOfMode` | `elemID` | Yes | Yes |
 | History | `d.History().Query(q)` | `historyMode` | zero | No | No |
 
-The cache stores current value only. History and as-of queries bypass the cache and scan storage directly.
+A database's EA cache holds the latest resolutions. An as-of handle keeps its resolutions in a cache of its own (see [As-of Views](#as-of-views)). History queries bypass the cache and scan storage directly.
 
 ---
 

@@ -20,12 +20,11 @@ type PatternMatcher struct {
 	// query-scoped matchers attach a ReadSession so all reads observe one
 	// snapshot for the query's lifetime.
 	reader StoreReader
-	// sessionBounded marks that reader is a ReadSession, so cache reads must
-	// bound themselves to its snapshot high-water mark (cacheBound). The
-	// bound computes lazily once — the session's maximum is snapshot-constant.
+	// sessionBounded marks that reader is a ReadSession, and readPoint is the
+	// read point taken before the session opened, which bounds the matcher's
+	// cache reads (cacheBound).
 	sessionBounded bool
-	boundOnce      sync.Once
-	readBound      datalog.ElementID
+	readPoint      datalog.ElementID
 	// mode is which view of the store this matcher reads, and asOf is the
 	// target of an as-of view, zero in the other two modes.
 	mode              temporalMode
@@ -92,9 +91,8 @@ func (m *PatternMatcher) shouldFilterTx(datomTx datalog.ElementID) bool {
 
 // cacheKey returns the cache key for (e, a) and whether this matcher mode may
 // use the cache at all. History mode returns ok=false — raw datoms are never
-// cached. Latest and concrete AsOf modes both return an (E, A) key; they live
-// in separate Cache instances (the Database's global latest cache vs. the AsOf
-// handle's private cache), so the key never crosses snapshots.
+// cached. Latest and as-of matchers both return the (E, A) key, which names no
+// view: an as-of matcher reads its view's cache (Cache.ForView).
 func (m *PatternMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
 	if m.mode == historyMode {
 		return CacheKey{}, false
@@ -130,31 +128,26 @@ func NewPatternMatcherWithOptions(store Store, opts executor.ExecutorOptions) *P
 
 // AttachReadSession routes every subsequent storage read this matcher
 // performs through the session, so the whole query observes one snapshot.
-// Cache reads bound themselves to the session's high-water mark (see
-// cacheBound), so the shared EA cache can never serve this matcher content
-// newer than its snapshot. The caller owns the session's lifecycle; the
-// matcher only reads through it.
-func (m *PatternMatcher) AttachReadSession(session ReadSession) {
+// readPoint is the read point the caller took before it opened the session:
+// cache reads bound themselves to it (see cacheBound), so the shared EA cache
+// serves this matcher only entries whose datoms lie at or below it, and
+// stores its resolutions only when nothing arrived after it. The caller owns
+// the session's lifecycle; the matcher only reads through it.
+func (m *PatternMatcher) AttachReadSession(session ReadSession, readPoint datalog.ElementID) {
 	m.reader = session
 	m.sessionBounded = true
+	m.readPoint = readPoint
 }
 
-// cacheBound returns the snapshot high-water mark cache reads must respect:
-// nil for latest-mode matchers (any fresh entry serves), the session's max
-// ElementID for sessioned ones. Computed once per matcher; the session's
-// maximum is snapshot-constant. A bound that fails to compute degrades to
-// the zero ElementID — no cached entry serves, every lookup resolves
-// through the session — which is safe, never wrong.
-func (m *PatternMatcher) cacheBound() *datalog.ElementID {
-	if !m.sessionBounded {
-		return nil
+// cacheBound returns the read point a cache read takes: the one taken before
+// the matcher's session opened, or, for a matcher reading the store, its
+// cache's read point now, before the read begins. An as-of matcher reads its
+// view's cache (Cache.ForView), which holds only resolutions as of its target.
+func (m *PatternMatcher) cacheBound() datalog.ElementID {
+	if m.sessionBounded {
+		return m.readPoint
 	}
-	m.boundOnce.Do(func() {
-		if id, err := m.reader.MaxElementID(); err == nil {
-			m.readBound = id
-		}
-	})
-	return &m.readBound
+	return m.cache.ReadPoint()
 }
 
 // AsOf is a copy of this matcher reading the view as of target: each
@@ -172,18 +165,24 @@ func (m *PatternMatcher) History() *PatternMatcher {
 
 // withMode is a copy of this matcher reading the given view. The copy shares
 // the store, the read session, the schema, the refusal and the set it admits,
-// the cache and the tuple-builder population, which is initialized here before
-// it is shared.
+// and the tuple-builder population, which is initialized here before it is
+// shared. An as-of copy reads a cache of its own over the database's
+// (Cache.ForView); any other copy shares this matcher's cache.
 func (m *PatternMatcher) withMode(mode temporalMode, asOf datalog.ElementID) *PatternMatcher {
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
 			m.builderCache = newTupleBuilderCache()
 		}
 	})
+	cache := m.cache
+	if mode == asOfMode && cache != nil {
+		cache = cache.arrivals.ForView()
+	}
 	return &PatternMatcher{
 		store:          m.store,
 		reader:         m.reader,
 		sessionBounded: m.sessionBounded,
+		readPoint:      m.readPoint,
 		mode:           mode,
 		asOf:           asOf,
 		builderCache:   m.builderCache,
@@ -191,7 +190,7 @@ func (m *PatternMatcher) withMode(mode temporalMode, asOf datalog.ElementID) *Pa
 		options:        m.options,
 		schema:         m.schema,
 		refuseUnknown:  m.refuseUnknown,
-		cache:          m.cache,
+		cache:          cache,
 		vocabulary:     m.vocabulary,
 	}
 }
@@ -741,8 +740,8 @@ func (m *PatternMatcher) LookupAttribute(
 		}()
 	}
 
-	// Try cache first for O(1) access. Concrete AsOf matchers use
-	// transaction-scoped cache keys; History matchers bypass cache entirely.
+	// Try cache first for O(1) access. An as-of matcher reads its view's cache
+	// (Cache.ForView); History matchers bypass cache entirely.
 	if m.cache != nil && m.mode != historyMode {
 		eEntity := Entity(eBytes)
 		var aAttr Attribute
@@ -957,8 +956,8 @@ func (m *PatternMatcher) LookupAllAttributes(
 		}()
 	}
 
-	// Try cache first for O(1) access. Concrete AsOf matchers use
-	// transaction-scoped cache keys; History matchers bypass cache entirely.
+	// Try cache first for O(1) access. An as-of matcher reads its view's cache
+	// (Cache.ForView); History matchers bypass cache entirely.
 	if m.cache != nil && m.mode != historyMode {
 		eEntity := Entity(eBytes)
 		var aAttr Attribute

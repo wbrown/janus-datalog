@@ -573,7 +573,10 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 
 	// Accrues whether or not the check fails: a failed supersession check
 	// still read the index to fail.
-	decision, err := it.matcher.walkApplyEntry(it.uniqueWalk, datom, eBytes, aBytes, it.report)
+	//
+	// What the decision read goes unused: no cache entry is built from a
+	// streamed datom.
+	decision, _, err := it.matcher.walkApplyEntry(it.uniqueWalk, datom, eBytes, aBytes, it.report)
 	if err != nil {
 		return false, err
 	}

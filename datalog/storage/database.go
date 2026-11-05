@@ -338,7 +338,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 
 	var cache *Cache
 	if !opts.DisableCache {
-		cache = NewCache()
+		cache = NewCache(clock)
 	}
 
 	// AnnotationHandler is the documented
@@ -657,7 +657,7 @@ func (d *Database) NewTransaction() *Transaction {
 		doomed:            d.rollbackInProgress,
 		schema:            installed.effective,
 		admission:         installed.admission,
-		start:             datalog.ElementID{Lamport: d.clock.Current(), ReplicaID: ^uint64(0)},
+		start:             d.clock.ReadPoint(),
 	}
 
 	// A transaction born during a rollback is dropped (its writes return
@@ -756,15 +756,18 @@ var _ executor.AttributeFetchFusable = (*Database)(nil)
 // transaction. The returned handle uses CRDT resolution filtered to that point
 // in causal time.
 //
-// The temporal handle shares the parent's underlying store and schema, but owns
-// a private EA cache scoped to the handle's lifetime. The snapshot is immutable,
-// so this cache fills lazily, never needs invalidation, and is freed when the
-// handle is garbage-collected — AsOf reads never accumulate in the parent's
-// global latest-state cache.
+// The temporal handle shares the parent's store and schema. It keeps its
+// resolutions in a cache of its own over the parent's (Cache.ForView), so they
+// are freed with the handle and every arrival the parent's cache records
+// reaches them. With the parent's cache disabled the handle has none.
 // It supports reads (Query, NewExecutor, NewExecutorWithOptions, Matcher, Pull)
 // but not writes: NewTransaction will panic. Close is a no-op — the parent
 // owns the store lifetime.
 func (d *Database) AsOf(target datalog.ElementID) *Database {
+	var cache *Cache
+	if d.cache != nil {
+		cache = d.cache.arrivals.ForView()
+	}
 	// Field dispositions (inherit / zero / per-handle) are the ruled contract
 	// pinned by TestTemporalHandleFieldClassification — a new Database field
 	// must be classified there before it can ship.
@@ -776,7 +779,7 @@ func (d *Database) AsOf(target datalog.ElementID) *Database {
 		planCache:      d.planCache,
 		parseCache:     d.parseCache,
 		plannerOptions: d.plannerOptions,
-		cache:          NewCache(),
+		cache:          cache,
 		builderCache:   d.builderCache,
 		clock:          d.clock,
 		replicaID:      d.replicaID,
@@ -2438,7 +2441,7 @@ func (t *Transaction) effectiveVector(e datalog.Identity, a datalog.Keyword) ([]
 	var entry *CacheEntry
 	var err error
 	if t.db.cache != nil {
-		entry, err = t.db.cache.GetOrResolve(key, card, atStart, &t.start, t.db.plannerOptions.Handler, DiscardIntake)
+		entry, err = t.db.cache.GetOrResolve(key, card, atStart, t.start, t.db.plannerOptions.Handler, DiscardIntake)
 	} else {
 		entry, err = ResolveEntry(key, card, atStart, DiscardIntake)
 	}
@@ -2721,9 +2724,12 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		t.db.onCommitWindow()
 	}
 
-	// Update cache: track max versions and invalidate stale entries
+	// Update cache: record the commit's arrival on every key it touched and
+	// invalidate their entries. The arrival is drawn now that the commit is
+	// readable, so it lies above every read point taken before the commit.
 	// Skip if cache is disabled
 	if t.db.cache != nil {
+		arrival := t.db.clock.Next()
 		seenKeys := make(map[CacheKey]bool)
 
 		// Attributes written in this commit that are declared Unique.
@@ -2748,7 +2754,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 			key := CacheKey{E: eBytes, A: aBytes}
 			if !seenKeys[key] {
 				seenKeys[key] = true
-				t.db.cache.UpdateMaxVersion(key, d.Tx)
+				t.db.cache.UpdateMaxVersion(key, arrival)
 			}
 			checkUnique(d.A, aBytes)
 		}
@@ -2763,7 +2769,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 			key := CacheKey{E: eBytes, A: aBytes}
 			if !seenKeys[key] {
 				seenKeys[key] = true
-				t.db.cache.UpdateMaxVersion(key, d.Tx)
+				t.db.cache.UpdateMaxVersion(key, arrival)
 			}
 			checkUnique(d.A, aBytes)
 		}
@@ -3546,11 +3552,12 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	// resolving every attribute from the same scan — one store read session
 	// instead of a discovery scan plus one lookup per attribute. This is the
 	// batch wildcard walk applied to one entity.
+	readPoint := d.clock.ReadPoint()
 	iterator, err := OpenKeyScan(d.store, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("EATV scan failed: %w", err)
 	}
-	result, pending, err := d.resolveWildcardEntity(matcher, iterator, entity, declared)
+	result, pending, err := d.resolveWildcardEntity(matcher, iterator, entity, declared, readPoint)
 	if err != nil {
 		_ = iterator.Close()
 		return nil, err

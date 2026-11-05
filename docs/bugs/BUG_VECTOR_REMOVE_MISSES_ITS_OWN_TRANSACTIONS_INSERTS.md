@@ -258,9 +258,10 @@ following b.
   start. Otherwise the value's run on EAVT as of the start decides it,
   since a withdrawal carries the value of the element it names. An ordered
   set's `Add` writes nothing when a live element holds its value.
-- An element another transaction commits after a transaction began is not
-  in its view, so the merge keeps both writers' elements, as two replicas'
-  writes are kept.
+- An element another transaction draws after a transaction began is not in
+  its view, so the merge keeps both writers' elements, as two replicas'
+  writes are kept. One it drew before is in the view, whenever it is
+  committed.
 - `loadRGAElements` and `ResolveRGAFromDatoms` gather a vector's elements
   from its datoms by one rule. An insert gives its element's value and the
   element it follows, and a withdrawal marks the element, whichever of the
@@ -301,10 +302,9 @@ following b.
   a `Set`, and a `SaveStruct`, of `[x y]` by a transaction that added `y`
   before another transaction added `x` and committed. On the unmodified
   writers every reader answers `[y x y]` there, where the vector is
-  `[x x y]`: the transaction that sets `[x y]` began before the other
-  committed `x`. Its other cases write a `Remove`, a `Set` and an ordered
-  set's `Add` by a transaction that began before another committed the
-  value they touch.
+  `[x x y]`: the transaction that sets `[x y]` began before the other drew
+  `x`. Its other cases write a `Remove`, a `Set` and an ordered set's `Add`
+  by a transaction that began before another drew the value they touch.
 
 ## Related
 

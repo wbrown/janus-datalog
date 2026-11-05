@@ -65,7 +65,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 			key := CacheKey{E: eBytes, A: aBytes}
 
 			// The cache should now have an entry for this (E, A) pair
-			entry, err := db.Cache().GetOrResolve(key, bm.GetCardinality(name), bm, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, bm.GetCardinality(name), bm, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -400,7 +400,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 
 			// The cache should now have an entry from the query execution
 			matcher := db.Matcher().(*PatternMatcher)
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after query execution")
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -463,7 +463,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 			key := CacheKey{E: e1Bytes, A: cityAttr}
 
 			matcher := db.Matcher().(*PatternMatcher)
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(city), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(city), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after join query")
 			assert.Equal(t, "NYC", entry.OneValue())
@@ -522,7 +522,7 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 			key := CacheKey{E: eBytes, A: tagsAttr}
 
 			matcher := db.Matcher().(*PatternMatcher)
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
 			_, hasDeveloper := entry.ManySet()[memberKey("developer")]
@@ -633,7 +633,7 @@ func TestCacheConcurrency(t *testing.T) {
 			key := CacheKey{E: eBytes, A: nameAttr}
 
 			// Populate initial entry
-			_, err = cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
+			_, err = cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 
 			var wg sync.WaitGroup
@@ -643,7 +643,7 @@ func TestCacheConcurrency(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					entry, err := cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
+					entry, err := cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
 					assert.NoError(t, err)
 					assert.NotNil(t, entry)
 					assert.Equal(t, "Alice", entry.OneValue(), "every reader is served the value the store holds")

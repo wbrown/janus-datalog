@@ -67,6 +67,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		prev = e
 	}
 
+	readPoint := m.cacheBound()
 	for _, e := range deduped {
 		// Bind E on EATV. The dedup above works in the storage projection, so
 		// the identity is re-interned here; the constructor returns the
@@ -106,7 +107,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 				// Attribute boundary — resolve and cache the previous group
 				card := m.GetCardinality(currentKeyword)
 				if key, ok := m.cacheKey(e, currentAttr); ok {
-					m.cache.PopulateFromDatoms(key, card, currentDatoms)
+					m.cache.PopulateFromDatoms(key, card, currentDatoms, readPoint)
 					populated++
 				}
 				currentDatoms = currentDatoms[:0]
@@ -125,7 +126,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		if hasGroup && len(currentDatoms) > 0 {
 			card := m.GetCardinality(currentKeyword)
 			if key, ok := m.cacheKey(e, currentAttr); ok {
-				m.cache.PopulateFromDatoms(key, card, currentDatoms)
+				m.cache.PopulateFromDatoms(key, card, currentDatoms, readPoint)
 				populated++
 			}
 		}

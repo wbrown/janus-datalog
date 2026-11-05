@@ -101,6 +101,7 @@ func (d *Database) ResolveAllAttributesMany(
 		}()
 	}
 
+	readPoint := d.clock.ReadPoint()
 	iterator, err := OpenKeyScan(d.store, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("batch wildcard scan failed: %w", err)
@@ -112,6 +113,7 @@ func (d *Database) ResolveAllAttributesMany(
 			iterator,
 			entity,
 			declaredAttrs,
+			readPoint,
 		)
 		if err != nil {
 			_ = iterator.Close()
@@ -157,6 +159,7 @@ func (d *Database) resolveWildcardEntity(
 	iterator Iterator,
 	entity datalog.Identity,
 	declaredAttrs map[datalog.Keyword]struct{},
+	readPoint datalog.ElementID,
 ) (map[datalog.Keyword]interface{}, []wildcardUniqueLookup, error) {
 	result := make(map[datalog.Keyword]interface{})
 	var pending []wildcardUniqueLookup
@@ -183,6 +186,7 @@ func (d *Database) resolveWildcardEntity(
 			entity,
 			currentAttr,
 			currentDatoms,
+			readPoint,
 		); present {
 			result[currentAttr] = value
 		}
@@ -217,12 +221,13 @@ func (d *Database) resolveWildcardDatoms(
 	entity datalog.Identity,
 	attr datalog.Keyword,
 	datoms []datalog.Datom,
+	readPoint datalog.ElementID,
 ) (interface{}, bool) {
 	storageDatom := ToStorageDatom(datalog.Datom{E: entity, A: attr})
 	cardinality := matcher.GetCardinality(attr)
 	if d.cache != nil {
 		if key, ok := matcher.cacheKey(storageDatom.E, storageDatom.A); ok {
-			d.cache.PopulateFromDatoms(key, cardinality, datoms)
+			d.cache.PopulateFromDatoms(key, cardinality, datoms, readPoint)
 		}
 	}
 

@@ -86,7 +86,7 @@ func (f *cacheFixture) remove(t *testing.T, attr datalog.Keyword, value string) 
 // resolve resolves attr on the entity through the fixture's matcher into
 // cache, accruing the intake into report.
 func (f *cacheFixture) resolve(cache *Cache, attr datalog.Keyword, report *scanReport) (*CacheEntry, error) {
-	return cache.GetOrResolve(f.key(attr), f.matcher.GetCardinality(attr), f.matcher, nil, nil, report)
+	return cache.GetOrResolve(f.key(attr), f.matcher.GetCardinality(attr), f.matcher, cache.ReadPoint(), nil, report)
 }
 
 // version is the ElementID of the datom the matcher resolves attr on the
@@ -139,7 +139,7 @@ func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 				f := newCacheFixture(t, mode)
 				attr := tc.write(t, f)
 
-				cache := NewCache()
+				cache := NewCache(f.db.clock)
 				build := &scanReport{}
 				entry, err := f.resolve(cache, attr, build)
 				require.NoError(t, err)
@@ -181,13 +181,13 @@ func TestCacheEntryUnderAnotherCardinalityIsNotAHit(t *testing.T) {
 			asOne := f.db.Matcher().(*PatternMatcher)
 			key := f.key(f.tags)
 
-			cache := NewCache()
-			set, err := cache.GetOrResolve(key, asSet.GetCardinality(f.tags), asSet, nil, nil, DiscardIntake)
+			cache := NewCache(f.db.clock)
+			set, err := cache.GetOrResolve(key, asSet.GetCardinality(f.tags), asSet, cache.ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.Same(t, schema.CardinalityMany, set.Cardinality())
 			require.Len(t, set.ManySet(), 2)
 
-			one, err := cache.GetOrResolve(key, asOne.GetCardinality(f.tags), asOne, nil, nil, DiscardIntake)
+			one, err := cache.GetOrResolve(key, asOne.GetCardinality(f.tags), asOne, cache.ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.Same(t, schema.CardinalityOne, one.Cardinality(), "a reader under cardinality one is served no set's view")
 			require.Equal(t, "y", one.OneValue(), "the reader resolved the pair under its own cardinality")
@@ -244,7 +244,7 @@ func TestCacheEntryValueCountsWhatResolutionProduced(t *testing.T) {
 }
 
 func TestCacheNewCache(t *testing.T) {
-	cache := NewCache()
+	cache := NewCache(NewLamportClock(1))
 	require.NotNil(t, cache, "NewCache should return non-nil cache")
 }
 
@@ -255,7 +255,7 @@ func TestCacheFreshness(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 
 			entry1, err := f.resolve(cache, f.name, DiscardIntake)
 			require.NoError(t, err)
@@ -278,7 +278,7 @@ func TestCacheInvalidation(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 			key := f.key(f.name)
 
 			entry1, err := f.resolve(cache, f.name, DiscardIntake)
@@ -305,7 +305,7 @@ func TestCacheRebuildWhenStale(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 			key := f.key(f.name)
 
 			entry1, err := f.resolve(cache, f.name, DiscardIntake)
@@ -330,7 +330,7 @@ func TestUpdateMaxVersion(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "test")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 			key := f.key(f.name)
 
 			// Initial update
@@ -352,7 +352,7 @@ func TestUpdateMaxVersion(t *testing.T) {
 }
 
 func TestUpdateMaxVersionConcurrency(t *testing.T) {
-	cache := NewCache()
+	cache := NewCache(NewLamportClock(1))
 
 	var e Entity
 	copy(e[:], "entity1")
@@ -382,7 +382,7 @@ func TestCacheRebuildCardinalityOne(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 
 			entry, err := f.resolve(cache, f.name, DiscardIntake)
 			require.NoError(t, err)
@@ -400,7 +400,7 @@ func TestCacheRebuildCardinalityMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "warrior", "veteran")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 
 			entry, err := f.resolve(cache, f.tags, DiscardIntake)
 			require.NoError(t, err)
@@ -421,7 +421,7 @@ func TestCacheRebuildCardinalityVector(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.skills, "stealth", "archery", "lockpicking")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 
 			entry, err := f.resolve(cache, f.skills, DiscardIntake)
 			require.NoError(t, err)
@@ -440,7 +440,7 @@ func TestCacheManySetMembership(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "a", "b", "c")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 
 			entry, err := f.resolve(cache, f.tags, DiscardIntake)
 			require.NoError(t, err)
@@ -466,7 +466,7 @@ func TestCacheManyEmptyAfterRemoves(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "a")
 			f.remove(t, f.tags, "a")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 
 			entry, err := f.resolve(cache, f.tags, DiscardIntake)
 			require.NoError(t, err)
@@ -481,7 +481,7 @@ func TestCacheClear(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 			key := f.key(f.name)
 
 			entry1, err := f.resolve(cache, f.name, DiscardIntake)
@@ -507,7 +507,7 @@ func TestCacheAfterRestart(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
-			cache := NewCache()
+			cache := NewCache(f.db.clock)
 
 			entry, err := f.resolve(cache, f.name, DiscardIntake)
 			require.NoError(t, err)
@@ -550,9 +550,9 @@ func TestCacheRebuildStoreError(t *testing.T) {
 				store.arm()
 				faulting := NewPatternMatcher(store)
 				faulting.SetSchema(f.db.Schema())
-				cache := NewCache()
+				cache := NewCache(f.db.clock)
 
-				entry, err := cache.GetOrResolve(f.key(attr), faulting.GetCardinality(attr), faulting, nil, nil, DiscardIntake)
+				entry, err := cache.GetOrResolve(f.key(attr), faulting.GetCardinality(attr), faulting, cache.ReadPoint(), nil, DiscardIntake)
 				require.ErrorIs(t, err, errInjectedScanFault)
 				assert.Nil(t, entry)
 				assert.Equal(t, 1, store.scans, "the failing miss opens one scan and is not retried")

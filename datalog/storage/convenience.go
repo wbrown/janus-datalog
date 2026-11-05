@@ -126,6 +126,10 @@ func (d *Database) queryUnderPlannerOptions(
 // caller owns the session's lifecycle; on success it is released by the
 // session-bound result, on failure the caller closes it directly.
 func (d *Database) sessionMatcher(opts planner.PlannerOptions) (executor.PatternMatcher, ReadSession, error) {
+	// The read point is taken before the session opens, so every datom the
+	// session reads was drawn at or below it, and every arrival after it is
+	// above it.
+	readPoint := d.clock.ReadPoint()
 	session, err := d.store.NewReadSession()
 	if err != nil {
 		return nil, nil, err
@@ -133,7 +137,7 @@ func (d *Database) sessionMatcher(opts planner.PlannerOptions) (executor.Pattern
 	matcher := d.matcherWithExecOptions(opts)
 	// matcherWithExecOptions constructs *PatternMatcher in both its arms
 	// (fresh, or the AsOf copy for temporal handles).
-	matcher.(*PatternMatcher).AttachReadSession(session)
+	matcher.(*PatternMatcher).AttachReadSession(session, readPoint)
 	return matcher, session, nil
 }
 

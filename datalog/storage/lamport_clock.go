@@ -96,6 +96,15 @@ func (c *LamportClock) Current() uint64 {
 	return atomic.LoadUint64(&c.counter)
 }
 
+// ReadPoint returns the greatest ElementID at the clock's current Lamport
+// time. Every ElementID drawn so far, on any replica, is at or below it, and
+// every ElementID this clock draws later is above it.
+//
+// Thread-safe: uses atomic load.
+func (c *LamportClock) ReadPoint() ElementID {
+	return ElementID{Lamport: atomic.LoadUint64(&c.counter), ReplicaID: ^uint64(0)}
+}
+
 // ReplicaID returns this clock's replica identifier.
 // This is set at construction time and never changes.
 func (c *LamportClock) ReplicaID() uint64 {

@@ -261,7 +261,7 @@ func TestPrefetchEntitiesSurfacesScanErrors(t *testing.T) {
 				iter:  iter,
 			})
 			// Prefetch is a no-op without a cache to warm.
-			matcher.SetCache(NewCache())
+			matcher.SetCache(NewCache(NewLamportClock(1)))
 
 			err := matcher.PrefetchEntities([]datalog.Identity{datalog.NewIdentity("user:alice")})
 			if err == nil {
