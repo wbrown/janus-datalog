@@ -147,7 +147,7 @@ transform from a LateralJoin with aggregates.
 
 The Aggregate becomes an uncorrelated SubqueryPattern:
 - `:find` = GROUP BY variables + aggregate functions
-- `:in` = the decorrelated inner query's sources and rule set, each source named for the source the written call passed there and declared once (`underCallSources`)
+- `:in` = the decorrelated inner query's sources and rule set, each source named for the source the written call passed there and declared once (`query.UnderCallSources`)
 - `:where` = decompiled child clauses
 - Binding = RelationBinding over the aggregate's bindings, which name the `:find` elements positionally
 - Inputs = each source under its own name, and the call's rule-set argument

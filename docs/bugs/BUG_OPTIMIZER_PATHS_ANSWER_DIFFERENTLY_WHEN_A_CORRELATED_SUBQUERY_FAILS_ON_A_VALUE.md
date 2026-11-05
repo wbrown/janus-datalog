@@ -52,6 +52,8 @@ In each, the outer pattern reaches the numeric groups or items alone. Its `algeb
 - A correlated subquery Rule 4 rewrites, whose body holds a clause that fails on a value, with the algebra optimizer on.
   - The clauses that can fail on a value are those `canFailOnAValue` names (`PULL_BASED_HASH_JOIN_PROOF.md` §1).
   - The reproducer's clause is `+` over an operand that is no number.
+- Every reader of such a subquery's result, a `:limit 0` among them. `LimitRelation.take` (`datalog/executor/limit_relation.go`) reads a relation carrying the evaluating mark to its end at a limit of zero too (`PULL_BASED_HASH_JOIN_PROOF.md`, T11), so the rewritten subquery runs at its first window and fails there.
+  - At 69bfc3b a `:limit 0` opened no iterator of its source, so both paths answered the empty relation.
 
 ## What was not established
 

@@ -851,35 +851,40 @@ func (w *magicRewriter) rewriteClause(rule query.Symbol, clause query.Clause, be
 // rewriteSubquery reads a subquery as a scope of the rewrite: each inner :in
 // symbol stands for the argument at its place, so an inner symbol is bound
 // when its argument is a constant or a variable the bound set holds. The
+// call is read under the sources it passes (query.UnderCallSources), so the
+// inner clauses are planned on the sources they read at execution. The
 // inner query is planned under its data inputs as its required run and its
 // find beyond them, and its clauses are walked in that order as a body's
 // are, under what passes into the scope and under its sealed twin, each
 // entered through enteringSubquery. A subquery holding no adorned
 // invocation is shared; one on the path to an adorned invocation is copied
-// over the inner query derived over the rewritten clauses.
+// over the call read under its sources, its inner query derived over the
+// rewritten clauses.
 func (w *magicRewriter) rewriteSubquery(rule query.Symbol, c *query.SubqueryPattern, before, negated passing, sealed bool) (query.Clause, []*query.Rule, error) {
-	inside, err := before.enteringSubquery(c)
+	inner, inputs := query.UnderCallSources(c.Query, query.CallSources(c), c.Inputs)
+	call := &query.SubqueryPattern{Query: inner, Inputs: inputs, Binding: c.Binding}
+	inside, err := before.enteringSubquery(call)
 	if err != nil {
 		return nil, nil, err
 	}
-	insideNegated, err := negated.enteringSubquery(c)
+	insideNegated, err := negated.enteringSubquery(call)
 	if err != nil {
 		return nil, nil, err
 	}
 	var required []query.Symbol
-	for _, sym := range query.InputSymbols(c.Query.In) {
+	for _, sym := range query.InputSymbols(call.Query.In) {
 		if sym != nil && !query.ContainsSymbol(required, sym) {
 			required = append(required, sym)
 		}
 	}
 	var find []query.FindElement
-	for _, elem := range c.Query.Find {
+	for _, elem := range call.Query.Find {
 		if v, ok := elem.(query.FindVariable); ok && query.ContainsSymbol(required, v.Symbol) {
 			continue
 		}
 		find = append(find, elem)
 	}
-	planned, err := w.planned(required, find, c.Query.Where)
+	planned, err := w.planned(required, find, call.Query.Where)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -887,7 +892,7 @@ func (w *magicRewriter) rewriteSubquery(rule query.Symbol, c *query.SubqueryPatt
 	if err != nil || !changed {
 		return c, nil, err
 	}
-	return &query.SubqueryPattern{Query: c.Query.WithWhere(where), Inputs: c.Inputs, Binding: c.Binding}, rules, nil
+	return &query.SubqueryPattern{Query: call.Query.WithWhere(where), Inputs: call.Inputs, Binding: call.Binding}, rules, nil
 }
 
 // enteringSubquery is what passes into a subquery's inner query: the inner

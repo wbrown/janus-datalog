@@ -189,7 +189,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		// under the sources its call passes, since its tree joins the outer
 		// one, and the get-else scan rewrite over the decorrelated tree asks
 		// about the source each of its clauses reads at execution.
-		underCall, inputs := underCallSources(decorrelated,
+		underCall, inputs := query.UnderCallSources(decorrelated,
 			query.CallSources(&query.SubqueryPattern{Query: lj.InnerQuery, Inputs: lj.Inputs}),
 			callSourceArguments(lj.Inputs, decorrelated.In))
 		innerNode, err := Compile(underCall, lj.Rules)
@@ -318,41 +318,6 @@ func callSourceArguments(inputs []query.PatternElement, in []query.InputSpec) []
 		}
 	}
 	return sourceInputs
-}
-
-// underCallSources is a decorrelated inner query read under the sources its
-// call passes, and the arguments the rebuilt call passes. The clauses are
-// renamed by the call's source substitution, as a framed scope's are. Each
-// :in source is the source standing for it, a source standing at two places
-// declared once, and the call passes each under its own name. Any other :in
-// entry keeps its place and its argument, args being the call's arguments
-// in the decorrelated :in's order (callSourceArguments).
-func underCallSources(decorrelated *query.Query, sources query.Substitution, args []query.PatternElement) (*query.Query, []query.PatternElement) {
-	renamed := &query.Query{Find: decorrelated.Find, Where: query.RenameSources(decorrelated.Where, sources)}
-	if len(decorrelated.In) == 0 {
-		return renamed, args
-	}
-	declared := make(map[query.Symbol]bool, len(decorrelated.In))
-	var inputs []query.PatternElement
-	for i, spec := range decorrelated.In {
-		source, isSource := spec.(query.DatabaseInput)
-		if !isSource {
-			renamed.In = append(renamed.In, spec)
-			inputs = append(inputs, args[i])
-			continue
-		}
-		name := source.Name
-		if standing, renamedHere := sources.Of(name); renamedHere {
-			name = standing
-		}
-		if declared[name] {
-			continue
-		}
-		declared[name] = true
-		renamed.In = append(renamed.In, query.DatabaseInput{Name: name})
-		inputs = append(inputs, query.Constant{Value: name})
-	}
-	return renamed, inputs
 }
 
 // rebuildWithChildren returns a parse node with the same rule and data as the

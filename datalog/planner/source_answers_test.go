@@ -213,3 +213,27 @@ func TestEvaluationAnswersCollectEveryBodyPlansQuestions(t *testing.T) {
 		[]SourceAnswer{question(":t/rewrite"), question(":t/plain"), question(":t/delta"), question(":t/lower")},
 		evaluationAnswers(evaluations))
 }
+
+// The magic rewrite plans a subquery's inner query under the sources its
+// call passes. A get-else on the inner $ of a subquery whose call passes $src
+// at $ asks $src, and the plan records that question with its answer.
+func TestTheMagicRewriteAsksTheSourceASubqueryCallPasses(t *testing.T) {
+	rules, err := parser.ParseRules(`[[(ga ?e ?v) [?e :t/name _] [(q [:find ?v :in $ % ?n :where [?x :t/name ?n] (gb ?x) [(get-else $ ?x :t/a "none") ?v]] $src % "one") [[?v]]]]
+	  [(gb ?x) [?x :t/kind _]]]`)
+	require.NoError(t, err)
+	parsed, err := parser.ParseQuery(`[:find ?e ?v :in $ $src % :where [?e :t/name _] (ga ?e ?v)]`)
+	require.NoError(t, err)
+	q, err := query.Prepare(parsed, rules)
+	require.NoError(t, err)
+	answersOnDollar := func(source query.Symbol, _ datalog.Keyword) bool { return source == datalog.SymDollar }
+	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true, MatchAnswersLookup: answersOnDollar}).Plan(q, query.Bindings{Rules: rules}, nil)
+	require.NoError(t, err)
+	rewritten := false
+	for _, evaluation := range plan.Evaluations {
+		rewritten = rewritten || evaluation.Rewritten
+	}
+	require.True(t, rewritten, "the invocation evaluates a rewritten set")
+	require.Contains(t, plan.SourceAnswers,
+		SourceAnswer{Source: datalog.NewSymbol("$src"), Attr: datalog.NewKeyword(":t/a"), Answer: false},
+		"the subquery's get-else asks the source its call passes at $")
+}
