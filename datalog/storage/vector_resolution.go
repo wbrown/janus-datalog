@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -75,7 +76,7 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte, report *scanReport
 // what it produces, and the pattern above it has no other way to learn the
 // difference. The bound travels back rather than being rebuilt by the caller
 // that announces it, so the announced run and the walked run are the same value.
-func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte, report *scanReport) ([]RGAElement, ScanBound, error) {
+func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte, report *scanReport) (loaded []RGAElement, walked ScanBound, loadErr error) {
 	// The caller holds storage projections; both constructors return the
 	// canonical interned pointer for an already-interned value.
 	var e Entity
@@ -97,7 +98,11 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte, report *scanRepo
 	if err != nil {
 		return nil, bound, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			loaded, loadErr = nil, errors.Join(loadErr, closeErr)
+		}
+	}()
 
 	elemByID := make(vectorElements)
 	for iter.Next() {

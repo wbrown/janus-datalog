@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -116,7 +117,9 @@ func (d *Database) ResolveAllAttributesMany(
 			readPoint,
 		)
 		if err != nil {
-			_ = iterator.Close()
+			if closeErr := iterator.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
 			return nil, err
 		}
 		served += len(entityResult)

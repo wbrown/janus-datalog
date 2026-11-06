@@ -205,7 +205,7 @@ func (s *MemoryTreeStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 // one given. The scan is drained before anything is removed: a batch reads the
 // version it started from, and collecting first keeps the walk independent of
 // the mutation.
-func matchingStoredDatoms(v *storeVersion, target *datalog.Datom) ([]*datalog.Datom, error) {
+func matchingStoredDatoms(v *storeVersion, target *datalog.Datom) (stored []*datalog.Datom, matchErr error) {
 	iter, err := v.scan(ScanBound{
 		Index:  EAVT,
 		Prefix: []datalog.Value{target.E, target.A, target.V},
@@ -213,7 +213,11 @@ func matchingStoredDatoms(v *storeVersion, target *datalog.Datom) ([]*datalog.Da
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			stored, matchErr = nil, errors.Join(matchErr, closeErr)
+		}
+	}()
 
 	var matches []*datalog.Datom
 	for iter.Next() {
@@ -258,7 +262,7 @@ func (s *MemoryTreeStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID,
 //
 // TAEV orders Tx descending, so the walk starts at the newest and stops at the
 // first entry not after eid — everything past that point is older still.
-func (s *MemoryTreeStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error) {
+func (s *MemoryTreeStore) DatomsAfter(eid datalog.ElementID) (after []datalog.Datom, afterErr error) {
 	if err := s.checkOpen(); err != nil {
 		return nil, err
 	}
@@ -267,7 +271,11 @@ func (s *MemoryTreeStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, e
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			after, afterErr = nil, errors.Join(afterErr, closeErr)
+		}
+	}()
 
 	var out []datalog.Datom
 	for iter.Next() {

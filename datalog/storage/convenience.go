@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -102,20 +103,27 @@ func (d *Database) queryUnderPlannerOptions(
 	// refuses unknown attributes, for the check at its entry.
 	exec, err := d.executorOverSources(q, opts.sources, matcher, planOpts)
 	if err != nil {
-		_ = session.Close()
+		if closeErr := session.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return refused(q.String(), err)
 	}
 
 	inputRelations, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
-		_ = session.Close()
+		if closeErr := session.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return refused(q.String(), err)
 	}
 
 	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(opts.ctx), q, inputRelations)
 	if err != nil {
-		_ = session.Close()
-		return nil, nil, fmt.Errorf("query execution failed: %w", err)
+		err = fmt.Errorf("query execution failed: %w", err)
+		if closeErr := session.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return nil, nil, err
 	}
 
 	return q, newSessionBoundRelation(result, session, completion), nil
@@ -146,7 +154,9 @@ func (d *Database) Assert(datoms []datalog.Datom) error {
 	tx := d.NewTransaction()
 	for _, dat := range datoms {
 		if err := tx.Add(dat.E, dat.A, dat.V); err != nil {
-			tx.Rollback()
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				err = errors.Join(err, rollbackErr)
+			}
 			return err
 		}
 	}

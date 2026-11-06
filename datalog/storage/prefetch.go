@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"errors"
 	"sort"
 	"time"
 
@@ -93,7 +94,9 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		for iter.Next() {
 			d, err := iter.Datom()
 			if err != nil {
-				_ = iter.Close()
+				if closeErr := iter.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
 				return err
 			}
 			if m.shouldFilterTx(d.Tx) {
@@ -119,7 +122,9 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 			hasGroup = true
 		}
 		if err := iter.Error(); err != nil {
-			_ = iter.Close()
+			if closeErr := iter.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
 			return err
 		}
 		// Flush last group

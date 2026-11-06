@@ -71,7 +71,9 @@ func (s *BadgerEmulatorStore) Assert(datoms []datalog.Datom) error {
 		return err
 	}
 	if err := tx.Assert(datoms); err != nil {
-		_ = tx.Rollback()
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			err = errors.Join(err, rollbackErr)
+		}
 		return err
 	}
 	return tx.Commit()
@@ -101,7 +103,9 @@ func (s *BadgerEmulatorStore) Retract(datoms []datalog.Datom) error {
 		return err
 	}
 	if err := tx.Retract(datoms); err != nil {
-		_ = tx.Rollback()
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			err = errors.Join(err, rollbackErr)
+		}
 		return err
 	}
 	return tx.Commit()
@@ -236,12 +240,16 @@ func (s *BadgerEmulatorStore) MaxTxForEntity(e datalog.Identity) (datalog.Elemen
 	return maxTxForEntityByScan(s, e)
 }
 
-func (s *BadgerEmulatorStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error) {
+func (s *BadgerEmulatorStore) DatomsAfter(eid datalog.ElementID) (after []datalog.Datom, afterErr error) {
 	iter, err := s.ScanKeysOnly(ScanBound{Index: TAEV})
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			after, afterErr = nil, errors.Join(afterErr, closeErr)
+		}
+	}()
 	var datoms []datalog.Datom
 	for iter.Next() {
 		datom, err := iter.Datom()

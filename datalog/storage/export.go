@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -46,12 +47,16 @@ func (d *Database) ExportCompressed(w io.Writer) error {
 }
 
 // export is the shared implementation for Export and ExportCompressed.
-func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, skipEntity func(datalog.Identity) bool) error {
+func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, skipEntity func(datalog.Identity) bool) (exportErr error) {
 	iter, err := OpenScan(d.store, DiscardIntake, ScanBound{Index: EAVT})
 	if err != nil {
 		return fmt.Errorf("failed to scan database: %w", err)
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			exportErr = errors.Join(exportErr, fmt.Errorf("failed to close database scan: %w", closeErr))
+		}
+	}()
 
 	bw := bufio.NewWriter(w)
 

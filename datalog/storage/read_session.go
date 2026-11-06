@@ -40,12 +40,16 @@ type ReadSession interface {
 // maxElementIDByScan is the index-order derivation of the store-wide
 // ElementID high-water mark: TAEV orders Tx descending, so the first entry
 // carries the highest ElementID.
-func maxElementIDByScan(r StoreReader) (datalog.ElementID, error) {
+func maxElementIDByScan(r StoreReader) (maxID datalog.ElementID, scanErr error) {
 	iter, err := r.ScanKeysOnly(ScanBound{Index: TAEV})
 	if err != nil {
 		return datalog.ElementID{}, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			maxID, scanErr = datalog.ElementID{}, errors.Join(scanErr, closeErr)
+		}
+	}()
 	if !iter.Next() {
 		return datalog.ElementID{}, iter.Error()
 	}
@@ -54,12 +58,16 @@ func maxElementIDByScan(r StoreReader) (datalog.ElementID, error) {
 
 // maxTxForEntityByScan walks the entity's EAVT range for its highest
 // ElementID (EAVT is not Tx-ordered, so the full range is examined).
-func maxTxForEntityByScan(r StoreReader, e datalog.Identity) (datalog.ElementID, bool, error) {
+func maxTxForEntityByScan(r StoreReader, e datalog.Identity) (maxTx datalog.ElementID, hasTx bool, scanErr error) {
 	iter, err := r.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{e}})
 	if err != nil {
 		return datalog.ElementID{}, false, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			maxTx, hasTx, scanErr = datalog.ElementID{}, false, errors.Join(scanErr, closeErr)
+		}
+	}()
 	var maxID datalog.ElementID
 	found := false
 	for iter.Next() {

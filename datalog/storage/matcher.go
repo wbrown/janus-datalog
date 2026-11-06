@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -1036,16 +1037,30 @@ func (m *PatternMatcher) lookupAllAttributesFallback(
 	// Not deferred: the peek closes before the switch, whose LWW arm reopens the
 	// same run.
 	if !iter.Next() {
-		iter.Close()
+		scanErr := iter.Error()
+		if closeErr := iter.Close(); closeErr != nil {
+			if scanErr == nil {
+				scanErr = closeErr
+			} else {
+				scanErr = errors.Join(scanErr, closeErr)
+			}
+		}
+		if scanErr != nil {
+			return nil, fmt.Errorf("scanning AEVT for LookupAllAttributes: %w", scanErr)
+		}
 		return nil, nil
 	}
 	firstDatom, err := iter.Datom()
 	if err != nil {
-		iter.Close()
+		if closeErr := iter.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return nil, fmt.Errorf("decoding first datom for LookupAllAttributes: %w", err)
 	}
 	firstOp := firstDatom.Op
-	iter.Close()
+	if err := iter.Close(); err != nil {
+		return nil, fmt.Errorf("scanning AEVT for LookupAllAttributes: %w", err)
+	}
 
 	// Counted before the call: the resolver opens its run whether or not it
 	// returns one.
@@ -1083,14 +1098,18 @@ func (m *PatternMatcher) lookupAllAttributesFallback(
 	default:
 		// LWW: return the value with the highest ElementID
 		// Re-scan since we closed the iterator
-		iter2, err := OpenKeyScan(m.reader, report, bound)
-		if err != nil {
-			return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
+		iter2, scanErr := OpenKeyScan(m.reader, report, bound)
+		if scanErr != nil {
+			return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", scanErr)
 		}
 		if report != nil {
 			report.peers++
 		}
-		defer iter2.Close()
+		defer func() {
+			if closeErr := iter2.Close(); closeErr != nil {
+				values, err = nil, errors.Join(err, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", closeErr))
+			}
+		}()
 
 		var latestVal interface{}
 		var latestTx datalog.ElementID

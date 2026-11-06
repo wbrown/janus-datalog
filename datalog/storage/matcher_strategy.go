@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"errors"
+
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -40,7 +42,8 @@ type ReuseStrategy struct {
 }
 
 // analyzeReuseStrategy determines if and how iterator reuse can be applied.
-// Returns the strategy and the (possibly materialized) binding relation.
+// Returns the strategy and the (possibly materialized) binding relation, and
+// the error of closing the binding relation's iterator where it read one.
 // For multi-position cases, the relation may be materialized to allow cardinality counting.
 //
 // A run narrowed to a bound V hides the (E, A) group's other values from
@@ -52,9 +55,9 @@ type ReuseStrategy struct {
 // nothing resolves and every datom is read as written, and with several
 // positions bound V is no seek dimension
 // (docs/proposals/BOUND_VALUE_SEEK_PROOF.md T6).
-func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) (ReuseStrategy, executor.Relation) {
+func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) (ReuseStrategy, executor.Relation, error) {
 	if bindingRel == nil {
-		return ReuseStrategy{Type: NoReuse}, bindingRel
+		return ReuseStrategy{Type: NoReuse}, bindingRel, nil
 	}
 
 	// Size() declines with -1 on streaming relations rather than consuming
@@ -62,7 +65,7 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 	// the count is already free; an empty stream is discovered naturally by
 	// iteration.
 	if bindingRel.Size() == 0 {
-		return ReuseStrategy{Type: NoReuse}, bindingRel
+		return ReuseStrategy{Type: NoReuse}, bindingRel, nil
 	}
 
 	// For streaming relations with unknown size, we can't optimize for size==1
@@ -154,7 +157,7 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 					NeedsValidation: card == schema.CardinalityOne && m.mode != historyMode,
 					ValidationIndex: EATV,         // Point lookup on (E, A)
 					BoundA:          aConst.Value, // For validation lookups
-				}, bindingRel
+				}, bindingRel, nil
 			} else {
 				// A is variable: use VAET for V-primary scan. Each candidate's
 				// own attribute decides its validation.
@@ -166,7 +169,7 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 					Index:           indexType,
 					NeedsValidation: m.mode != historyMode,
 					ValidationIndex: EATV,
-				}, bindingRel
+				}, bindingRel, nil
 			}
 
 		case 3: // T is bound
@@ -179,10 +182,10 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 				Type:     SinglePositionReuse,
 				Position: position,
 				Index:    indexType,
-			}, bindingRel
+			}, bindingRel, nil
 		}
 		// Fall back to NoReuse for patterns where reuse doesn't help
-		return ReuseStrategy{Type: NoReuse}, bindingRel
+		return ReuseStrategy{Type: NoReuse}, bindingRel, nil
 	}
 
 	// Multiple positions bound - choose the most selective position for reuse
@@ -190,7 +193,7 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 		return chooseBestMultiPositionStrategy(pattern, boundPositions, bindingRel, bindingSet, card == schema.CardinalityMany)
 	}
 
-	return ReuseStrategy{Type: NoReuse}, bindingRel
+	return ReuseStrategy{Type: NoReuse}, bindingRel, nil
 }
 
 // chooseBestMultiPositionStrategy handles the case where multiple positions are bound
@@ -205,7 +208,9 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 // Example: Pattern [?e :entity/code ?code] with 81 entities and 1 code value:
 // - E has 81 distinct values
 // - Seek E in one E-primary iterator, filter by the code value: 1 open, not 81
-// Returns the strategy and the (possibly materialized) binding relation.
+// Returns the strategy and the (possibly materialized) binding relation, and
+// the error of closing the iterator that counted the bindings, joined with the
+// count's own error when both fail.
 // vSeeks says whether a run narrowed to a bound V holds the whole resolution
 // decision, which analyzeReuseStrategy decides from the attribute's
 // cardinality; when it does not, V is no seek dimension and the bound V is
@@ -216,7 +221,7 @@ func chooseBestMultiPositionStrategy(
 	bindingRel executor.Relation,
 	bindingSet map[query.Symbol]bool,
 	vSeeks bool,
-) (ReuseStrategy, executor.Relation) {
+) (ReuseStrategy, executor.Relation, error) {
 	// CRITICAL: Materialize streaming relations before iterating
 	// This function iterates the relation to count cardinalities, and later code
 	// (matchWithHashJoin) needs to iterate again.
@@ -292,12 +297,14 @@ func chooseBestMultiPositionStrategy(
 		}
 	}
 	scanErr := it.Error()
-	it.Close()
+	if closeErr := it.Close(); closeErr != nil {
+		return ReuseStrategy{Type: NoReuse}, bindingRel, errors.Join(scanErr, closeErr)
+	}
 	if scanErr != nil {
 		// The counts are truncated garbage — take the no-preference strategy.
 		// The returned relation still carries the deferred error, which the
 		// caller's match path surfaces when it consumes the bindings.
-		return ReuseStrategy{Type: NoReuse}, bindingRel
+		return ReuseStrategy{Type: NoReuse}, bindingRel, nil
 	}
 
 	for i := range info {
@@ -326,7 +333,7 @@ func chooseBestMultiPositionStrategy(
 	}
 
 	if bestPosition == -1 {
-		return ReuseStrategy{Type: NoReuse}, bindingRel
+		return ReuseStrategy{Type: NoReuse}, bindingRel, nil
 	}
 
 	// Determine index based on best position for reuse
@@ -350,12 +357,12 @@ func chooseBestMultiPositionStrategy(
 	case 3: // T has most distinct values - use TAEV
 		indexType = TAEV
 	default:
-		return ReuseStrategy{Type: NoReuse}, bindingRel
+		return ReuseStrategy{Type: NoReuse}, bindingRel, nil
 	}
 
 	return ReuseStrategy{
 		Type:     SinglePositionReuse, // Reuse single position reuse logic
 		Position: bestPosition,
 		Index:    indexType,
-	}, bindingRel
+	}, bindingRel, nil
 }

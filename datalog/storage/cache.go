@@ -23,9 +23,8 @@ type CacheKey struct {
 type CacheEntry struct {
 	// inFlight marks a placeholder entry stored while a commit to this (E, A) is
 	// in progress. Readers that see it bypass the cache and resolve directly from
-	// storage, and cache writers refuse to overwrite it, so no reader observes the
-	// pre-commit value once the storage commit is visible. The remaining fields
-	// are unset on a sentinel.
+	// storage, and cache writers refuse to overwrite it. The remaining fields are
+	// unset on a sentinel.
 	inFlight    bool
 	version     datalog.ElementID // Max ElementID when this entry was computed
 	cardinality datalog.Keyword
@@ -235,10 +234,10 @@ var inFlightEntry = &CacheEntry{inFlight: true}
 // BeginInFlight marks the given keys as committing by storing the in-flight
 // sentinel for each, overwriting any cached entry. Called by Transaction.Commit
 // BEFORE the storage commit; the matching clear is Invalidate (called after the
-// commit, or after a failed commit), which deletes the entries. While a key is
-// in-flight, GetOrResolve resolves it from storage and storeIfNotInFlight refuses
-// to cache it, so the storage commit and the cache become visible atomically from
-// a reader's perspective.
+// commit, or after a failed commit), which deletes the entries. While a key's
+// sentinel stands, GetOrResolve resolves it from storage and storeIfNotInFlight
+// refuses to cache it. Another commit's Invalidate or a drop of the key's slot
+// can clear the sentinel before this commit's UpdateMaxVersion records the arrival.
 func (c *Cache) BeginInFlight(keys []CacheKey) {
 	for _, key := range keys {
 		for {
@@ -534,10 +533,9 @@ func (c *Cache) UpdateMaxVersion(key CacheKey, arrival datalog.ElementID) {
 	}
 }
 
-// Invalidate removes cached entries for the given keys.
+// Invalidate removes cached entries for the given keys, another commit's
+// in-flight sentinel included, and leaves each slot's version where it stands.
 // Called by Database on tx.Commit() with all touched (E,A) pairs.
-// Note: maxVersions is NOT cleared here - it's updated by UpdateMaxVersion()
-// during commit, preserving the max for freshness checks.
 func (c *Cache) Invalidate(touched []CacheKey) {
 	for _, key := range touched {
 		for {

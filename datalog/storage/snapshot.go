@@ -57,7 +57,7 @@ func snapshotEntity(name string) datalog.Identity {
 // Snapshot names the current state of this handle as a :db.snapshot/* entity. It captures
 // store.MaxElementID() as the snapshot point and writes the marker in a single
 // transaction. Returns ErrSnapshotExists if the name is already in use.
-func (d *Database) Snapshot(name string) (SnapshotInfo, error) {
+func (d *Database) Snapshot(name string) (snap SnapshotInfo, snapErr error) {
 	if d.mode != latestMode {
 		return SnapshotInfo{}, fmt.Errorf("Snapshot: cannot snapshot a read-only temporal handle (AsOf/History)")
 	}
@@ -86,7 +86,9 @@ func (d *Database) Snapshot(name string) (SnapshotInfo, error) {
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback()
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				snapErr = errors.Join(snapErr, rollbackErr)
+			}
 		}
 	}()
 
@@ -170,7 +172,7 @@ func (d *Database) Snapshots() ([]SnapshotInfo, error) {
 
 // DeleteSnapshot removes the named snapshot from the registry by retracting its marker.
 // The rewindable timeline is untouched; only the registry entry goes away.
-func (d *Database) DeleteSnapshot(name string) error {
+func (d *Database) DeleteSnapshot(name string) (deleteErr error) {
 	if d.mode != latestMode {
 		return fmt.Errorf("DeleteSnapshot: cannot modify a read-only temporal handle (AsOf/History)")
 	}
@@ -188,7 +190,9 @@ func (d *Database) DeleteSnapshot(name string) error {
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback()
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				deleteErr = errors.Join(deleteErr, rollbackErr)
+			}
 		}
 	}()
 

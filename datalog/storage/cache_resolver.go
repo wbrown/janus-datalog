@@ -53,7 +53,7 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (
 		// The walk acquires through report, so its intake — the deepest read
 		// on this path — reaches the arm whether or not the walk goes on to
 		// fail.
-		v, _, version, found, present, err := m.walkUniqueEntityValue(e, a, report)
+		v, _, version, found, present, err := m.walkUniqueEntityValue(newUniqueWalkState(), e, a, report)
 		if err != nil {
 			return nil, datalog.ElementID{}, false, err
 		}

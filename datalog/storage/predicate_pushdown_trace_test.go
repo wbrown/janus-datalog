@@ -67,7 +67,8 @@ func TestPredicatePushdownTrace(t *testing.T) {
 
 			// Check what strategy is selected; the binding relation it hands
 			// back stands in for the one passed.
-			strategy, symbolRel := matcher.analyzeReuseStrategy(timePattern, symbolRel)
+			strategy, symbolRel, err := matcher.analyzeReuseStrategy(timePattern, symbolRel)
+			require.NoError(t, err)
 			t.Logf("Reuse strategy: Type=%s, Position=%d, Index=%d",
 				strategy.Type.String(), strategy.Position, strategy.Index)
 

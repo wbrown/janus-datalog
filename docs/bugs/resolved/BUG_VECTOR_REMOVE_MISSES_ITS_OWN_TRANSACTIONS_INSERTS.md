@@ -1,11 +1,11 @@
 # A vector write or read answers a vector the transaction or the view does not hold
 
-**Status**: Open. The Starflight disassembler (`disasm`) meets the `Remove`
-defect below on janus-datalog v0.16.1. It records a Forth machine's stacks as
-vectors and reads them back as of each step. It works around the defect by
-committing before such a pop (`factWriter.remove`), and the fix belongs here.
-The record covers four defects, which the tests under "Reproducer"
-reproduce:
+**Status**: Resolved (2026-11-05, b5ca9d7 and 9f80575). The Starflight
+disassembler (`disasm`) met the `Remove` defect below on janus-datalog v0.16.1.
+It records a Forth machine's stacks as vectors and reads them back as of each
+step, and it worked around the defect by committing before such a pop
+(`factWriter.remove`). The record covers four defects, which the tests under
+"Reproducer" reproduce:
 
 1. `Transaction.Remove`, `Transaction.Set` and an ordered set's `Add` each
    read the vector without some of the transaction's own earlier writes to
@@ -241,7 +241,7 @@ whose attribute is a variable answers `[a c x]`. Every other reader answers
 `[a x c]`, the order that b's placement at HEAD gives: b after x, and c
 following b.
 
-## The fix, if taken
+## The fix
 
 - A transaction writes against a vector as it stood when the transaction
   began, with its own writes applied. `NewTransaction` records its start,

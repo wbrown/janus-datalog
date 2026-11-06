@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"errors"
+
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 )
@@ -26,10 +28,17 @@ const (
 
 // uniqueWalkState is the per-(E, A) state tracked across entries of
 // the walk: removed values, keyed by value, with their highest
-// Remove Tx. Both the batch primitive (walkUniqueEntityValue) and the
+// Remove Tx, and the claims to values the walker holds beside the
+// store's. Both the batch primitive (walkUniqueEntityValue) and the
 // streaming path (CRDTResolvingIterator.processUniqueEntry) build this
 // state and feed it to walkApplyEntry.
 type uniqueWalkState struct {
+	// claims maps a value to the highest ElementID among the datoms of it,
+	// by entities other than the walked one, that the walker holds and the
+	// store does not: a transaction's own pending datoms. The supersession
+	// check reads them beside the store's. It is nil for a walk of the store
+	// alone.
+	claims *executor.TupleKeyMap
 	// removedAt maps a value to the highest Tx at which a CRDT Remove
 	// tombstone was seen for it. Nothing is deleted: the datom a Remove
 	// cancels stays in the store and in History, and physical deletion is
@@ -94,10 +103,16 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 		return walkEntrySkip, datom.Tx, nil
 	}
 
-	// Supersession check against other entities' assertions of V.
+	// Supersession check against other entities' assertions of V, the
+	// store's and the ones the walker holds beside it.
 	maxOther, err := m.resolveMaxOtherTxForValue(aBytes, datom.V, eBytes, report)
 	if err != nil {
 		return walkEntrySkip, datalog.ElementID{}, err
+	}
+	if state.claims != nil {
+		if claim, ok := state.claims.Get(state.probe); ok && maxOther.Less(claim.(datalog.ElementID)) {
+			maxOther = claim.(datalog.ElementID)
+		}
 	}
 	// Emit iff no other entity's assertion of V has a Tx greater than
 	// ours. Strict < check; ties (same Lamport, different replica)
@@ -111,7 +126,9 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 // walkUniqueEntityValue resolves E's current value for unique attribute
 // a using the walk-based (A, V)-LWW rule (see walkApplyEntry). The
 // walk iterates E's EATV history in descending Tx order and emits the
-// first entry that passes removal and supersession checks.
+// first entry that passes removal and supersession checks. state is the
+// walk's state: a fresh one for a walk of the store alone, or one its caller
+// has already walked E's newer datoms of a into.
 //
 // Returns found=true with the value and the Tx of the emitted Set, or
 // found=false when E has no current value. version is the highest ElementID
@@ -134,7 +151,7 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 // opens underneath it acquire through report. Those AVET reads are real index
 // reads on the resolution path — one per Set entry the walk considers — and an
 // arm seeing only the outer scan would be told the cheapest part of the work.
-func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute, report *scanReport) (value any, tx datalog.ElementID, version datalog.ElementID, found bool, present bool, err error) {
+func (m *PatternMatcher) walkUniqueEntityValue(state *uniqueWalkState, eBytes Entity, aBytes Attribute, report *scanReport) (value any, tx datalog.ElementID, version datalog.ElementID, found bool, present bool, err error) {
 	// The caller holds storage projections; both constructors return the
 	// canonical interned pointer for an already-interned value.
 	iter, err := OpenKeyScan(m.reader, report, ScanBound{
@@ -153,7 +170,6 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute, 
 		}
 	}()
 
-	state := newUniqueWalkState()
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
@@ -305,7 +321,13 @@ func (m *PatternMatcher) resolveAVLWW(a Attribute, v any, report *scanReport) (d
 	if scanErr == nil {
 		scanErr = iter.Error()
 	}
-	iter.Close()
+	if closeErr := iter.Close(); closeErr != nil {
+		if scanErr == nil {
+			scanErr = closeErr
+		} else {
+			scanErr = errors.Join(scanErr, closeErr)
+		}
+	}
 	if scanErr != nil {
 		return nil, datalog.ElementID{}, scanErr
 	}
@@ -328,7 +350,7 @@ func (m *PatternMatcher) resolveAVLWW(a Attribute, v any, report *scanReport) (d
 	//
 	// version is discarded because no cache entry is built from this answer;
 	// walkTx, the claimant's own assertion, is the Tx it reports.
-	walkV, walkTx, _, found, _, err := m.walkUniqueEntityValue(Entity(bestE.Hash()), a, report)
+	walkV, walkTx, _, found, _, err := m.walkUniqueEntityValue(newUniqueWalkState(), Entity(bestE.Hash()), a, report)
 	if err != nil {
 		return nil, datalog.ElementID{}, err
 	}

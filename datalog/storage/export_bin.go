@@ -67,7 +67,7 @@ type binaryTrailer struct {
 
 // ExportBinary writes the complete EAVT datom log as a seekable JDZL file.
 // w must be an io.WriteSeeker so the trailer index offset can be patched.
-func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) error {
+func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) (exportErr error) {
 	softBudget := defaultBinarySoftBudget
 	var skipEntity func(datalog.Identity) bool
 	if len(opts) > 0 {
@@ -88,7 +88,11 @@ func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) e
 	if err != nil {
 		return fmt.Errorf("binary export scan: %w", err)
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			exportErr = errors.Join(exportErr, fmt.Errorf("binary export scan close: %w", closeErr))
+		}
+	}()
 
 	var (
 		trailer    binaryTrailer

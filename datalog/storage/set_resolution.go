@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"errors"
+
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
@@ -52,7 +54,7 @@ type SetResolutionResult struct {
 // NOTE: ReplicaID is NOT used for add-wins comparison. It's only used for
 // LWW (cardinality-one). For add-wins, "concurrent" means same Lamport,
 // and add always wins at concurrent operations regardless of ReplicaID.
-func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanReport) (*SetResolutionResult, error) {
+func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanReport) (resolved *SetResolutionResult, resolveErr error) {
 	// The caller holds storage projections; both constructors return the
 	// canonical interned pointer for an already-interned value.
 	var e Entity
@@ -81,7 +83,11 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanRe
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			resolved, resolveErr = nil, errors.Join(resolveErr, closeErr)
+		}
+	}()
 
 	acc := newAddWinsAccumulator(m)
 
@@ -294,12 +300,16 @@ func scanAddWinsMemory(it *memoryIterator, acc *addWinsAccumulator) error {
 // A variable-width V leaves this run inexact, so the store steps over the
 // keys the byte range over-covers and the intake exceeds what the loop below
 // sees — precisely the amplification the caller has to be able to report.
-func (m *PatternMatcher) checkSetMembership(bound ScanBound, report *scanReport) (bool, error) {
+func (m *PatternMatcher) checkSetMembership(bound ScanBound, report *scanReport) (member bool, checkErr error) {
 	iter, err := OpenScan(m.reader, report, bound)
 	if err != nil {
 		return false, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			member, checkErr = false, errors.Join(checkErr, closeErr)
+		}
+	}()
 
 	var highestAddTx datalog.ElementID
 	var highestRemoveTx datalog.ElementID
