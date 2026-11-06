@@ -71,8 +71,9 @@ func (r *sessionBoundRelation) Rename(subst query.Substitution) (executor.Relati
 }
 
 // sessionBoundIterator reports the query complete and releases the session
-// at exhaustion or Close, counting the tuples it yields on the way. A close
-// failure surfaces through Close's return or Error(), never silently.
+// at exhaustion or Close, counting the tuples it yields on the way. Error
+// answers the inner iterator's failure, and Close answers the session's close
+// failure beside the inner iterator's, so each reaches the reader once.
 type sessionBoundIterator struct {
 	executor.Iterator
 	session    ReadSession
@@ -111,7 +112,7 @@ func (it *sessionBoundIterator) Close() error {
 }
 
 func (it *sessionBoundIterator) Error() error {
-	return errjoin.Join(it.Iterator.Error(), it.releaseErr)
+	return it.Iterator.Error()
 }
 
 func (it *sessionBoundIterator) RequiresCopy() bool { return it.Iterator.RequiresCopy() }

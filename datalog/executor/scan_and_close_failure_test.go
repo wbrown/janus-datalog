@@ -66,6 +66,15 @@ func TestAConsumerAnswersItsSourcesScanFailureAndCloseFailure(t *testing.T) {
 		{"a streaming aggregate", func(t *testing.T) error {
 			return driveErr(NewStreamingAggregateRelation(scanAndCloseFailing(xs, 1, one, two), grouped))
 		}},
+		{"a single aggregate over a scan failing before its first tuple", func(t *testing.T) error {
+			return driveErr(executeSingleAggregation(scanAndCloseFailing(xs, 0, one, two), newAggregationLayout([]query.FindElement{count})))
+		}},
+		{"a grouped aggregate over a scan failing before its first tuple", func(t *testing.T) error {
+			return driveErr(executeGroupedAggregation(scanAndCloseFailing(xs, 0, one, two), newAggregationLayout(grouped)))
+		}},
+		{"a streaming single aggregate over a scan failing before its first tuple", func(t *testing.T) error {
+			return driveErr(NewStreamingAggregateRelation(scanAndCloseFailing(xs, 0, one, two), []query.FindElement{count}))
+		}},
 		{"a buffered iterator's clone", func(t *testing.T) error {
 			clone := NewBufferedIterator(scanAndCloseFailing(xs, 1, one, two).Iterator()).Clone()
 			for clone.Next() {

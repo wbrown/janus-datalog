@@ -305,14 +305,15 @@ func executeSingleAggregation(rel Relation, layout aggregationLayout) (result Re
 	// return empty result set instead of a tuple with nil values
 	opts := rel.Options()
 	if !hasAnyValues {
-		empty := newMaterializedRelationFromSet(
+		// The deferred close sets aggErr, joined with the close's failure, on
+		// result.
+		result = newMaterializedRelationFromSet(
 			resultSymbols,
 			nil,
 			opts,
 			RelationProperties{},
 		)
-		empty.err = aggErr
-		return empty
+		return result
 	}
 
 	// Emission invariant: an aggregate that folded no values beside siblings
