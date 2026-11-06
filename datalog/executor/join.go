@@ -29,13 +29,14 @@ type hashJoinIterator struct {
 	// naming a tuple of keptTuples, the set's tuples up to that count. Exactly
 	// one of buildIndex and kept is nil: a build side with no set named is
 	// drained into buildIndex.
-	kept         *ordinalIndex
-	keptTuples   []Tuple
-	probeIndices []int
-	bound        int
-	probeIt      Iterator
-	buildErr     error // deferred error captured from the (eagerly consumed) build relation
-	buildIsLeft  bool
+	kept          *ordinalIndex
+	keptTuples    []Tuple
+	probeIndices  []int
+	bound         int
+	probeIt       Iterator
+	buildErr      error // the build scan's read failure, which Error decides under the failure contract
+	buildCloseErr error // the build scan's close failure, which Close answers
+	buildIsLeft   bool
 	// rightNonJoinIndices identifies positions in the right-side tuple
 	// (per buildIsLeft, the probe side when buildIsLeft is true, otherwise
 	// the build side) whose values are written after the left tuple in the
@@ -156,17 +157,20 @@ func (it *hashJoinIterator) Tuple() Tuple {
 // overwrites.
 func (it *hashJoinIterator) RequiresCopy() bool { return true }
 
+// Close answers the build scan's close failure and the probe side's.
 func (it *hashJoinIterator) Close() error {
-	if !it.closed {
-		it.closed = true
-		if it.metrics != nil {
-			it.emitProbeAnnotation()
-		}
-		if it.probeIt != nil {
-			return it.probeIt.Close()
-		}
+	if it.closed {
+		return nil
 	}
-	return nil
+	it.closed = true
+	if it.metrics != nil {
+		it.emitProbeAnnotation()
+	}
+	var probeCloseErr error
+	if it.probeIt != nil {
+		probeCloseErr = it.probeIt.Close()
+	}
+	return errjoin.Join(it.buildCloseErr, probeCloseErr)
 }
 
 // sideRead is what a join read of one of its sides: whether the side yielded
@@ -403,7 +407,7 @@ func hashJoinWithSet(
 	}
 
 	var buildIndex *JoinIndex
-	var buildErr error
+	var buildErr, buildCloseErr error
 	var buildCount int
 	if kept != nil {
 		// The build side is the set's tuples up to its count: the kept index
@@ -507,7 +511,7 @@ func hashJoinWithSet(
 		// The build relation may share underlying iterators with the probe relation
 		// (e.g., OrFallbackRelation wraps a StreamingRelation that is also the probe).
 		// Close() signals the CachingIterator, unblocking probe's Size()/Iterator().
-		buildErr = errjoin.Join(buildErr, buildIt.Close())
+		buildCloseErr = buildIt.Close()
 		if trackCopy {
 			buildEnd = time.Now()
 		}
@@ -552,15 +556,17 @@ func hashJoinWithSet(
 	// side holds. A build that read no failure leaves the probe side unopened:
 	// a stream among the probe sides keeps its one use
 	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). A build that failed
-	// has its deferred error in hand, and the result carries it only where
-	// the probe side holds a tuple or a failure, so the probe side is read to
-	// its first tuple, its end or its failure, its one use: an empty probe
-	// side holds at no assignment, so the build's failure is not raised (the
-	// failure contract).
+	// has its read failure in hand, and the result carries it only where the
+	// probe side holds a tuple or a read failure, so the probe side is read to
+	// its first tuple, its end or its read failure, its one use: an empty
+	// probe side holds at no assignment, so the build's read failure is not
+	// raised (the failure contract). The result carries the build's close
+	// failure, and the probe side's where it was read, whatever either holds.
 	if buildCount == 0 {
 		if buildErr != nil {
-			has, probeErr := hasTuple(probeRel)
-			buildErr = joinFailure(sideRead{err: buildErr}, sideRead{yielded: has, err: probeErr})
+			has, probeReadErr, probeCloseErr := hasTuple(probeRel)
+			buildErr = joinFailure(sideRead{err: buildErr}, sideRead{yielded: has, err: probeReadErr})
+			buildCloseErr = errjoin.Join(buildCloseErr, probeCloseErr)
 		}
 		if opts.Handler != nil {
 			opts.Handler(annotations.Event{
@@ -574,7 +580,7 @@ func hashJoinWithSet(
 			})
 		}
 		result := newMaterializedRelationFromSet(outputSyms, nil, opts, resultProperties)
-		result.err = buildErr
+		result.err = errjoin.Join(buildErr, buildCloseErr)
 		return result
 	}
 
@@ -591,6 +597,7 @@ func hashJoinWithSet(
 		bound:               bound,
 		probeIt:             probeRel.Iterator(),
 		buildErr:            buildErr,
+		buildCloseErr:       buildCloseErr,
 		buildIsLeft:         buildIsLeft,
 		rightNonJoinIndices: rightNonJoinIndices,
 		options:             opts,

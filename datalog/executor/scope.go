@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
-	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -121,17 +120,18 @@ func (e *DefaultQueryExecutor) materialized(rel Relation) (*MaterializedRelation
 	return newMaterializedRelationFromSet(rel.Symbols(), tuples, e.options, rel.Properties()), nil
 }
 
-// hasTuple reports whether a relation yields a tuple, and the failure it
-// keeps, by one pull of its iterator: the iterator's Error answers the
-// failure a held relation carries, a replayed cache's and a fold's. An
-// iterator filling the relation's replay cache is read to its end instead,
-// since a cache closed before its end leaves the relation unreadable. Each
-// caller is the relation's last reader, so the pull is its one read.
-func hasTuple(rel Relation) (bool, error) {
+// hasTuple reports whether a relation yields a tuple by one pull of its
+// iterator, with the read failure it keeps and its close failure apart. The
+// iterator's Error answers the read failure a held relation carries, a
+// replayed cache's and a fold's. An iterator filling the relation's replay
+// cache is read to its end instead, since a cache closed before its end
+// leaves the relation unreadable. Each caller is the relation's last reader,
+// so the pull is its one read.
+func hasTuple(rel Relation) (has bool, readErr, closeErr error) {
 	it := rel.Iterator()
-	has := it.Next()
+	has = it.Next()
 	completeCache(it)
-	return has, errjoin.Join(it.Error(), it.Close())
+	return has, it.Error(), it.Close()
 }
 
 // executeOrJoinClause runs the union over its subject, the groups holding a

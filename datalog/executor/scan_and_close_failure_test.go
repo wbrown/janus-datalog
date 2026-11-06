@@ -262,6 +262,97 @@ func TestTheExistenceVerdictAnswersItsFailureAndEveryEvaluatingGroupsCloseFailur
 	})
 }
 
+// The existence verdict answers the close failure of every group it opens,
+// held groups included, whatever its verdict. Its own failure is the first
+// read failure, raised only when every group has a tuple.
+func TestTheExistenceVerdictAnswersTheCloseFailureOfEveryGroupItOpens(t *testing.T) {
+	xs := []query.Symbol{datalog.NewSymbol("?x")}
+	unit := NewUnitRelation(ExecutorOptions{})
+	group := func(failAfter int, closeErr error) Relation {
+		return failingRelation{
+			Relation:  NewMaterializedRelation(xs, []Tuple{{int64(1)}, {int64(2)}}),
+			failAfter: failAfter,
+			closeErr:  closeErr,
+		}
+	}
+	evaluating := func(failAfter int, closeErr error) Relation {
+		return NewStreamingRelationWithProperties(xs, group(failAfter, closeErr).Iterator(), ExecutorOptions{}, RelationProperties{Evaluates: true})
+	}
+	empty := NewMaterializedRelation(xs, nil)
+	failingClose := errors.New("failing group close failure")
+	laterClose := errors.New("later group close failure")
+
+	t.Run("a group with tuples whose close fails, read after a failing group", func(t *testing.T) {
+		_, err := existenceVerdict([]Relation{group(0, failingClose), group(100, laterClose)}, nil, unit)
+		require.ErrorIs(t, err, errInjectedIterator, "the failing group's failure is the verdict's")
+		require.ErrorIs(t, err, failingClose, "the failing group's close failure reaches the caller")
+		require.ErrorIs(t, err, laterClose, "the later group's close failure reaches the caller")
+	})
+
+	t.Run("a failing group, then a group with no tuple", func(t *testing.T) {
+		_, err := existenceVerdict([]Relation{group(0, failingClose), empty}, nil, unit)
+		require.ErrorIs(t, err, failingClose, "the failing group's close failure reaches the caller")
+		require.NotErrorIs(t, err, errInjectedIterator, "a group has no tuple, so the read failure is not raised")
+	})
+
+	t.Run("a failing group, then a held group with no tuple", func(t *testing.T) {
+		_, err := existenceVerdict([]Relation{group(0, failingClose)}, []Relation{empty}, unit)
+		require.ErrorIs(t, err, failingClose, "the failing group's close failure reaches the caller")
+		require.NotErrorIs(t, err, errInjectedIterator, "a held group has no tuple, so the read failure is not raised")
+	})
+
+	t.Run("a held group whose close fails, read after a failure", func(t *testing.T) {
+		_, err := existenceVerdict([]Relation{group(0, failingClose)}, []Relation{group(100, laterClose)}, unit)
+		require.ErrorIs(t, err, errInjectedIterator, "the failing group's failure is the verdict's")
+		require.ErrorIs(t, err, failingClose, "the failing group's close failure reaches the caller")
+		require.ErrorIs(t, err, laterClose, "the held group's close failure reaches the caller")
+	})
+
+	t.Run("a group with tuples whose close fails, beside a held group with no tuple", func(t *testing.T) {
+		_, err := existenceVerdict([]Relation{group(100, failingClose)}, []Relation{empty}, unit)
+		require.ErrorIs(t, err, failingClose, "the group's close failure reaches the caller")
+	})
+
+	t.Run("an evaluating group whose close fails, before an evaluating group failing past its first tuple", func(t *testing.T) {
+		_, err := existenceVerdict([]Relation{evaluating(100, failingClose), evaluating(1, laterClose)}, nil, unit)
+		require.ErrorIs(t, err, errInjectedIterator, "the later group's failure is the verdict's")
+		require.ErrorIs(t, err, failingClose, "the first group's close failure reaches the caller")
+		require.ErrorIs(t, err, laterClose, "the later group's close failure reaches the caller")
+	})
+}
+
+// A hash join answers the close failure of each side whatever the other side
+// holds. Its own failure is a side's read failure, raised only where the other
+// side holds a tuple or a read failure.
+func TestAHashJoinAnswersEachSidesCloseFailureWhateverTheOtherSideHolds(t *testing.T) {
+	xs := []query.Symbol{datalog.NewSymbol("?x")}
+	stream := func(failAfter int, closeErr error, tuples ...Tuple) *StreamingRelation {
+		return NewStreamingRelation(xs, failingRelation{
+			Relation:  NewMaterializedRelation(xs, tuples),
+			failAfter: failAfter,
+			closeErr:  closeErr,
+		}.Iterator())
+	}
+	buildClose := errors.New("build side close failure")
+	probeClose := errors.New("probe side close failure")
+
+	t.Run("a build side with tuples whose close fails, over a probe side with no tuple", func(t *testing.T) {
+		_, err := CollectTuples(HashJoin(stream(100, buildClose, Tuple{int64(1)}), stream(100, nil), xs), nil)
+		require.ErrorIs(t, err, buildClose, "the build side's close failure reaches the caller")
+	})
+
+	t.Run("an empty build side whose close fails, beside a probe side with no tuple", func(t *testing.T) {
+		_, err := CollectTuples(HashJoin(stream(100, buildClose), stream(100, nil), xs), nil)
+		require.ErrorIs(t, err, buildClose, "the build side's close failure reaches the caller")
+	})
+
+	t.Run("an empty build side that failed, beside a probe side whose close fails and which holds no tuple", func(t *testing.T) {
+		_, err := CollectTuples(HashJoin(stream(0, nil), stream(100, probeClose), xs), nil)
+		require.ErrorIs(t, err, probeClose, "the probe side's close failure reaches the caller")
+		require.NotErrorIs(t, err, errInjectedIterator, "the probe side holds no tuple and no read failure, so the build's failure is not raised")
+	})
+}
+
 // A symmetric hash join answers the close failure of each side.
 func TestASymmetricHashJoinAnswersEachSidesCloseFailure(t *testing.T) {
 	xs := []query.Symbol{datalog.NewSymbol("?x")}

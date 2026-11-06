@@ -460,87 +460,99 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 
 // existenceVerdict is the verdict over groups a find does not read: unit,
 // the executor's relation of one tuple over no symbol, when each group has a
-// tuple, nothing when one has none, and a group's failure as its error.
+// tuple, nothing when one has none, and a group's read failure as its error.
 // The find boundary takes it over the groups the find does not consume, the
 // groups it consumes held, and a phase whose fragment finds nothing takes it
 // over every group, the schema a phase providing nothing declares, none held.
 //
-// Every group is read to its first tuple, its end, or its failure before
-// the verdict is decided. A group with no tuple holds at no assignment, so
-// the verdict is empty and no group's failure is raised. Otherwise a group's
-// failure is at an assignment where every other clause holds, and the first
-// is the verdict's error. A group whose reading evaluates a function is read
-// past its first tuple only once every group has shown one: then each of its
-// tuples meets a tuple of every other group, and the group is read to its
-// end to raise a failure on any of them
+// Every group is read to its first tuple, its end, or its read failure
+// before the verdict is decided. A group with no tuple holds at no
+// assignment, so the verdict is empty and no group's read failure is raised.
+// Otherwise a group's read failure is at an assignment where every other
+// clause holds, and the first is the verdict's error. A group whose reading
+// evaluates a function is read past its first tuple only once every group
+// has shown one: then each of its tuples meets a tuple of every other group,
+// and the group is read to its end to raise a failure on any of them
 // (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T11).
 //
 // The held groups are the ones the caller reads after the verdict, so the
-// verdict reads them only when it has a failure to raise, and then the
+// verdict reads them only when it has a read failure to raise, and then the
 // caller reads none. A held group with no tuple holds at no assignment, so
-// the verdict is empty and the failure is not raised.
+// the verdict is empty and the read failure is not raised.
+//
+// Every group the verdict opens is closed, and every close failure is the
+// verdict's error whatever the verdict, joined after the read failure it
+// raises.
 func existenceVerdict(groups, held []Relation, unit *MaterializedRelation) ([]Relation, error) {
 	// The iterators of the groups whose reading evaluates a function, each
-	// past its first tuple, and the first failure a group answered in place of
-	// a first tuple.
+	// past its first tuple, the first read failure a group answered, and the
+	// close failure of every group closed.
 	var evaluating []Iterator
-	var failure error
-	closeEvaluating := func(from int) error {
-		var err error
+	var failure, closeErr error
+	closeEvaluating := func(from int) {
 		for _, it := range evaluating[from:] {
 			completeCache(it)
-			err = errjoin.Join(err, it.Close())
+			closeErr = errjoin.Join(closeErr, it.Close())
 		}
-		return err
+	}
+	// answer is the verdict rels, or the close failures where a close failed.
+	answer := func(rels []Relation) ([]Relation, error) {
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		return rels, nil
 	}
 	for _, group := range groups {
 		var has bool
-		var err error
+		var readErr, groupCloseErr error
 		if group.Properties().Evaluates {
 			it := group.Iterator()
 			if it.Next() {
 				evaluating = append(evaluating, it)
 				continue
 			}
-			err = errjoin.Join(it.Error(), it.Close())
+			readErr, groupCloseErr = it.Error(), it.Close()
 		} else {
-			has, err = hasTuple(group)
+			has, readErr, groupCloseErr = hasTuple(group)
 		}
-		if err != nil {
+		closeErr = errjoin.Join(closeErr, groupCloseErr)
+		if readErr != nil {
 			if failure == nil {
-				failure = err
+				failure = readErr
 			}
 			continue
 		}
 		if !has {
-			if closeErr := closeEvaluating(0); closeErr != nil {
-				return nil, closeErr
-			}
-			return []Relation{}, nil
+			closeEvaluating(0)
+			return answer([]Relation{})
 		}
 	}
 	if failure != nil {
-		failure = errjoin.Join(failure, closeEvaluating(0))
+		closeEvaluating(0)
 	} else {
 		for i, it := range evaluating {
 			for it.Next() {
 			}
-			if err := errjoin.Join(it.Error(), it.Close()); err != nil {
-				failure = errjoin.Join(err, closeEvaluating(i+1))
+			readErr := it.Error()
+			closeErr = errjoin.Join(closeErr, it.Close())
+			if readErr != nil {
+				failure = readErr
+				closeEvaluating(i + 1)
 				break
 			}
 		}
 	}
 	if failure == nil {
-		return []Relation{unit}, nil
+		return answer([]Relation{unit})
 	}
 	for _, group := range held {
-		has, err := hasTuple(group)
-		if err == nil && !has {
-			return []Relation{}, nil
+		has, readErr, heldCloseErr := hasTuple(group)
+		closeErr = errjoin.Join(closeErr, heldCloseErr)
+		if readErr == nil && !has {
+			return answer([]Relation{})
 		}
 	}
-	return nil, failure
+	return nil, errjoin.Join(failure, closeErr)
 }
 
 // renderConstantFindSymbols extends one relation group with find-consumed

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -117,8 +118,8 @@ func (it *patternJoinIterator) Next() bool {
 			it.err = err
 			return false
 		}
-		has, err := hasTuple(own)
-		if err != nil {
+		has, readErr, closeErr := hasTuple(own)
+		if err := errjoin.Join(readErr, closeErr); err != nil {
 			it.err = err
 			return false
 		}
