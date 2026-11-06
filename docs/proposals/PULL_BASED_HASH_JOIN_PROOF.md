@@ -35,8 +35,8 @@ Every name below is the code's, given a symbol for the proof.
   - `TestAJoinWithAnEmptySideAnswersEmptyThoughTheOtherSideFails` (storage) pins it.
   - The engine departs from the contract in shapes §7 lists.
 - A side's or a group's **failure** is the one its iterator's `Error` answers. Its **close failure** is the one its iterator's `Close` answers.
-  - A close failure is a fault of the store, not an evaluation failure, so the failure contract does not decide it, and the join's failure rule reads none.
-  - Every close failure a reader meets reaches the reader's caller, whatever the other sides hold.
+  - The close failure of a side or a group a reader closes is no failure at an assignment, so the failure contract does not decide it, and the join's failure rule reads none. It reaches the reader's caller whatever the other sides hold.
+  - An operator that reads its input to its end while it builds a relation closes the input itself: a subquery's branch, a materialization, an aggregate. The input's close failure is then part of the failure the relation keeps. That relation's readers meet it through `Error`, as a side's failure, so the failure contract decides it (T11).
 - The **pattern join iterator** is `patternJoinIterator`: the windowed join of a subject with a pattern. At its first pull it reads whether the pattern alone has a match, through the matcher and `hasTuple`, and it answers the windowed join's tuples only where the pattern has one.
 - The **identity symbols** of a relation are `RelationProperties.Identities`: the symbols whose every value is an identity, as a data pattern's entity position binds them.
 - The **evaluating mark** is `RelationProperties.Evaluates`. It says that reading the relation evaluates, as tuples are pulled, a function that can fail on a value, which `canFailOnAValue` decides:

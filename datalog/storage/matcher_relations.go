@@ -2349,7 +2349,8 @@ func (it *cardinalityManyScanAllEntitiesIterator) Error() error { return it.err 
 // entity the pattern names when its entity element is a constant, every
 // entity carrying the attribute when it is a variable or a blank. With v
 // bound, an entity answers when its resolved collection equals v; with v nil,
-// every entity with a non-empty collection answers.
+// every entity whose vector a write reached answers, an emptied one binding
+// the empty vector.
 func (m *PatternMatcher) matchVectorScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
