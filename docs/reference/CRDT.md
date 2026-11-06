@@ -232,7 +232,7 @@ Since `(5, 100) < (5, 200)` (same Lamport, lower ReplicaID wins):
 
 **Result on ALL replicas**: `["stealth", "magic"]`
 
-Two transactions open at once on one database behave as two replicas do. Each writes against the vector as of the ElementID it began at, with its own writes applied. An element the other draws after that is one it never saw, and the merge keeps both writers' elements. An element the other drew before it is in that view, whenever it is committed.
+Two transactions open at once on one database behave as two replicas do. Each writes against the vector its read session opened on, with its own writes applied. An element the other commits after that is one it never saw, and the merge keeps both writers' elements.
 
 ### Concurrent Update to Same Position
 
@@ -354,7 +354,7 @@ Replica B: tx.Add(e, :prefs, "X")  // Succeeds (no local "X")
 After sync: ["X", "X"]  // Both inserts preserved by RGA
 ```
 
-An `Add` also writes a second copy of a value that another transaction open on the same database drew after this one began (see [Concurrent Append Behavior](#concurrent-append-behavior)).
+An `Add` also writes a second copy of a value that another transaction open on the same database commits after this one opened (see [Concurrent Append Behavior](#concurrent-append-behavior)).
 
 For strict uniqueness across replicas or concurrent transactions, application-level conflict resolution is required after merge.
 
@@ -402,7 +402,8 @@ Query: [?e :character/skills ?skills]
       ┌─────────┴─────────┐
       │                   │
   Cache Hit?          Cache Miss
-  (datoms ≤ read point)   │
+  (no arrival above       │
+   the read point)        │
       │                   ▼
       │        ┌─────────────────────┐
       │        │ rebuildVector()     │
@@ -421,12 +422,12 @@ The datoms of a key can arrive below the highest ElementID among those already p
 
 - **Arrival**: once a commit's datoms are readable, it draws an ElementID from the database's clock and raises the version of each key it touched to that ElementID. Recording the arrival clears the key's entry.
 - **Read point**: a reader takes its read point from the clock before it reads, or before its read session opens.
-- **Serve**: an entry serves a reader when every datom its resolution read lies at or below the reader's read point.
+- **Serve**: an entry serves a reader when no arrival on its key lies above the reader's read point. An arrival at or below the read point was readable before the reader's session opened, so the session holds it. The entry holds every arrival on its key, so it is the value the session holds.
 - **Store**: a resolution is stored only when no arrival on its key lies above the reader's read point. A key with no slot reads the cache's floor, which starts at the clock's read point when the cache is made and rises before `Clear`, `InvalidateAttribute` and `InvalidateRewind` drop slots.
 
 ### As-of Views
 
-An as-of handle (`d.AsOf(target)`) and a matcher's as-of copy keep their resolutions in a cache of their own (`Cache.ForView`), which holds only resolutions as of the view's target and is freed with the view. It records no arrival: it reads the database cache's record of each key. Each entry records the read point its resolution began at, and it serves while no arrival on its key, and no drop of the key's slot, lies above that read point. With the database's cache disabled, an as-of handle has none.
+An as-of handle (`d.AsOf(target)`) and a matcher's as-of copy keep their resolutions in a cache of their own (`Cache.ForView`), which holds only resolutions as of the view's target and is freed with the view. It records no arrival: it reads the database cache's record of each key. Each entry records the read point its resolution began at, and it serves a reader while no arrival on its key, and no drop of the key's slot, lies above that read point or above the reader's. With the database's cache disabled, an as-of handle has none.
 
 ### Write Flow
 
@@ -697,12 +698,12 @@ This section provides formal complexity analysis for all CRDT operations.
 
 **RGA reconstruction**: O(n) to load all elements, O(n log n) to sort children by ElementID at each node, O(k) DFS to produce ordered output.
 
-**The vector the transaction holds** is the vector as of the transaction's start, less the elements its own tombstones name, followed by its own inserts in the order it wrote them, less those its tombstones name. `Set` reads it.
+**The vector the transaction holds** is the vector its read session opened on, less the elements its own tombstones name, followed by its own inserts in the order it wrote them, less those its tombstones name. `Set` reads it.
 
-- Every element the transaction writes is drawn after it began, so it lands after its anchor's whole subtree.
+- Every element the transaction writes is drawn after every element its session holds, so it lands after its anchor's whole subtree.
 - Everything after that subtree is already tombstoned in the transaction's view. The anchor is HEAD for the transaction's first `Add`, the element its last `Add` or `Set` ended on, or a `Set`'s prefix end, after which that `Set` tombstoned the rest.
-- An element another transaction draws after the transaction began is not in its view. One it drew before is in the view, whenever it is committed.
-- The vector as of the start is the cached entry when no datom of (E, A) was drawn after the start, O(1). Otherwise it is resolved as of the start, O(n log n).
+- An element another transaction commits after the session opened is not in its view.
+- The session's vector is the cached entry when no datom arrived on (E, A) after the transaction's read point, O(1). Otherwise it is resolved through the session, O(n log n).
 - Dropping the tombstoned elements and appending the transaction's inserts is O(k + d).
 
 **Set() diff complexity**, after reading that vector:
@@ -717,8 +718,8 @@ This section provides formal complexity analysis for all CRDT operations.
 
 **The newest live element of a value** is what `Remove` and an ordered set's `Add` read.
 
-- When the transaction holds a live insert of v, its newest one is the answer, since every element the transaction writes outranks the start's: O(d).
-- Otherwise it is the first insert on v's EAVT run that neither a tombstone in the start's view nor one of the transaction's own names. The run is read newest first and passes over datoms drawn after the start: O(d + n_v).
+- When the transaction holds a live insert of v, its newest one is the answer, since every element the transaction writes outranks every element its session holds: O(d).
+- Otherwise it is the first insert on v's EAVT run in the session that neither a tombstone in the session nor one of the transaction's own names. The run is read newest first: O(d + n_v).
 - A tombstone carries the value of the element it names and is written after that element's insert, so the run reads it before the insert.
 
 ### Vector + UniqueElements (OrderedSet)
@@ -748,7 +749,7 @@ This section provides formal complexity analysis for all CRDT operations.
 | Operation | Time | Notes |
 |-----------|------|-------|
 | Cache lookup | O(1) | Hash trie by (E, A) |
-| Freshness check | O(1) | Compare the entry's version to the read point |
+| Freshness check | O(1) | Compare the slot's version, at least every arrival on the key, to the read point |
 | Invalidation | O(1) | Raise the slot's version to the arrival, clear the entry |
 | Full rebuild (One) | O(1) | Single index seek |
 | Full rebuild (Many) | O(n) | Add-wins resolution |
@@ -782,7 +783,7 @@ This section provides formal complexity analysis for all CRDT operations.
 
 - A vector's `Add` writes without reading, in O(1).
 - A vector's `Remove`, and an ordered set's `Add`, read the datoms of one value, in O(d + n_v).
-- A vector's `Set` reads the vector the transaction holds, in O(d + k) from a fresh cache entry and O(n log n + d) when it resolves the vector as of the transaction's start.
+- A vector's `Set` reads the vector the transaction holds, in O(d + k) from a fresh cache entry and O(n log n + d) when it resolves the vector through its read session.
 - Read performance depends on cache hit rate. For read-heavy workloads, use `d.WarmCache()` at startup.
 
 ---

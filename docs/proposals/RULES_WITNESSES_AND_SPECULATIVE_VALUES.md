@@ -245,7 +245,7 @@ Resolution across the two is index ordering plus filtering, as `CRDT_STREAMING_R
 
 `With` composes: `d.With(a).With(b)` reads `b` over `a` over `d`. It works on every backend. On the memory-tree store the same value is also reachable as a fork with the transaction applied. The two agree on every query, which the differential test asserts.
 
-`History` runs on a `With` value as on a branch. It answers the base's history plus the overlay's datoms, unresolved, each carrying its operation. A branch's `History` shows what it inherited plus its own writes (`BRANCHING_AND_SNAPSHOTS.md` §12.1), and a `With` value agrees with its fork on every query. `With` on a `History` handle is refused, and the refusal names `d.With(tx).History()`. A transaction's `Set` diffs against the state the transaction holds, resolved as of its start (`Transaction.Set`, `datalog/storage/database.go`), and a History handle resolves no state. An `AsOf` base resolves, so `With` over it stands.
+`History` runs on a `With` value as on a branch. It answers the base's history plus the overlay's datoms, unresolved, each carrying its operation. A branch's `History` shows what it inherited plus its own writes (`BRANCHING_AND_SNAPSHOTS.md` §12.1), and a `With` value agrees with its fork on every query. `With` on a `History` handle is refused, and the refusal names `d.With(tx).History()`. A transaction's `Set` diffs against the state the transaction holds, the value its read session opened on with its own writes applied (`Transaction.Set`, `datalog/storage/database.go`), and a History handle resolves no state. An `AsOf` base resolves, so `With` over it stands.
 
 ### 3.2 Fork
 

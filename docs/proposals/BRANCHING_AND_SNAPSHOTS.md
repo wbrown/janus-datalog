@@ -288,12 +288,14 @@ Entity IDs are content-addressed: `NewIdentity(s) = sha1(s)`. If applications na
 
 ### 8.1 What exists today
 
-The EA `Cache` (`storage/cache.go`) maps `CacheKey{E, A}` → resolved view (`oneValue` / `manySet` / `vectorList`), with freshness tracked by a scalar high-water mark:
+The EA `Cache` (`storage/cache.go`) maps `CacheKey{E, A}` → a slot holding the resolved view (`oneValue` / `manySet` / `vectorList`) and the key's version, a scalar high-water mark:
 
 ```go
-type CacheEntry struct { version ElementID; ... }      // max ElementID when computed
-// fresh iff entry.version == maxVersions[key]          // O(1), no storage seek
+type cacheSlot struct { entry *CacheEntry; version ElementID } // version: at least every arrival on the key
+// serves a reader iff !readPoint.Less(slot.version)            // O(1), no storage seek
 ```
+
+A commit records an arrival on each key it touches, an ElementID drawn from the database's clock once its datoms are readable. A reader takes its read point from the clock before its session opens.
 
 Snapshot scoping is at the `*Cache`-instance level, not in the key (comment in `cache.go`): the Database's latest cache and each `AsOf` handle's private cache are separate `Cache` instances, so `(E,A)` never collides across snapshots and the key needs no snapshot dimension. History mode doesn't cache. Unique attributes use conservative attribute-wide invalidation (D3): a write to a unique `(A,·)` invalidates all cached `(E,A)` for that `A`.
 
@@ -327,7 +329,7 @@ This is the SHARED_ARENA overlay pattern applied to the cache, symmetric with th
 
 ### 8.4 Generalizing the freshness stamp from scalar to frontier
 
-Today: fresh iff `entry.version == maxVersions[key]` (scalar equality). Generalize: an entry computed under frontier `F` is reusable under read-frontier `F'` iff `F` and `F'` admit the same newest datom(s) for that `(E,A)`. Because an `(E,A)` group's datoms come from very few ReplicaIDs (usually one or two), the validity check is tiny:
+Today: an entry serves a reader iff no arrival on its key lies above the reader's read point (one scalar comparison). Generalize: an entry computed under frontier `F` is reusable under read-frontier `F'` iff `F` and `F'` admit the same newest datom(s) for that `(E,A)`. Because an `(E,A)` group's datoms come from very few ReplicaIDs (usually one or two), the validity check is tiny:
 
 ```
 entry.basis : map[ReplicaID]uint64    // per-replica max Lamport AMONG THIS (E,A)'s datoms ≤ F
@@ -335,7 +337,7 @@ reusable under F' iff  ∀ r ∈ entry.basis:  F'[r] == entry.basis[r]
                        AND  F' reveals no (E,A) datom from a replica not in entry.basis
 ```
 
-The "no new replica reveals a datom" half is the version-vector analogue of the current `maxVersions` high-water check; the existing `attrVersions` (per-attribute high-water) generalizes the same way for the unique-attribute / A-bound path. The `ATEV` index already gives O(1) attribute high-water; a per-`(E,A)`-per-replica high-water is the granular form.
+The "no new replica reveals a datom" half is the version-vector analogue of the current per-key arrival check. A per-attribute high-water, which the `ATEV` index gives in O(1), would generalize the same way for the unique-attribute / A-bound path. A per-`(E,A)`-per-replica high-water is the granular form.
 
 > Open sub-question (§9): the exact validity stamp can be as cheap as "the single winning datom's `(ReplicaID, Lamport)`" for cardinality-one (reusable iff that datom is still the highest visible one under `F'` and `F'` reveals nothing newer for the group). Many/Vector need the per-replica set. Pick the minimal stamp per cardinality.
 
@@ -675,7 +677,7 @@ The three flavors differ in what (if anything) they destroy:
 
 ### 10.9 Caching keyed by `(arena, ceiling)` — refining §9.5
 
-A cache entry's validity scope is exactly an `(arena, ceiling)` pair — which is the shape of the existing per-`AsOf`-handle cache (`storage/cache.go`: a separate `Cache` instance per snapshot). An ancestor view `(A_i, F_i)` is the resolution of `A_i`'s `(E,A)` groups restricted to `Tx ≤ F_i` (a frozen prefix of an append-only arena), so it is immutable and shared by every session that forked from `A_i` at the same point `F_i`. The hot shared-world base is therefore resolved and cached once and reused by all sessions forked at that point; each session keeps only a thin cache over its own arena's divergence, plus the merged result. Two sessions that forked from the world at different times get different `(root, F)` views, correctly distinct, each itself immutable and cacheable (the AsOf cache machinery already in place, now keyed by fork point). The freshness machinery (`maxVersions`/`attrVersions`) need only track the leaf arena, the one the session is actively writing; ancestor views never invalidate.
+A cache entry's validity scope is exactly an `(arena, ceiling)` pair — which is the shape of the existing per-`AsOf`-handle cache (`storage/cache.go`: a separate `Cache` instance per snapshot). An ancestor view `(A_i, F_i)` is the resolution of `A_i`'s `(E,A)` groups restricted to `Tx ≤ F_i` (a frozen prefix of an append-only arena), so it is immutable and shared by every session that forked from `A_i` at the same point `F_i`. The hot shared-world base is therefore resolved and cached once and reused by all sessions forked at that point; each session keeps only a thin cache over its own arena's divergence, plus the merged result. Two sessions that forked from the world at different times get different `(root, F)` views, correctly distinct, each itself immutable and cacheable (the AsOf cache machinery already in place, now keyed by fork point). The freshness machinery need only track the leaf arena, the one the session is actively writing; ancestor views never invalidate.
 
 ### 10.10 Arena-aware unique resolution
 
@@ -1038,7 +1040,7 @@ func (d *Database) TruncateTo(name string) error
 **Rollback safety under concurrency.** The single-threaded mechanics above are not safe against concurrent readers and writers. `TruncateTo` is a destructive control-plane operation and must be made safe explicitly. There are two hazards, of different severity:
 
 - **Clock collision, which is corruption.** `clock.Restore(markerMax)` rewinds the Lamport counter while `TruncateAfter` deletes `Tx > markerMax`. If a writer is mid-commit with Lamports already assigned above `markerMax`, either its datoms are deleted out from under a commit the caller was told succeeded, or after the restore the next writer is handed a Lamport the concurrent writer already used, an identical `(Lamport, ReplicaID)`, which is duplicate-key corruption of the CRDT order, not merely a stale read. This is the hazard that forces serialization against writers.
-- **Cache incoherence on a rewind.** Storage reads are already safe: BadgerDB MVCC gives every iterator a consistent snapshot, so a reader overlapping the delete sees its own pre- or post-delete snapshot. The cache is the gap. It holds resolved CRDT views keyed by `(E, A)`, and a rewind makes any entry over a deleted datom stale. The freshness counter compounds it. `UpdateMaxVersion` only ever raises the per-`(E,A)` high-water (cache.go), because a forward commit only ever advances it. A rewind lowers the true high-water, which the freshness path cannot represent. Left alone, a rebuilt lower-version entry compares unequal to the stranded high recorded max forever, so it never cache-hits again: a silent permanent slowdown for every rewound key, on top of the staleness.
+- **Cache incoherence on a rewind.** Storage reads are already safe: BadgerDB MVCC gives every iterator a consistent snapshot, so a reader overlapping the delete sees its own pre- or post-delete snapshot. The cache is the gap. It holds resolved CRDT views keyed by `(E, A)`, and a rewind makes any entry over a deleted datom stale. A removal is not an arrival: `UpdateMaxVersion` records only a commit's datoms (cache.go), so no version records the rewind. Left alone, a resolution that read the removed datoms before the rewind could be stored for its key after it, and served.
 
 So reads need no lock for storage correctness. Only the clock and the cache do. That shapes the design.
 
@@ -1051,7 +1053,7 @@ So reads need no lock for storage correctness. Only the clock and the cache do. 
 
 Dropping rather than blocking-then-applying is what makes the result deterministic. A blocked-then-resumed write would land at `markerMax+1` after the restore and survive, so a write that merely raced the rollback would leak onto the rewound timeline, and the post-rollback state would be "the snapshot plus whatever happened to race", not the snapshot. Dropping also keeps any writer from hanging for the rollback's duration. The drop is a retryable sentinel error, never a silent no-op: the caller learns its write did not land and can retry after the rollback or abandon it. Silent write loss is the failure that stays invisible until it has corrupted downstream state.
 
-**The cache half is the existing in-flight pattern.** No new "uncached window" mechanism is needed. `Commit` already implements it (cache.go `BeginInFlight`, `storeIfNotInFlight`, `Invalidate`). Before its storage mutation it stores an in-flight sentinel for each touched `(E, A)`. While the sentinel is present `GetOrResolve` resolves straight from storage without caching and writers refuse to cache, so those keys are uncached for the duration. After the mutation `Invalidate` drops the sentinels and reads rebuild fresh. The rollback reuses this verbatim, with one extension. `Invalidate` deliberately keeps `maxVersions`, since a forward commit just advanced it and the next read should see the entry as current. A rewind must instead drop `maxVersions` for the touched keys and `attrVersions` for the touched attributes, so the monotonic high-water above is cleared rather than stranded over the rebuilt value. That is the one new cache method, `InvalidateRewind(touched)`: drop entries and `maxVersions` per key, and `attrVersions` per touched attribute.
+**The cache half is the existing in-flight pattern.** No new "uncached window" mechanism is needed. `Commit` already implements it (cache.go `BeginInFlight`, `storeIfNotInFlight`, `Invalidate`). Before its storage mutation it stores an in-flight sentinel for each touched `(E, A)`. While the sentinel is present `GetOrResolve` resolves straight from storage without caching and writers refuse to cache, so those keys are uncached for the duration. After the mutation `Invalidate` drops the sentinels and reads rebuild fresh. The rollback reuses this verbatim, with one extension. `Invalidate` leaves each slot's version where it stands, since a forward commit's arrival is already recorded there. A rewind records no arrival, so it must instead keep a resolution that read the removed datoms from being stored. That is the one new cache method, `InvalidateRewind(touched)`: it raises the cache's floor above every read point taken so far, then drops the touched keys' slots. A key with no slot reads the floor, so such a resolution meets a version above its read point and is not stored.
 
 **Choreography.** `TruncateTo` holds a dedicated `rollbackMu` for its whole duration, which serializes rollback against rollback. Inside it:
 

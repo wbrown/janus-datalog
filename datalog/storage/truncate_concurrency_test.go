@@ -21,10 +21,9 @@ func cacheKeyFor(e datalog.Identity, a datalog.Keyword) CacheKey {
 	return CacheKey{E: sd.E, A: sd.A}
 }
 
-// TestTruncateToInvalidatesCache verifies the rewind drops the cached view AND resets the
-// monotonic freshness tracking for a rewound (E, A) — not just the entry. If maxVersions
-// were left stranded at the pre-rollback high-water, the rebuilt lower-version entry would
-// never compare fresh again.
+// TestTruncateToInvalidatesCache verifies the rewind drops a rewound (E, A)'s slot, not just
+// its entry. With the slot gone the key reads the cache's floor, which the rewind raised, so
+// a resolution that read the removed datoms is not stored for it.
 func TestTruncateToInvalidatesCache(t *testing.T) {
 	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {

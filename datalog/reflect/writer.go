@@ -49,8 +49,8 @@ type TransactionUpdater interface {
 
 // EntityLookup answers an entity's attributes in the view a writer compares a
 // struct against. Update writes only what the struct changes in that view.
-// storage.Transaction answers its own view: the datoms as of its start with
-// its own writes applied.
+// storage.Transaction answers its own view: the value its read session opened
+// on, with its own writes applied.
 type EntityLookup interface {
 	// LookupAttribute returns an attribute's value for an entity in the view.
 	// Returns (nil, false, nil) when absent.

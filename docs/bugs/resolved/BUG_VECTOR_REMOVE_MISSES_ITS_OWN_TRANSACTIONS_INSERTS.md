@@ -243,25 +243,26 @@ following b.
 
 ## The fix
 
-- A transaction writes against a vector as it stood when the transaction
-  began, with its own writes applied. `NewTransaction` records its start,
-  and its writers read the store as of it.
-- Every element a transaction writes is drawn after it began, so it lands
-  after its anchor's whole subtree, and everything after that subtree is
-  already withdrawn in its view. So the vector it holds for (E, A) is the
-  vector as of its start, less the elements its own withdrawals name,
-  followed by its own inserts in the order it wrote them, less those its
-  withdrawals name. `Set` diffs against it.
+- A transaction writes against the vector its read session opened on, with
+  its own writes applied. `NewTransaction` takes its read point and then
+  opens the session, and its writers read through the session until
+  `Commit` or `Rollback` closes it.
+- Every datom in the session was readable before it opened, so it was
+  drawn before every element the transaction writes. Each element the
+  transaction writes then lands after its anchor's whole subtree, and
+  everything after that subtree is already withdrawn in its view. So the
+  vector it holds for (E, A) is the session's vector, less the elements its
+  own withdrawals name, followed by its own inserts in the order it wrote
+  them, less those its withdrawals name. `Set` diffs against it.
 - `Remove` withdraws the live element of its value with the highest
   ElementID among the elements the transaction holds. Its own newest live
-  element of the value, when it has one, outranks every element of the
-  start. Otherwise the value's run on EAVT as of the start decides it,
-  since a withdrawal carries the value of the element it names. An ordered
-  set's `Add` writes nothing when a live element holds its value.
-- An element another transaction draws after a transaction began is not in
-  its view, so the merge keeps both writers' elements, as two replicas'
-  writes are kept. One it drew before is in the view, whenever it is
-  committed.
+  element of the value, when it has one, outranks every element its session
+  holds. Otherwise the value's run on EAVT in the session decides it, since
+  a withdrawal carries the value of the element it names. An ordered set's
+  `Add` writes nothing when a live element holds its value.
+- An element another transaction commits after a transaction's session
+  opened is not in its view, so the merge keeps both writers' elements, as
+  two replicas' writes are kept.
 - `loadRGAElements`, `ResolveRGAFromDatoms` and `CRDTResolvingIterator`
   gather a vector's elements from its datoms by one rule,
   `vectorElements.gather`. An insert gives its element's value and the
@@ -269,8 +270,10 @@ following b.
   two is read first.
 - `GetVectorLength`, `GetVectorNth` and `WarmCache` resolve through the
   handle's own matcher, `d.Matcher()`. An as-of handle then resolves as of
-  its target, and a history handle reads past the cache, as
-  `LookupAttribute` does.
+  its target. A history handle shares the database's cache, which holds the
+  latest resolutions, so on it they read and fill that cache and answer the
+  latest vector, the one the handle's `LookupAttribute` resolves from
+  storage.
 - `matchVectorWithBindings` and `vectorScanAllEntitiesIterator.Next` bind an
   emptied vector as `matchCardinalityVectorAsRelation` does, and skip only a
   vector no write reached. The three subtests of `TestVectorLiteralMatch`
@@ -303,9 +306,10 @@ following b.
   a `Set`, and a `SaveStruct`, of `[x y]` by a transaction that added `y`
   before another transaction added `x` and committed. On the unmodified
   writers every reader answers `[y x y]` there, where the vector is
-  `[x x y]`: the transaction that sets `[x y]` began before the other drew
-  `x`. Its other cases write a `Remove`, a `Set` and an ordered set's `Add`
-  by a transaction that began before another drew the value they touch.
+  `[x x y]`: the transaction that sets `[x y]` opened before the other
+  committed `x`. Its other cases write a `Remove`, a `Set` and an ordered
+  set's `Add` by a transaction that opened before another committed the
+  value they touch.
 
 ## Related
 

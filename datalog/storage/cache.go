@@ -131,7 +131,8 @@ func (e *CacheEntry) VectorIndex() []datalog.ElementID {
 // A view as of a target keeps its resolutions in a cache of its own (ForView),
 // freed with the view. That cache records no arrival: it reads the database
 // cache's record of each key, and serves an entry while no arrival on the key,
-// and no drop of its slot, lies above the read point its resolution began at.
+// and no drop of its slot, lies above the read point its resolution began at
+// or above the reader's.
 type Cache struct {
 	// Per-(E,A) combined state: the resolved view and its max-version
 	// high-water mark live in one slot, so the hot path — load, check
@@ -347,8 +348,8 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry, readPoint da
 // getOrResolveForView is GetOrResolve in a view's cache. Every entry the view
 // holds is a resolution as of its target, so an entry under the reader's rule
 // serves while the version the database's cache records for its key lies at
-// or below the entry's fence. A commit that owns the key there sends the
-// reader to storage, uncached.
+// or below the entry's fence and at or below the reader's read point. A commit
+// that owns the key there sends the reader to storage, uncached.
 func (c *Cache) getOrResolveForView(key CacheKey, card datalog.Keyword, resolver CacheResolver, readPoint datalog.ElementID, handler annotations.Handler, report *scanReport) (*CacheEntry, error) {
 	arrival, ok := c.arrivals.slots.Load(key)
 	if ok && arrival.entry != nil && arrival.entry.inFlight {
@@ -372,7 +373,7 @@ func (c *Cache) getOrResolveForView(key CacheKey, card datalog.Keyword, resolver
 		if handler != nil {
 			annotateRebuild(handler, key, "uniqueness", slot)
 		}
-	case !slot.entry.fence.Less(recorded):
+	case !slot.entry.fence.Less(recorded) && !readPoint.Less(recorded):
 		return slot.entry, nil
 	default:
 		if handler != nil {
@@ -402,10 +403,10 @@ func (c *Cache) getOrResolveForView(key CacheKey, card datalog.Keyword, resolver
 //
 // readPoint is the read point the caller took before it read: before its
 // session opened, or now for a reader of the latest store. An entry serves the
-// caller when every datom it holds is at or below the read point, which makes
-// it the view as of the read point. Otherwise the caller resolves through its
-// resolver, and the cache stores that resolution only when no datom arrived on
-// the key after the read point.
+// caller when no datom arrived on its key after the read point, which makes it
+// the value the caller's session holds. Otherwise the caller resolves through
+// its resolver, and the cache stores that resolution only when no datom
+// arrived on the key after the read point.
 //
 // An arrival clears its key's entry, and a resolution is stored only when it
 // read every arrival, so an entry present and not in flight holds every datom
@@ -443,8 +444,9 @@ func (c *Cache) GetOrResolve(key CacheKey, card datalog.Keyword, resolver CacheR
 		}
 
 		// The entry serves iff it was resolved under the rule this reader
-		// resolves under, cardinality and uniqueness, and every datom it
-		// holds lies at or below the reader's read point.
+		// resolves under, cardinality and uniqueness, and no datom arrived on
+		// its key after the reader's read point. The slot's version is at
+		// least every arrival on the key and the entry's own version.
 		switch {
 		case slot.entry.cardinality != card:
 			// Resolved under another declaration of the attribute: a set's
@@ -462,7 +464,7 @@ func (c *Cache) GetOrResolve(key CacheKey, card datalog.Keyword, resolver CacheR
 			if handler != nil {
 				annotateRebuild(handler, key, "uniqueness", slot)
 			}
-		case !readPoint.Less(slot.entry.version):
+		case !readPoint.Less(slot.version):
 			// Fresh - cache hit. No index was read to answer this call, so
 			// the report accrues nothing.
 			return slot.entry, nil

@@ -49,8 +49,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 			require.True(t, ok, "matcher should be a *PatternMatcher")
 			require.NotNil(t, bm.cache, "matcher should have cache set")
 
-			// Clear the cache entries (but keep the maxVersions tracking)
-			// This simulates a scenario where we need to verify cache population
+			// Clear the cache, so the lookup below resolves the entry and stores it
 			db.Cache().Clear()
 
 			// First lookup should populate the cache

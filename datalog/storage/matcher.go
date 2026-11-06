@@ -131,7 +131,7 @@ func NewPatternMatcherWithOptions(store Store, opts executor.ExecutorOptions) *P
 // performs through the session, so the whole query observes one snapshot.
 // readPoint is the read point the caller took before it opened the session:
 // cache reads bound themselves to it (see cacheBound), so the shared EA cache
-// serves this matcher only entries whose datoms lie at or below it, and
+// serves this matcher only entries on whose key nothing arrived after it, and
 // stores its resolutions only when nothing arrived after it. The caller owns
 // the session's lifecycle; the matcher only reads through it.
 func (m *PatternMatcher) AttachReadSession(session ReadSession, readPoint datalog.ElementID) {

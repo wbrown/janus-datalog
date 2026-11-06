@@ -642,7 +642,8 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	return int64(len(entry.VectorList())), nil
 }
 
-// NewTransaction starts a new write transaction.
+// NewTransaction starts a new write transaction. It opens a read session,
+// which holds the value the transaction's view reads until Commit or Rollback.
 //
 // Panics if called on a read-only temporal handle (AsOf/History). Temporal
 // views share the parent's store and have no write-side state; use the
@@ -651,6 +652,16 @@ func (d *Database) NewTransaction() *Transaction {
 	if d.mode != latestMode {
 		panic("NewTransaction called on a read-only temporal database handle (AsOf/History); use the parent handle for writes")
 	}
+	// The read point is taken before the session opens, as a query's is
+	// (sessionMatcher), so every arrival at or below it is in the session. A
+	// failed open is answered by every read of the transaction's view.
+	readPoint := d.clock.ReadPoint()
+	session, err := d.store.NewReadSession()
+	var sessionErr error
+	if err != nil {
+		sessionErr = fmt.Errorf("open the transaction's read session: %w", err)
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -663,7 +674,9 @@ func (d *Database) NewTransaction() *Transaction {
 		doomed:            d.rollbackInProgress,
 		schema:            installed.effective,
 		admission:         installed.admission,
-		start:             d.clock.ReadPoint(),
+		readPoint:         readPoint,
+		session:           session,
+		sessionErr:        sessionErr,
 	}
 
 	// A transaction born during a rollback is dropped (its writes return
@@ -1814,12 +1827,21 @@ type Transaction struct {
 	// from the same installed value as schema: the engine's words over the
 	// stored definitions, with no inferred definition among them.
 	admission schema.SchemaProvider
-	// start is when the transaction opened, as the greatest ElementID at the
-	// clock's Lamport time then: every datom drawn by that time is at or
-	// before it, and every datom the transaction draws is after it. The
-	// vector writers read the store as of start, so every element they find
-	// precedes every element the transaction writes.
-	start datalog.ElementID
+	// readPoint is the greatest ElementID at the clock's Lamport time just
+	// before session opened: every datom drawn by then is at or before it,
+	// and every datom the transaction draws is after it. The cache serves a
+	// read of the view an entry only when no datom arrived on its key after
+	// it (Cache.GetOrResolve).
+	readPoint datalog.ElementID
+	// session is the read session the transaction opened with: its view is
+	// the value session holds, with its own writes applied. Every datom
+	// session holds was readable before the transaction drew an ElementID, so
+	// every element the writers find in it precedes every element the
+	// transaction writes. Commit and Rollback close it.
+	session ReadSession
+	// sessionErr is what every read of the view answers once session is nil:
+	// the failure opening it, or errReadSessionClosed once it is closed.
+	sessionErr error
 }
 
 // SetTime sets a custom transaction time for this transaction
@@ -2227,7 +2249,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 		// The diff reads the set this transaction holds (heldSet), so a
 		// withdrawal names only a member its view holds, and an add another
-		// writer drew after the start stands.
+		// writer commits after its read session opened stands.
 		effectiveSet, err := t.heldSet(e, a)
 		if err != nil {
 			return err
@@ -2372,18 +2394,19 @@ func appendVectorInserts(datoms []datalog.Datom, e datalog.Identity, a datalog.K
 	return datoms, after
 }
 
-// startMatcher answers a matcher of the view as of the transaction's start,
-// under the schema the transaction writes under.
-func (t *Transaction) startMatcher() *PatternMatcher {
+// startMatcher answers a matcher of the value the transaction opened on, read
+// through session, under the schema the transaction writes under.
+func (t *Transaction) startMatcher(session ReadSession) *PatternMatcher {
 	matcher := NewPatternMatcher(t.db.store)
 	matcher.SetSchema(t.schema)
-	return matcher.AsOf(t.start)
+	matcher.AttachReadSession(session, t.readPoint)
+	return matcher
 }
 
-// startEntry answers e's a as of the transaction's start, resolved by
-// atStart, startMatcher's matcher. It is the cached entry when no datom of
-// (e, a) was drawn after the start. A nil entry is an attribute the start
-// holds no datom of.
+// startEntry answers e's a in the value the transaction opened on, resolved
+// by atStart, startMatcher's matcher. It is the cached entry when no datom
+// arrived on (e, a) after the transaction's read point. A nil entry is an
+// attribute that value holds no datom of.
 func (t *Transaction) startEntry(atStart *PatternMatcher, e datalog.Identity, a datalog.Keyword) (*CacheEntry, error) {
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
@@ -2393,12 +2416,12 @@ func (t *Transaction) startEntry(atStart *PatternMatcher, e datalog.Identity, a 
 	var entry *CacheEntry
 	var err error
 	if t.db.cache != nil {
-		entry, err = t.db.cache.GetOrResolve(key, card, atStart, t.start, t.db.plannerOptions.Handler, DiscardIntake)
+		entry, err = t.db.cache.GetOrResolve(key, card, atStart, t.readPoint, t.db.plannerOptions.Handler, DiscardIntake)
 	} else {
 		entry, err = ResolveEntry(key, card, atStart, DiscardIntake)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("resolve %s as of the transaction's start: %w", a.String(), err)
+		return nil, fmt.Errorf("resolve %s in the value the transaction opened on: %w", a.String(), err)
 	}
 	return entry, nil
 }
@@ -2407,7 +2430,10 @@ func (t *Transaction) startEntry(atStart *PatternMatcher, e datalog.Identity, a 
 // values in order with their ElementIDs (heldElements over its own datoms).
 // The caller holds t.mu.
 func (t *Transaction) effectiveVector(e datalog.Identity, a datalog.Keyword) ([]any, []datalog.ElementID, error) {
-	entry, err := t.startEntry(t.startMatcher(), e, a)
+	if t.sessionErr != nil {
+		return nil, nil, t.sessionErr
+	}
+	entry, err := t.startEntry(t.startMatcher(t.session), e, a)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2416,16 +2442,16 @@ func (t *Transaction) effectiveVector(e datalog.Identity, a datalog.Keyword) ([]
 }
 
 // heldElements answers e's vector at a, its values in order with their
-// ElementIDs: entry's vector, the start's, less the elements the tombstones
-// among pending name, followed by pending's inserts in the order written less
-// those its tombstones name. pending holds a transaction's own datoms, so that
-// is the resolution of the datoms it holds, the start's and its own. Every
-// element the transaction writes is drawn after its start, so it lands after
-// its anchor's whole subtree, and everything after that subtree in its view is
-// already withdrawn: its anchor is HEAD for the first Add, the element the
-// last Add or Set ended on, or a Set's prefix end, after which that Set
-// withdrew the rest. written is whether entry or pending holds any datom of
-// (e, a), an emptied vector's included.
+// ElementIDs: entry's vector, the read session's, less the elements the
+// tombstones among pending name, followed by pending's inserts in the order
+// written less those its tombstones name. pending holds a transaction's own
+// datoms, so that is the resolution of the datoms it holds, the session's and
+// its own. Every element the transaction writes is drawn after every element
+// in its session, so it lands after its anchor's whole subtree, and everything
+// after that subtree in its view is already withdrawn: its anchor is HEAD for
+// the first Add, the element the last Add or Set ended on, or a Set's prefix
+// end, after which that Set withdrew the rest. written is whether entry or
+// pending holds any datom of (e, a), an emptied vector's included.
 func heldElements(entry *CacheEntry, pending []datalog.Datom, e datalog.Identity, a datalog.Keyword) (values []any, ids []datalog.ElementID, written bool) {
 	written = entry != nil
 	tombstoned := make(map[datalog.ElementID]bool)
@@ -2456,32 +2482,41 @@ func heldElements(entry *CacheEntry, pending []datalog.Datom, e datalog.Identity
 }
 
 // pendingOf answers a copy of the transaction's own datoms of attribute a, in
-// the order it drew their ElementIDs. It holds t.mu only while it copies them,
-// since the transaction's other methods append to t.datoms under it.
-func (t *Transaction) pendingOf(a datalog.Keyword) []datalog.Datom {
+// the order it drew their ElementIDs, and the session its view reads. It holds
+// t.mu only while it copies them, since the transaction's other methods append
+// to t.datoms under it, and Commit and Rollback close the session under it. A
+// closed transaction, or one whose session is nil, answers an error.
+func (t *Transaction) pendingOf(a datalog.Keyword) ([]datalog.Datom, ReadSession, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.closed {
+		return nil, nil, fmt.Errorf("transaction is closed")
+	}
+	if t.sessionErr != nil {
+		return nil, nil, t.sessionErr
+	}
 	var pending []datalog.Datom
 	for i := range t.datoms {
 		if t.datoms[i].A == a {
 			pending = append(pending, t.datoms[i])
 		}
 	}
-	return pending
+	return pending, t.session, nil
 }
 
 // heldOne answers e's value of the cardinality-one attribute a as this
-// transaction holds it: the resolution of the datoms of (e, a) as of its start
-// together with pending, its own datoms of a (pendingOf). found is false when
-// the attribute holds no value. Every datom the transaction writes is drawn
-// after its start and after the one before it, so under the plain rule its
-// last datom of (e, a) decides: its value for an assertion, and none for a
-// withdrawal. With none, the start decides. Under the unique rule the walk
-// reads e's datoms newest first, the transaction's and then the start's, and
-// its supersession check reads the other entities' claims to a value in
-// pending as well as the start's.
-func (t *Transaction) heldOne(e datalog.Identity, a datalog.Keyword, pending []datalog.Datom) (value any, found bool, err error) {
-	atStart := t.startMatcher()
+// transaction holds it: the resolution of the datoms of (e, a) in the value
+// it opened on, read through session, together with pending, its own datoms
+// of a (pendingOf). found is false when the attribute holds no value. Every
+// datom the transaction writes is drawn after every datom of that value and
+// after the one before it, so under the plain rule its last datom of (e, a)
+// decides: its value for an assertion, and none for a withdrawal. With none,
+// the value it opened on decides. Under the unique rule the walk reads e's
+// datoms newest first, the transaction's and then the value's, and its
+// supersession check reads the other entities' claims to a value in pending
+// as well as the value's.
+func (t *Transaction) heldOne(e datalog.Identity, a datalog.Keyword, pending []datalog.Datom, session ReadSession) (value any, found bool, err error) {
+	atStart := t.startMatcher(session)
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
 
@@ -2535,9 +2570,10 @@ func (t *Transaction) heldOne(e datalog.Identity, a datalog.Keyword, pending []d
 }
 
 // heldMembers answers e's members of the cardinality-many attribute a, keyed
-// by memberKey: entry's members, the start's, with the adds and withdrawals of
-// (e, a) among pending applied in order. pending holds the transaction's own
-// datoms, each drawn after the start and after the one before it.
+// by memberKey: entry's members, the read session's, with the adds and
+// withdrawals of (e, a) among pending applied in order. pending holds the
+// transaction's own datoms, each drawn after every datom in the session and
+// after the one before it.
 func heldMembers(entry *CacheEntry, pending []datalog.Datom, e datalog.Identity, a datalog.Keyword) map[string]any {
 	members := make(map[string]any)
 	if entry != nil {
@@ -2564,7 +2600,10 @@ func heldMembers(entry *CacheEntry, pending []datalog.Datom, e datalog.Identity,
 // transaction holds them (heldMembers over its own datoms). The caller holds
 // t.mu.
 func (t *Transaction) heldSet(e datalog.Identity, a datalog.Keyword) (map[string]any, error) {
-	entry, err := t.startEntry(t.startMatcher(), e, a)
+	if t.sessionErr != nil {
+		return nil, t.sessionErr
+	}
+	entry, err := t.startEntry(t.startMatcher(t.session), e, a)
 	if err != nil {
 		return nil, err
 	}
@@ -2573,12 +2612,12 @@ func (t *Transaction) heldSet(e datalog.Identity, a datalog.Keyword) (map[string
 
 // newestLiveElement answers the live element of e's vector at a that holds v
 // and has the highest ElementID among the elements this transaction holds: its
-// own, and the committed ones as of its start. Every element the transaction
-// writes is drawn after its start, so its own newest live element holding v,
-// when it has one, is the answer. Otherwise the value's own datoms as of the
-// start decide it: its inserts, and the tombstones naming them, since a
-// tombstone carries the value of the element it names. found is false when no
-// element holding v is live.
+// own, and those of the value it opened on. Every element the transaction
+// writes is drawn after every element of that value, so its own newest live
+// element holding v, when it has one, is the answer. Otherwise v's own datoms
+// in the session decide it: its inserts, and the tombstones naming them, since
+// a tombstone carries the value of the element it names. found is false when
+// no element holding v is live. The caller holds t.mu.
 func (t *Transaction) newestLiveElement(e datalog.Identity, a datalog.Keyword, v interface{}) (newest RGAElement, found bool, err error) {
 	pendingTombstoned := make(map[datalog.ElementID]bool)
 	for i := range t.datoms {
@@ -2594,11 +2633,14 @@ func (t *Transaction) newestLiveElement(e datalog.Identity, a datalog.Keyword, v
 		}
 	}
 
+	if t.sessionErr != nil {
+		return RGAElement{}, false, t.sessionErr
+	}
 	// EAVT orders Tx descending after V, so a tombstone of an element holding v
 	// is read before that element's insert, and the first insert no tombstone
 	// names, committed or the transaction's own, is the newest live element
-	// holding v. A datom drawn after the start is not in the transaction's view.
-	iter, err := OpenScan(t.db.store, DiscardIntake, ScanBound{Index: EAVT, Prefix: []datalog.Value{e, a, v}})
+	// holding v.
+	iter, err := OpenScan(t.session, DiscardIntake, ScanBound{Index: EAVT, Prefix: []datalog.Value{e, a, v}})
 	if err != nil {
 		return RGAElement{}, false, fmt.Errorf("scan the elements of %s holding a value: %w", a.String(), err)
 	}
@@ -2607,9 +2649,6 @@ func (t *Transaction) newestLiveElement(e datalog.Identity, a datalog.Keyword, v
 		var d *datalog.Datom
 		if d, err = iter.Datom(); err != nil {
 			break
-		}
-		if t.start.Less(d.Tx) {
-			continue
 		}
 		if d.Op == datalog.OpRGATombstone {
 			committedTombstoned[d.AfterRef] = true
@@ -2697,16 +2736,16 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 }
 
 // LookupAttribute answers e's value of a as this transaction holds it: the
-// resolution of the datoms of (e, a) as of its start together with its own
-// writes. It answers (value, true) when the attribute holds a value and
-// (nil, false) otherwise. A cardinality-one attribute, and one the schema
+// resolution of the datoms of (e, a) in the value it opened on together with
+// its own writes. It answers (value, true) when the attribute holds a value
+// and (nil, false) otherwise. A cardinality-one attribute, and one the schema
 // holds no definition of, answers its value. A cardinality-many attribute
 // answers its members as one value, in no fixed order. A cardinality-vector
 // attribute answers its vector, typed by the schema's value type, once the
 // view holds a datom of it, an emptied vector included. It holds t.mu only
-// while it copies the transaction's own datoms of a (pendingOf). The view as
-// of the start is fixed when the transaction opens, and it reads that view
-// without the lock.
+// while it copies the transaction's own datoms of a (pendingOf), and reads the
+// value it opened on through its read session without the lock. A closed
+// transaction answers an error.
 func (t *Transaction) LookupAttribute(e datalog.Identity, a datalog.Keyword) (interface{}, bool, error) {
 	card := schema.CardinalityOne
 	var valueType datalog.Keyword
@@ -2714,10 +2753,13 @@ func (t *Transaction) LookupAttribute(e datalog.Identity, a datalog.Keyword) (in
 		card = def.Cardinality
 		valueType = def.ValueType
 	}
-	pending := t.pendingOf(a)
+	pending, session, err := t.pendingOf(a)
+	if err != nil {
+		return nil, false, err
+	}
 	switch card {
 	case schema.CardinalityMany:
-		entry, err := t.startEntry(t.startMatcher(), e, a)
+		entry, err := t.startEntry(t.startMatcher(session), e, a)
 		if err != nil {
 			return nil, false, err
 		}
@@ -2731,7 +2773,7 @@ func (t *Transaction) LookupAttribute(e datalog.Identity, a datalog.Keyword) (in
 		}
 		return values, true, nil
 	case schema.CardinalityVector:
-		entry, err := t.startEntry(t.startMatcher(), e, a)
+		entry, err := t.startEntry(t.startMatcher(session), e, a)
 		if err != nil {
 			return nil, false, err
 		}
@@ -2741,7 +2783,7 @@ func (t *Transaction) LookupAttribute(e datalog.Identity, a datalog.Keyword) (in
 		}
 		return typedVector(values, valueType), true, nil
 	default:
-		return t.heldOne(e, a, pending)
+		return t.heldOne(e, a, pending, session)
 	}
 }
 
@@ -2750,16 +2792,19 @@ func (t *Transaction) LookupAttribute(e datalog.Identity, a datalog.Keyword) (in
 // members in no fixed order, a vector's elements in order, and any other
 // attribute's value alone. It answers no values when the attribute holds
 // none. Like LookupAttribute, it holds t.mu only while it copies the
-// transaction's own datoms of a.
+// transaction's own datoms of a, and a closed transaction answers an error.
 func (t *Transaction) LookupAllAttributes(e datalog.Identity, a datalog.Keyword) ([]interface{}, error) {
 	card := schema.CardinalityOne
 	if def := t.schema.GetAttribute(a); def != nil {
 		card = def.Cardinality
 	}
-	pending := t.pendingOf(a)
+	pending, session, err := t.pendingOf(a)
+	if err != nil {
+		return nil, err
+	}
 	switch card {
 	case schema.CardinalityMany:
-		entry, err := t.startEntry(t.startMatcher(), e, a)
+		entry, err := t.startEntry(t.startMatcher(session), e, a)
 		if err != nil {
 			return nil, err
 		}
@@ -2770,14 +2815,14 @@ func (t *Transaction) LookupAllAttributes(e datalog.Identity, a datalog.Keyword)
 		}
 		return values, nil
 	case schema.CardinalityVector:
-		entry, err := t.startEntry(t.startMatcher(), e, a)
+		entry, err := t.startEntry(t.startMatcher(session), e, a)
 		if err != nil {
 			return nil, err
 		}
 		values, _, _ := heldElements(entry, pending, e, a)
 		return values, nil
 	default:
-		value, found, err := t.heldOne(e, a, pending)
+		value, found, err := t.heldOne(e, a, pending, session)
 		if err != nil || !found {
 			return nil, err
 		}
@@ -2787,8 +2832,8 @@ func (t *Transaction) LookupAllAttributes(e datalog.Identity, a datalog.Keyword)
 
 // SaveStruct persists a struct to the database with upsert semantics. Each
 // field is compared against this transaction's view of the entity
-// (LookupAttribute, LookupAllAttributes): the datoms as of its start with its
-// own writes applied. It writes only what the struct changes in that view, so
+// (LookupAttribute, LookupAllAttributes): the value it opened on with its own
+// writes applied. It writes only what the struct changes in that view, so
 // a field the struct holds unchanged leaves another writer's change to it
 // standing.
 // If the struct has an ID field (tagged with `datalog:"-,id"`) and it's empty, a new ID is generated.
@@ -2891,6 +2936,16 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		return datalog.ElementID{}, commitErr
 	}
 
+	// The transaction's datoms are fixed, so its view is read no more. Its
+	// read session closes before the storage commit, so a failed close
+	// commits nothing.
+	if closeErr := t.closeSession(); closeErr != nil {
+		if rollbackErr := stx.Rollback(); rollbackErr != nil {
+			closeErr = errjoin.Join(closeErr, rollbackErr)
+		}
+		return datalog.ElementID{}, closeErr
+	}
+
 	// Mark every (E, A) this commit touches as in-flight BEFORE the storage
 	// commit. While a key's sentinel stands, readers resolve it straight from
 	// storage. Cleared by the Invalidate below (success) or on commit failure.
@@ -2965,7 +3020,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		// Invalidate cache entries for all touched (E, A) pairs. This also
 		// deletes the in-flight sentinels set by BeginInFlight above, ending the
 		// in-flight window: subsequent reads rebuild from storage at the new
-		// value, and maxVersions was just bumped to match.
+		// value, and each key's slot version already records the arrival.
 		t.db.cache.Invalidate(touched)
 
 		// Conservative unique-attr invalidation: for each unique attribute
@@ -3026,6 +3081,7 @@ func (t *Transaction) Rollback() error {
 	t.closed = true
 	t.datoms = nil
 	t.retracts = nil
+	closeErr := t.closeSession()
 
 	t.db.mu.Lock()
 	delete(t.db.activeTx, t)
@@ -3034,6 +3090,21 @@ func (t *Transaction) Rollback() error {
 	}
 	t.db.mu.Unlock()
 
+	return closeErr
+}
+
+// closeSession closes the transaction's read session once, and every later
+// read of its view answers errReadSessionClosed. A transaction whose session
+// failed to open has none to close. The caller holds t.mu.
+func (t *Transaction) closeSession() error {
+	if t.session == nil {
+		return nil
+	}
+	session := t.session
+	t.session, t.sessionErr = nil, errReadSessionClosed
+	if err := session.Close(); err != nil {
+		return fmt.Errorf("close the transaction's read session: %w", err)
+	}
 	return nil
 }
 

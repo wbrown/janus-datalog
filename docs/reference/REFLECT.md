@@ -175,7 +175,7 @@ The omission is for scalar fields only. On a many or vector attribute the proper
 
 `SaveStruct` provides upsert semantics - calling it on an entity that already exists will update it.
 
-Each field is compared against the transaction's view of the entity: the datoms as of the transaction's start, with the transaction's own writes applied. `SaveStruct` writes only what the struct changes in that view. A field the struct holds unchanged is not written, so another transaction's change to that field stands.
+Each field is compared against the transaction's view of the entity: the value its read session opened on, with the transaction's own writes applied. `SaveStruct` writes only what the struct changes in that view. A field the struct holds unchanged is not written, so another transaction's change to that field stands.
 
 ### Cardinality-One Fields
 

@@ -96,8 +96,8 @@ func viewSave(record interface{}) func(tx *Transaction) error {
 
 // TestTransactionWritersCompareAgainstTheTransactionsView pins that a
 // transaction's SaveStruct, and Set on a set, compare and diff against the
-// transaction's view of (E, A): the resolution of its datoms as of the
-// transaction's start with the transaction's own writes applied. A value the
+// transaction's view of (E, A): the value its read session opened on, with the
+// transaction's own writes applied. A value the
 // view holds unchanged is not asserted, so a concurrent writer's change to it
 // stands. A value the view lacks is asserted, whatever the store's latest
 // resolution holds. A withdrawal names only what the view holds.

@@ -746,9 +746,9 @@ func concurrentCommit(tx int, want ...string) concurrentStep {
 // vector a case states is the one its datoms resolve to: an element follows
 // the element its insert names, the elements following one element are in
 // ElementID order, and a withdrawn element keeps its place. A transaction
-// writes against the vector as it stood when the transaction began, with its
-// own writes applied, so an element another transaction commits after that is
-// one it never saw.
+// writes against the vector its read session opened on, with its own writes
+// applied, so an element another transaction commits after that is one it
+// never saw.
 func TestVectorConcurrentTransactionsReadBackAlikeThroughEveryReader(t *testing.T) {
 	s := vectorWritesSchema(t)
 	cases := []struct {

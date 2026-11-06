@@ -168,13 +168,13 @@ func (it *commitOnCloseIterator) Close() error {
 }
 
 // TestCacheEntryIsTheResolutionOfEveryDatomOfItsKey pins the cache's contract
-// with the datoms of a key: an entry served to a reader holds only datoms at
-// or below the reader's bound, which makes it the view as of that bound, and
-// the cache stores an entry as fresh only when it is the resolution of every
-// datom of its key the store holds. A case either brings in a datom that
-// arrives below the highest ElementID among the target's datoms, which changes
-// the resolution and leaves that ElementID where it was, or reads as of a
-// commit before the target's last.
+// with the datoms of a key: an entry serves a reader only when no datom
+// arrived on its key after the reader's read point, so a session is answered
+// the value it opened on, and the cache stores an entry as fresh only when it
+// is the resolution of every datom of its key the store holds. A case either
+// brings in a datom that arrives below the highest ElementID among the
+// target's datoms, which changes the resolution and leaves that ElementID
+// where it was, or reads as of a commit before the target's last.
 func TestCacheEntryIsTheResolutionOfEveryDatomOfItsKey(t *testing.T) {
 	s, err := schema.NewBuilder().
 		Attribute(":late/tags").Type(schema.TypeString).Many().Add().
@@ -187,7 +187,7 @@ func TestCacheEntryIsTheResolutionOfEveryDatomOfItsKey(t *testing.T) {
 		run  func(t *testing.T, d *Database, e datalog.Identity, target lateDatomTarget)
 	}{
 		{
-			name: "a session is served an entry holding a datom at or below its bound",
+			name: "a session is not served an entry holding a datom that arrived after it opened",
 			run: func(t *testing.T, d *Database, e datalog.Identity, target lateDatomTarget) {
 				early := addedBeneathACommit(t, d, e, target)
 				sessioned := openSessionMatcher(t, d)
@@ -196,8 +196,8 @@ func TestCacheEntryIsTheResolutionOfEveryDatomOfItsKey(t *testing.T) {
 
 				require.Equal(t, []string{"y", "z"}, lookedUpValues(t, d.Matcher().(*PatternMatcher), e, target),
 					"the latest view resolves every datom of the key")
-				require.Equal(t, []string{"y", "z"}, lookedUpValues(t, sessioned, e, target),
-					"y was drawn below the session's bound, so the entry holding it is the view as of that bound")
+				require.Equal(t, []string{"z"}, lookedUpValues(t, sessioned, e, target),
+					"y arrived after the session opened, so the session's value lacks it")
 			},
 		},
 		{
