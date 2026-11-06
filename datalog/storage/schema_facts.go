@@ -7,6 +7,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
@@ -306,11 +307,11 @@ func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 		}
 		for _, w := range words {
 			if err := tx.Add(declaration, w.word, w.value); err != nil {
-				return errors.Join(fmt.Errorf("declaring %s: %s: %w", def.Ident, w.word, err), tx.Rollback())
+				return errjoin.Join(fmt.Errorf("declaring %s: %s: %w", def.Ident, w.word, err), tx.Rollback())
 			}
 		}
 		if err := tx.Add(attributeEntity(def.Ident), attributeDeclarationAttr, declaration); err != nil {
-			return errors.Join(fmt.Errorf("declaring %s: %s: %w", def.Ident, attributeDeclarationAttr, err), tx.Rollback())
+			return errjoin.Join(fmt.Errorf("declaring %s: %s: %w", def.Ident, attributeDeclarationAttr, err), tx.Rollback())
 		}
 	}
 	if _, err := tx.Commit(); err != nil {

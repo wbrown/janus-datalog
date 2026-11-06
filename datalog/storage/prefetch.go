@@ -2,12 +2,12 @@ package storage
 
 import (
 	"bytes"
-	"errors"
 	"sort"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // PrefetchEntities loads all attributes for a set of entities into the EA cache
@@ -95,7 +95,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 			d, err := iter.Datom()
 			if err != nil {
 				if closeErr := iter.Close(); closeErr != nil {
-					err = errors.Join(err, closeErr)
+					err = errjoin.Join(err, closeErr)
 				}
 				return err
 			}
@@ -123,7 +123,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		}
 		if err := iter.Error(); err != nil {
 			if closeErr := iter.Close(); closeErr != nil {
-				err = errors.Join(err, closeErr)
+				err = errjoin.Join(err, closeErr)
 			}
 			return err
 		}

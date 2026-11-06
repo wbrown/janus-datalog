@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/btree"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 var errBadgerEmulatorStoreClosed = errors.New("badger emulator store closed")
@@ -72,7 +73,7 @@ func (s *BadgerEmulatorStore) Assert(datoms []datalog.Datom) error {
 	}
 	if err := tx.Assert(datoms); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			err = errors.Join(err, rollbackErr)
+			err = errjoin.Join(err, rollbackErr)
 		}
 		return err
 	}
@@ -104,7 +105,7 @@ func (s *BadgerEmulatorStore) Retract(datoms []datalog.Datom) error {
 	}
 	if err := tx.Retract(datoms); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			err = errors.Join(err, rollbackErr)
+			err = errjoin.Join(err, rollbackErr)
 		}
 		return err
 	}
@@ -247,7 +248,7 @@ func (s *BadgerEmulatorStore) DatomsAfter(eid datalog.ElementID) (after []datalo
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			after, afterErr = nil, errors.Join(afterErr, closeErr)
+			after, afterErr = nil, errjoin.Join(afterErr, closeErr)
 		}
 	}()
 	var datoms []datalog.Datom

@@ -262,8 +262,9 @@ following b.
   its view, so the merge keeps both writers' elements, as two replicas'
   writes are kept. One it drew before is in the view, whenever it is
   committed.
-- `loadRGAElements` and `ResolveRGAFromDatoms` gather a vector's elements
-  from its datoms by one rule. An insert gives its element's value and the
+- `loadRGAElements`, `ResolveRGAFromDatoms` and `CRDTResolvingIterator`
+  gather a vector's elements from its datoms by one rule,
+  `vectorElements.gather`. An insert gives its element's value and the
   element it follows, and a withdrawal marks the element, whichever of the
   two is read first.
 - `GetVectorLength`, `GetVectorNth` and `WarmCache` resolve through the

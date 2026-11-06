@@ -1,10 +1,9 @@
 package storage
 
 import (
-	"errors"
-
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // walkEntryDecision is the outcome of applying the CRDT-unique walk
@@ -165,9 +164,7 @@ func (m *PatternMatcher) walkUniqueEntityValue(state *uniqueWalkState, eBytes En
 		return nil, datalog.ElementID{}, datalog.ElementID{}, false, false, err
 	}
 	defer func() {
-		if closeErr := iter.Close(); err == nil {
-			err = closeErr
-		}
+		err = errjoin.Join(err, iter.Close())
 	}()
 
 	for iter.Next() {
@@ -215,9 +212,7 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 		return datalog.ElementID{}, err
 	}
 	defer func() {
-		if closeErr := iter.Close(); resolveErr == nil {
-			resolveErr = closeErr
-		}
+		resolveErr = errjoin.Join(resolveErr, iter.Close())
 	}()
 
 	for iter.Next() {
@@ -321,13 +316,7 @@ func (m *PatternMatcher) resolveAVLWW(a Attribute, v any, report *scanReport) (d
 	if scanErr == nil {
 		scanErr = iter.Error()
 	}
-	if closeErr := iter.Close(); closeErr != nil {
-		if scanErr == nil {
-			scanErr = closeErr
-		} else {
-			scanErr = errors.Join(scanErr, closeErr)
-		}
-	}
+	scanErr = errjoin.Join(scanErr, iter.Close())
 	if scanErr != nil {
 		return nil, datalog.ElementID{}, scanErr
 	}

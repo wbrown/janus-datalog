@@ -3,6 +3,7 @@ package executor
 import (
 	"fmt"
 
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -96,9 +97,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 	// the Close error.
 	iter := rel.Iterator()
 	defer func() {
-		if closeErr := iter.Close(); closeErr != nil && resultErr == nil {
-			resultErr = closeErr
-		}
+		resultErr = errjoin.Join(resultErr, iter.Close())
 	}()
 
 	for iter.Next() {
@@ -193,9 +192,7 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, r
 	seen := NewTupleSet(symIndices, allPositions(len(symIndices)), 0)
 	iter := rel.Iterator()
 	defer func() {
-		if closeErr := iter.Close(); resultErr == nil {
-			resultErr = closeErr
-		}
+		resultErr = errjoin.Join(resultErr, iter.Close())
 	}()
 	for iter.Next() {
 		tuple := iter.Tuple()
@@ -270,10 +267,7 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 			allTuples = append(allTuples, projected)
 		}
 		// Capture a branch's deferred scan error so the union doesn't drop it.
-		branchErr := iter.Error()
-		if closeErr := iter.Close(); branchErr == nil {
-			branchErr = closeErr
-		}
+		branchErr := errjoin.Join(iter.Error(), iter.Close())
 		if branchErr != nil && firstErr == nil {
 			firstErr = branchErr
 		}

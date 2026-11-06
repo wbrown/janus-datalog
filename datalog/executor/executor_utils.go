@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -210,10 +211,7 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) (Relation, error
 				tuples = append(tuples, tuple)
 			}
 		}
-		err = it.Error()
-		if closeErr := it.Close(); err == nil {
-			err = closeErr
-		}
+		err = errjoin.Join(it.Error(), it.Close())
 		if err != nil {
 			return nil, fmt.Errorf("reading the relation given for %s: %w", entry, err)
 		}

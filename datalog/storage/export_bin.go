@@ -12,6 +12,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/codec"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 const (
@@ -90,7 +91,7 @@ func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) (
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			exportErr = errors.Join(exportErr, fmt.Errorf("binary export scan close: %w", closeErr))
+			exportErr = errjoin.Join(exportErr, fmt.Errorf("binary export scan close: %w", closeErr))
 		}
 	}()
 

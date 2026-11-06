@@ -3,6 +3,7 @@ package executor
 import (
 	"sync"
 
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -57,10 +58,7 @@ func (r *LimitRelation) take() *MaterializedRelation {
 				for it.Next() {
 				}
 			}
-			err = it.Error()
-			if cerr := it.Close(); err == nil {
-				err = cerr
-			}
+			err = errjoin.Join(it.Error(), it.Close())
 		}
 
 		r.taken = newMaterializedRelationFromSet(

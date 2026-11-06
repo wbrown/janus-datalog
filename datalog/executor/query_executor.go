@@ -1,11 +1,11 @@
 package executor
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -489,9 +489,7 @@ func existenceVerdict(groups, held []Relation, unit *MaterializedRelation) ([]Re
 		var err error
 		for _, it := range evaluating[from:] {
 			completeCache(it)
-			if closeErr := it.Close(); err == nil {
-				err = closeErr
-			}
+			err = errjoin.Join(err, it.Close())
 		}
 		return err
 	}
@@ -504,10 +502,7 @@ func existenceVerdict(groups, held []Relation, unit *MaterializedRelation) ([]Re
 				evaluating = append(evaluating, it)
 				continue
 			}
-			err = it.Error()
-			if closeErr := it.Close(); err == nil {
-				err = closeErr
-			}
+			err = errjoin.Join(it.Error(), it.Close())
 		} else {
 			has, err = hasTuple(group)
 		}
@@ -525,22 +520,13 @@ func existenceVerdict(groups, held []Relation, unit *MaterializedRelation) ([]Re
 		}
 	}
 	if failure != nil {
-		if closeErr := closeEvaluating(0); closeErr != nil {
-			failure = errors.Join(failure, closeErr)
-		}
+		failure = errjoin.Join(failure, closeEvaluating(0))
 	} else {
 		for i, it := range evaluating {
 			for it.Next() {
 			}
-			err := it.Error()
-			if closeErr := it.Close(); err == nil {
-				err = closeErr
-			}
-			if err != nil {
-				if closeErr := closeEvaluating(i + 1); closeErr != nil {
-					err = errors.Join(err, closeErr)
-				}
-				failure = err
+			if err := errjoin.Join(it.Error(), it.Close()); err != nil {
+				failure = errjoin.Join(err, closeEvaluating(i+1))
 				break
 			}
 		}
@@ -884,9 +870,7 @@ fetchLoop:
 	if iterErr == nil {
 		iterErr = it.Error()
 	}
-	if closeErr := it.Close(); iterErr == nil {
-		iterErr = closeErr
-	}
+	iterErr = errjoin.Join(iterErr, it.Close())
 	if iterErr != nil {
 		return nil, 0, iterErr
 	}
@@ -1375,13 +1359,8 @@ func applyFindPulls(
 		copy(newTuple, tuple)
 		resultTuples = append(resultTuples, newTuple)
 	}
-	iterErr := it.Error()
-	closeErr := it.Close()
-	if iterErr != nil {
-		return nil, iterErr
-	}
-	if closeErr != nil {
-		return nil, closeErr
+	if err := errjoin.Join(it.Error(), it.Close()); err != nil {
+		return nil, err
 	}
 
 	for _, request := range requests {
@@ -1488,11 +1467,7 @@ func extractEntityIDs(rel Relation, syms []query.Symbol) ([]datalog.Identity, er
 			}
 		}
 	}
-	scanErr := it.Error()
-	if closeErr := it.Close(); scanErr == nil {
-		scanErr = closeErr
-	}
-	if scanErr != nil {
+	if scanErr := errjoin.Join(it.Error(), it.Close()); scanErr != nil {
 		return nil, scanErr
 	}
 

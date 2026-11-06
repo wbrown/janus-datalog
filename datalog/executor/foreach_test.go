@@ -82,3 +82,22 @@ func TestForEach_FnErrorBeatsCloseError(t *testing.T) {
 	err := ForEach(rel, func(Tuple) error { return fnErr })
 	require.ErrorIs(t, err, fnErr, "fn error must not be masked by Close()")
 }
+
+func TestForEach_IterationErrorAndCloseErrorBothReachTheCaller(t *testing.T) {
+	closeErr := errors.New("close boom")
+	rel := newFailingRelation(0, Tuple{int64(1)})
+	rel.closeErr = closeErr
+	err := ForEach(rel, func(Tuple) error { return nil })
+	require.ErrorIs(t, err, errInjectedIterator, "the iteration error reaches the caller")
+	require.ErrorIs(t, err, closeErr, "the close error reaches the caller beside the iteration error")
+}
+
+func TestForEach_FnErrorAndCloseErrorBothReachTheCaller(t *testing.T) {
+	fnErr := errors.New("fn boom")
+	closeErr := errors.New("close boom")
+	rel := newFailingRelation(100, Tuple{int64(1)}, Tuple{int64(2)})
+	rel.closeErr = closeErr
+	err := ForEach(rel, func(Tuple) error { return fnErr })
+	require.ErrorIs(t, err, fnErr, "the fn error reaches the caller")
+	require.ErrorIs(t, err, closeErr, "the close error reaches the caller beside the fn error")
+}

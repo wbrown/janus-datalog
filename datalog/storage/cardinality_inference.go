@@ -1,10 +1,10 @@
 package storage
 
 import (
-	"errors"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -82,7 +82,7 @@ func inferSchemaFromStore(store Store) (inferred *schema.Schema, inferErr error)
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			inferred, inferErr = nil, errors.Join(inferErr, closeErr)
+			inferred, inferErr = nil, errjoin.Join(inferErr, closeErr)
 		}
 	}()
 

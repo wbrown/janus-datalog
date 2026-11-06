@@ -3,6 +3,7 @@ package storage
 import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -68,15 +69,10 @@ func (it *nonReusingIterator) Next() bool {
 		// internal failure (CRDT unique-walk sub-scan, KeyOnly key decode)
 		// that surfaces only through Error() after Next() returns false —
 		// capture it before discarding so the query boundary sees it instead
-		// of clean exhaustion. A Close() error is a weaker signal and must not
-		// mask the iteration error. Abort on any error rather than scanning
-		// further bindings.
-		if scanErr := it.currentScan.Error(); scanErr != nil && it.err == nil {
-			it.err = scanErr
-		}
-		if closeErr := it.currentScan.Close(); closeErr != nil && it.err == nil {
-			it.err = closeErr
-		}
+		// of clean exhaustion, together with the Close() error. Abort on any
+		// error rather than scanning further bindings.
+		it.err = errjoin.Join(it.err, it.currentScan.Error())
+		it.err = errjoin.Join(it.err, it.currentScan.Close())
 		it.currentScan = nil
 		if it.err != nil {
 			return false

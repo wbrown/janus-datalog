@@ -5,6 +5,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -257,9 +258,7 @@ func (pe *PullExecutor) lookupAttributeViaPattern(
 	// Get the first result
 	it := rel.Iterator()
 	defer func() {
-		if closeErr := it.Close(); resultErr == nil {
-			resultErr = closeErr
-		}
+		resultErr = errjoin.Join(resultErr, it.Close())
 	}()
 
 	if it.Next() {
@@ -318,7 +317,6 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 	// Collect datoms
 	var datoms []datalog.Datom
 	it := rel.Iterator()
-	defer it.Close()
 
 	for it.Next() {
 		tuple := it.Tuple()
@@ -342,7 +340,7 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 		}
 	}
 	// A failed scan is not a complete attribute set — surface it.
-	if err := it.Error(); err != nil {
+	if err := errjoin.Join(it.Error(), it.Close()); err != nil {
 		return nil, err
 	}
 
@@ -669,7 +667,6 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 	// Collect all values
 	var values []interface{}
 	it := rel.Iterator()
-	defer it.Close()
 
 	for it.Next() {
 		tuple := it.Tuple()
@@ -678,7 +675,7 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 		}
 	}
 	// A failed scan is not a complete value set — surface it.
-	if err := it.Error(); err != nil {
+	if err := errjoin.Join(it.Error(), it.Close()); err != nil {
 		return nil, err
 	}
 

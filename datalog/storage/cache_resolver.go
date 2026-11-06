@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -84,9 +85,7 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (
 		return nil, datalog.ElementID{}, false, err
 	}
 	defer func() {
-		if closeErr := iter.Close(); resolveErr == nil {
-			resolveErr = closeErr
-		}
+		resolveErr = errjoin.Join(resolveErr, iter.Close())
 	}()
 
 	for iter.Next() {

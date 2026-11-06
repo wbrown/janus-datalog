@@ -3,13 +3,13 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // TestDataConfig specifies what kind of test database to build
@@ -109,10 +109,10 @@ func BuildTestDatabase(config TestDataConfig) (*Database, error) {
 			if err := tx.Add(datom.E, datom.A, datom.V); err != nil {
 				err = fmt.Errorf("failed to add datom %d: %w", i, err)
 				if rollbackErr := tx.Rollback(); rollbackErr != nil {
-					err = errors.Join(err, rollbackErr)
+					err = errjoin.Join(err, rollbackErr)
 				}
 				if closeErr := db.Close(); closeErr != nil {
-					err = errors.Join(err, closeErr)
+					err = errjoin.Join(err, closeErr)
 				}
 				return nil, err
 			}
@@ -123,7 +123,7 @@ func BuildTestDatabase(config TestDataConfig) (*Database, error) {
 		if err != nil {
 			err = fmt.Errorf("failed to commit batch %d-%d: %w", batchStart, batchEnd, err)
 			if closeErr := db.Close(); closeErr != nil {
-				err = errors.Join(err, closeErr)
+				err = errjoin.Join(err, closeErr)
 			}
 			return nil, err
 		}

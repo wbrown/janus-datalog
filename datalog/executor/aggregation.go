@@ -8,6 +8,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -231,9 +232,7 @@ func executeSingleAggregation(rel Relation, layout aggregationLayout) (result Re
 	it := rel.Iterator()
 	var aggErr error
 	defer func() {
-		if closeErr := it.Close(); aggErr == nil {
-			aggErr = closeErr
-		}
+		aggErr = errjoin.Join(aggErr, it.Close())
 		if aggErr != nil && result != nil {
 			if materialized, ok := result.(*MaterializedRelation); ok && materialized.err == nil {
 				materialized.err = aggErr
@@ -382,9 +381,7 @@ func executeGroupedAggregation(rel Relation, layout aggregationLayout) (result R
 	it := rel.Iterator()
 	var aggregateErr error
 	defer func() {
-		if closeErr := it.Close(); aggregateErr == nil {
-			aggregateErr = closeErr
-		}
+		aggregateErr = errjoin.Join(aggregateErr, it.Close())
 		if aggregateErr != nil && result != nil {
 			if materialized, ok := result.(*MaterializedRelation); ok && materialized.err == nil {
 				materialized.err = aggregateErr
@@ -903,9 +900,7 @@ func (r *StreamingAggregateRelation) fold() (result *MaterializedRelation) {
 	it := r.source.Iterator()
 	var aggregateErr error
 	defer func() {
-		if closeErr := it.Close(); aggregateErr == nil {
-			aggregateErr = closeErr
-		}
+		aggregateErr = errjoin.Join(aggregateErr, it.Close())
 		if aggregateErr != nil && result != nil && result.err == nil {
 			result.err = aggregateErr
 		}

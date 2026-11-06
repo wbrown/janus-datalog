@@ -5,6 +5,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -106,17 +107,11 @@ func (it *sessionBoundIterator) Next() bool {
 func (it *sessionBoundIterator) Close() error {
 	err := it.Iterator.Close()
 	it.release(err)
-	if err == nil {
-		err = it.releaseErr
-	}
-	return err
+	return errjoin.Join(err, it.releaseErr)
 }
 
 func (it *sessionBoundIterator) Error() error {
-	if err := it.Iterator.Error(); err != nil {
-		return err
-	}
-	return it.releaseErr
+	return errjoin.Join(it.Iterator.Error(), it.releaseErr)
 }
 
 func (it *sessionBoundIterator) RequiresCopy() bool { return it.Iterator.RequiresCopy() }

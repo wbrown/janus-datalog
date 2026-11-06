@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -130,11 +131,7 @@ func hasTuple(rel Relation) (bool, error) {
 	it := rel.Iterator()
 	has := it.Next()
 	completeCache(it)
-	err := it.Error()
-	if closeErr := it.Close(); err == nil {
-		err = closeErr
-	}
-	return has, err
+	return has, errjoin.Join(it.Error(), it.Close())
 }
 
 // executeOrJoinClause runs the union over its subject, the groups holding a

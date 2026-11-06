@@ -2,13 +2,13 @@ package storage
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -117,22 +117,21 @@ func (d *Database) ResolveAllAttributesMany(
 			readPoint,
 		)
 		if err != nil {
-			if closeErr := iterator.Close(); closeErr != nil {
-				err = errors.Join(err, closeErr)
-			}
-			return nil, err
+			return nil, errjoin.Join(err, iterator.Close())
 		}
 		served += len(entityResult)
 		resolved[entity.Hash()] = entityResult
 		uniqueLookups = append(uniqueLookups, pending...)
 	}
-	iterErr := iterator.Error()
-	closeErr := iterator.Close()
-	if iterErr != nil {
-		return nil, fmt.Errorf("batch wildcard scan failed: %w", iterErr)
+	var scanErr error
+	if iterErr := iterator.Error(); iterErr != nil {
+		scanErr = fmt.Errorf("batch wildcard scan failed: %w", iterErr)
 	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("batch wildcard scan close failed: %w", closeErr)
+	if closeErr := iterator.Close(); closeErr != nil {
+		scanErr = errjoin.Join(scanErr, fmt.Errorf("batch wildcard scan close failed: %w", closeErr))
+	}
+	if scanErr != nil {
+		return nil, scanErr
 	}
 
 	for _, lookup := range uniqueLookups {

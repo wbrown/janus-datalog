@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // Snapshots are recorded as ordinary entities in a reserved :db.snapshot/* namespace,
@@ -87,7 +88,7 @@ func (d *Database) Snapshot(name string) (snap SnapshotInfo, snapErr error) {
 	defer func() {
 		if !committed {
 			if rollbackErr := tx.Rollback(); rollbackErr != nil {
-				snapErr = errors.Join(snapErr, rollbackErr)
+				snapErr = errjoin.Join(snapErr, rollbackErr)
 			}
 		}
 	}()
@@ -191,7 +192,7 @@ func (d *Database) DeleteSnapshot(name string) (deleteErr error) {
 	defer func() {
 		if !committed {
 			if rollbackErr := tx.Rollback(); rollbackErr != nil {
-				deleteErr = errors.Join(deleteErr, rollbackErr)
+				deleteErr = errjoin.Join(deleteErr, rollbackErr)
 			}
 		}
 	}()

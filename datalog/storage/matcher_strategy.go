@@ -1,10 +1,9 @@
 package storage
 
 import (
-	"errors"
-
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -298,7 +297,7 @@ func chooseBestMultiPositionStrategy(
 	}
 	scanErr := it.Error()
 	if closeErr := it.Close(); closeErr != nil {
-		return ReuseStrategy{Type: NoReuse}, bindingRel, errors.Join(scanErr, closeErr)
+		return ReuseStrategy{Type: NoReuse}, bindingRel, errjoin.Join(scanErr, closeErr)
 	}
 	if scanErr != nil {
 		// The counts are truncated garbage — take the no-preference strategy.

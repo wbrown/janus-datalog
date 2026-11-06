@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // A branch is a writable database that starts from one of its parent's
@@ -74,7 +75,7 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 	committed := false
 	defer func() {
 		if !committed {
-			err = errors.Join(err, tx.Rollback())
+			err = errjoin.Join(err, tx.Rollback())
 		}
 	}()
 	if tx.doomed {
@@ -119,19 +120,19 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 		DisableCache:            d.cache == nil,
 	})
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), forked.Close())
+		return nil, errjoin.Join(fmt.Errorf("Fork %q: %w", name, err), forked.Close())
 	}
 	// The branch holds the parent's facts as of the snapshot. The parent's
 	// declared definitions are asserted into it, so a declaration the parent
 	// made after the snapshot reaches the branch and its dump describes itself.
 	if err := branch.adoptDeclarations(declared); err != nil {
-		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), branch.Close())
+		return nil, errjoin.Join(fmt.Errorf("Fork %q: %w", name, err), branch.Close())
 	}
 	if err := addBranchRecord(tx, name, snapshot.At, ceiling, branch.ReplicaID()); err != nil {
-		return nil, errors.Join(err, branch.Close())
+		return nil, errjoin.Join(err, branch.Close())
 	}
 	if _, err := tx.Commit(); err != nil {
-		return nil, errors.Join(fmt.Errorf("Fork %q: commit: %w", name, err), branch.Close())
+		return nil, errjoin.Join(fmt.Errorf("Fork %q: commit: %w", name, err), branch.Close())
 	}
 	committed = true
 	return branch, nil

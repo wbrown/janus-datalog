@@ -1,13 +1,13 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -104,7 +104,7 @@ func (d *Database) queryUnderPlannerOptions(
 	exec, err := d.executorOverSources(q, opts.sources, matcher, planOpts)
 	if err != nil {
 		if closeErr := session.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			err = errjoin.Join(err, closeErr)
 		}
 		return refused(q.String(), err)
 	}
@@ -112,7 +112,7 @@ func (d *Database) queryUnderPlannerOptions(
 	inputRelations, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		if closeErr := session.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			err = errjoin.Join(err, closeErr)
 		}
 		return refused(q.String(), err)
 	}
@@ -121,7 +121,7 @@ func (d *Database) queryUnderPlannerOptions(
 	if err != nil {
 		err = fmt.Errorf("query execution failed: %w", err)
 		if closeErr := session.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			err = errjoin.Join(err, closeErr)
 		}
 		return nil, nil, err
 	}
@@ -155,7 +155,7 @@ func (d *Database) Assert(datoms []datalog.Datom) error {
 	for _, dat := range datoms {
 		if err := tx.Add(dat.E, dat.A, dat.V); err != nil {
 			if rollbackErr := tx.Rollback(); rollbackErr != nil {
-				err = errors.Join(err, rollbackErr)
+				err = errjoin.Join(err, rollbackErr)
 			}
 			return err
 		}

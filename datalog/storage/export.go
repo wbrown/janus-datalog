@@ -2,7 +2,6 @@ package storage
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -13,6 +12,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/edn"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // ExportOptions configures EDN export behavior.
@@ -54,7 +54,7 @@ func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, 
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			exportErr = errors.Join(exportErr, fmt.Errorf("failed to close database scan: %w", closeErr))
+			exportErr = errjoin.Join(exportErr, fmt.Errorf("failed to close database scan: %w", closeErr))
 		}
 	}()
 

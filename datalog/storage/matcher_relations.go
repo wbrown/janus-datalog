@@ -1,13 +1,13 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -876,12 +876,8 @@ func (it *validatingVBoundIterator) Next() bool {
 			// so Error() surfaces failures (e.g., unique-walk sub-scan
 			// errors that caused the scan to abort rather than return
 			// a datom).
-			if srcErr := it.crdtIter.Error(); srcErr != nil && it.err == nil {
-				it.err = srcErr
-			}
-			if closeErr := it.crdtIter.Close(); closeErr != nil && it.err == nil {
-				it.err = closeErr
-			}
+			it.err = errjoin.Join(it.err, it.crdtIter.Error())
+			it.err = errjoin.Join(it.err, it.crdtIter.Close())
 			it.crdtIter = nil
 		}
 
@@ -1080,7 +1076,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	}
 	defer func() {
 		if closeErr := rawIter.Close(); closeErr != nil {
-			valid, validateErr = false, errors.Join(validateErr, closeErr)
+			valid, validateErr = false, errjoin.Join(validateErr, closeErr)
 		}
 	}()
 
@@ -1273,16 +1269,14 @@ func (it *validatingVBoundIterator) RequiresCopy() bool { return false }
 func (it *validatingVBoundIterator) Close() error {
 	var closeErr error
 	if it.crdtIter != nil {
-		closeErr = errors.Join(closeErr, it.crdtIter.Close())
+		closeErr = errjoin.Join(closeErr, it.crdtIter.Close())
 		it.crdtIter = nil
 	}
 	if it.vectorAnswers != nil {
-		closeErr = errors.Join(closeErr, it.vectorAnswers.Close())
+		closeErr = errjoin.Join(closeErr, it.vectorAnswers.Close())
 		it.vectorAnswers = nil
 	}
-	if closeErr != nil && it.err == nil {
-		it.err = closeErr
-	}
+	it.err = errjoin.Join(it.err, closeErr)
 
 	// Not gated on having opened a candidate scan: the unique short-circuit
 	// resolves its claimant through a walk and emits without opening one, so
@@ -1489,15 +1483,7 @@ func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations
 		if iter.Next() {
 			kw, found = iter.Tuple()[idx].(datalog.Keyword)
 		}
-		scanErr := iter.Error()
-		if closeErr := iter.Close(); closeErr != nil {
-			if scanErr == nil {
-				scanErr = closeErr
-			} else {
-				scanErr = errors.Join(scanErr, closeErr)
-			}
-		}
-		if scanErr != nil {
+		if scanErr := errjoin.Join(iter.Error(), iter.Close()); scanErr != nil {
 			return nil, false, scanErr
 		}
 		return kw, found, nil
@@ -1645,7 +1631,7 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 	iter := bindingRel.Iterator()
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			bindingMatch, fromCache, matchErr = nil, false, errors.Join(matchErr, closeErr)
+			bindingMatch, fromCache, matchErr = nil, false, errjoin.Join(matchErr, closeErr)
 		}
 	}()
 
@@ -2017,7 +2003,7 @@ func (m *PatternMatcher) matchVectorWithBindings(
 	it := bindingRel.Iterator()
 	defer func() {
 		if closeErr := it.Close(); closeErr != nil {
-			rel, matchErr = nil, errors.Join(matchErr, closeErr)
+			rel, matchErr = nil, errjoin.Join(matchErr, closeErr)
 		}
 	}()
 

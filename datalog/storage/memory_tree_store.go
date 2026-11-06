@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 var errMemoryTreeStoreClosed = errors.New("memory tree store is closed")
@@ -215,7 +216,7 @@ func matchingStoredDatoms(v *storeVersion, target *datalog.Datom) (stored []*dat
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			stored, matchErr = nil, errors.Join(matchErr, closeErr)
+			stored, matchErr = nil, errjoin.Join(matchErr, closeErr)
 		}
 	}()
 
@@ -273,7 +274,7 @@ func (s *MemoryTreeStore) DatomsAfter(eid datalog.ElementID) (after []datalog.Da
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			after, afterErr = nil, errors.Join(afterErr, closeErr)
+			after, afterErr = nil, errjoin.Join(afterErr, closeErr)
 		}
 	}()
 

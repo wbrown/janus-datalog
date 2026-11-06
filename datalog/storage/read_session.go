@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 var errReadSessionClosed = errors.New("read session closed")
@@ -47,7 +48,7 @@ func maxElementIDByScan(r StoreReader) (maxID datalog.ElementID, scanErr error) 
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			maxID, scanErr = datalog.ElementID{}, errors.Join(scanErr, closeErr)
+			maxID, scanErr = datalog.ElementID{}, errjoin.Join(scanErr, closeErr)
 		}
 	}()
 	if !iter.Next() {
@@ -65,7 +66,7 @@ func maxTxForEntityByScan(r StoreReader, e datalog.Identity) (maxTx datalog.Elem
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			maxTx, hasTx, scanErr = datalog.ElementID{}, false, errors.Join(scanErr, closeErr)
+			maxTx, hasTx, scanErr = datalog.ElementID{}, false, errjoin.Join(scanErr, closeErr)
 		}
 	}()
 	var maxID datalog.ElementID

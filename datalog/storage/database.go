@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -16,6 +15,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -296,7 +296,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	closeOwnedStore := func(err error) error {
 		if ownsStore {
 			if closeErr := store.Close(); closeErr != nil {
-				return errors.Join(err, closeErr)
+				return errjoin.Join(err, closeErr)
 			}
 		}
 		return err
@@ -500,7 +500,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			datom, err := iter.Datom()
 			if err != nil {
 				if closeErr := iter.Close(); closeErr != nil {
-					err = errors.Join(err, closeErr)
+					err = errjoin.Join(err, closeErr)
 				}
 				return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 			}
@@ -514,7 +514,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 				key := CacheKey{E: eBytes, A: aBytes}
 				if _, err := d.cache.GetOrResolve(key, card, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake); err != nil {
 					if closeErr := iter.Close(); closeErr != nil {
-						err = errors.Join(err, closeErr)
+						err = errjoin.Join(err, closeErr)
 					}
 					return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 				}
@@ -522,7 +522,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 		}
 		if err := iter.Error(); err != nil {
 			if closeErr := iter.Close(); closeErr != nil {
-				err = errors.Join(err, closeErr)
+				err = errjoin.Join(err, closeErr)
 			}
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
@@ -944,24 +944,17 @@ func (d *Database) Close() error {
 	d.mu.Unlock()
 
 	// Rollback any active transactions (without holding d.mu)
-	var rollbackErrs []error
+	var rollbackErr error
 	for _, tx := range txs {
-		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			rollbackErrs = append(rollbackErrs, rollbackErr)
-		}
+		rollbackErr = errjoin.Join(rollbackErr, tx.Rollback())
 	}
 
-	err := d.store.Close()
+	err := errjoin.Join(rollbackErr, d.store.Close())
 	if d.removePath != "" {
 		// After the store's Close, so its files are released first. A removal
 		// failure is the caller's to see: the scratch directory outliving the
 		// process is a leak, not a detail.
-		if removeErr := os.RemoveAll(d.removePath); err == nil {
-			err = removeErr
-		}
-	}
-	if len(rollbackErrs) > 0 {
-		err = errors.Join(append(rollbackErrs, err)...)
+		err = errjoin.Join(err, os.RemoveAll(d.removePath))
 	}
 	return err
 }
@@ -1474,9 +1467,7 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 	}
 	iter := rel.Iterator()
 	defer func() {
-		if cerr := iter.Close(); err == nil {
-			err = cerr
-		}
+		err = errjoin.Join(err, iter.Close())
 	}()
 	// Check if element type is a struct or scalar
 	// time.Time and Keyword are structs but treated as scalars
@@ -1569,7 +1560,7 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 	iter := rel.Iterator()
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			found, err = false, errors.Join(err, closeErr)
+			found, err = false, errjoin.Join(err, closeErr)
 		}
 	}()
 
@@ -2630,7 +2621,7 @@ func (t *Transaction) newestLiveElement(e datalog.Identity, a datalog.Keyword, v
 	if err == nil {
 		err = iter.Error()
 	}
-	if err = errors.Join(err, iter.Close()); err != nil {
+	if err = errjoin.Join(err, iter.Close()); err != nil {
 		return RGAElement{}, false, fmt.Errorf("scan the elements of %s holding a value: %w", a.String(), err)
 	}
 	return newest, found, nil
@@ -2895,7 +2886,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 
 	if commitErr != nil {
 		if rollbackErr := stx.Rollback(); rollbackErr != nil {
-			commitErr = errors.Join(commitErr, rollbackErr)
+			commitErr = errjoin.Join(commitErr, rollbackErr)
 		}
 		return datalog.ElementID{}, commitErr
 	}
@@ -3560,7 +3551,7 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 	iter := rel.Iterator()
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			value, err = nil, errors.Join(err, closeErr)
+			value, err = nil, errjoin.Join(err, closeErr)
 		}
 	}()
 
@@ -3707,7 +3698,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (resolved map[d
 		}
 		defer func() {
 			if closeErr := iter.Close(); closeErr != nil {
-				resolved, resolveErr = nil, errors.Join(resolveErr, fmt.Errorf("EAVT scan close failed: %w", closeErr))
+				resolved, resolveErr = nil, errjoin.Join(resolveErr, fmt.Errorf("EAVT scan close failed: %w", closeErr))
 			}
 		}()
 
@@ -3764,19 +3755,18 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (resolved map[d
 	}
 	result, pending, err := d.resolveWildcardEntity(matcher, iterator, entity, declared, readPoint)
 	if err != nil {
-		if closeErr := iterator.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-		return nil, err
+		return nil, errjoin.Join(err, iterator.Close())
 	}
 	served = len(result)
-	iterErr := iterator.Error()
-	closeErr := iterator.Close()
-	if iterErr != nil {
-		return nil, fmt.Errorf("EATV scan failed: %w", iterErr)
+	var scanErr error
+	if iterErr := iterator.Error(); iterErr != nil {
+		scanErr = fmt.Errorf("EATV scan failed: %w", iterErr)
 	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("EATV scan close failed: %w", closeErr)
+	if closeErr := iterator.Close(); closeErr != nil {
+		scanErr = errjoin.Join(scanErr, fmt.Errorf("EATV scan close failed: %w", closeErr))
+	}
+	if scanErr != nil {
+		return nil, scanErr
 	}
 	for _, lookup := range pending {
 		value, err := d.ResolveEntityAttributes(lookup.entity, []datalog.Keyword{lookup.attr})

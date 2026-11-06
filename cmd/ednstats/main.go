@@ -42,8 +42,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error opening file: %v\n", err)
 		os.Exit(1)
 	}
-	defer f.Close()
-
 	stats := newStats()
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer
@@ -73,6 +71,10 @@ func main() {
 
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "scanner error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := f.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "error closing file: %v\n", err)
 		os.Exit(1)
 	}
 

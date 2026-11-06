@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -9,6 +8,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -1037,25 +1037,14 @@ func (m *PatternMatcher) lookupAllAttributesFallback(
 	// Not deferred: the peek closes before the switch, whose LWW arm reopens the
 	// same run.
 	if !iter.Next() {
-		scanErr := iter.Error()
-		if closeErr := iter.Close(); closeErr != nil {
-			if scanErr == nil {
-				scanErr = closeErr
-			} else {
-				scanErr = errors.Join(scanErr, closeErr)
-			}
-		}
-		if scanErr != nil {
+		if scanErr := errjoin.Join(iter.Error(), iter.Close()); scanErr != nil {
 			return nil, fmt.Errorf("scanning AEVT for LookupAllAttributes: %w", scanErr)
 		}
 		return nil, nil
 	}
 	firstDatom, err := iter.Datom()
 	if err != nil {
-		if closeErr := iter.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-		return nil, fmt.Errorf("decoding first datom for LookupAllAttributes: %w", err)
+		return nil, fmt.Errorf("decoding first datom for LookupAllAttributes: %w", errjoin.Join(err, iter.Close()))
 	}
 	firstOp := firstDatom.Op
 	if err := iter.Close(); err != nil {
@@ -1107,7 +1096,7 @@ func (m *PatternMatcher) lookupAllAttributesFallback(
 		}
 		defer func() {
 			if closeErr := iter2.Close(); closeErr != nil {
-				values, err = nil, errors.Join(err, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", closeErr))
+				values, err = nil, errjoin.Join(err, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", closeErr))
 			}
 		}()
 

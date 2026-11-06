@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -506,9 +507,7 @@ func hashJoinWithSet(
 		// The build relation may share underlying iterators with the probe relation
 		// (e.g., OrFallbackRelation wraps a StreamingRelation that is also the probe).
 		// Close() signals the CachingIterator, unblocking probe's Size()/Iterator().
-		if closeErr := buildIt.Close(); buildErr == nil {
-			buildErr = closeErr
-		}
+		buildErr = errjoin.Join(buildErr, buildIt.Close())
 		if trackCopy {
 			buildEnd = time.Now()
 		}
@@ -654,10 +653,7 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		}
 		rightKeys.Add(tuple, hash)
 	}
-	rerr := rightIt.Error()
-	if cerr := rightIt.Close(); rerr == nil {
-		rerr = cerr
-	}
+	rerr := errjoin.Join(rightIt.Error(), rightIt.Close())
 	if rerr != nil {
 		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
 		res.err = rerr
@@ -678,10 +674,7 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 			}
 		}
 	}
-	lerr := leftIt.Error()
-	if cerr := leftIt.Close(); lerr == nil {
-		lerr = cerr
-	}
+	lerr := errjoin.Join(leftIt.Error(), leftIt.Close())
 
 	// A selection of a set is a set
 	// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T5).
@@ -742,10 +735,7 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		}
 		rightKeys.Add(tuple, hash)
 	}
-	rerr := rightIt.Error()
-	if cerr := rightIt.Close(); rerr == nil {
-		rerr = cerr
-	}
+	rerr := errjoin.Join(rightIt.Error(), rightIt.Close())
 	if rerr != nil {
 		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
 		res.err = rerr
@@ -766,10 +756,7 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 			}
 		}
 	}
-	lerr := leftIt.Error()
-	if cerr := leftIt.Close(); lerr == nil {
-		lerr = cerr
-	}
+	lerr := errjoin.Join(leftIt.Error(), leftIt.Close())
 
 	// A selection of a set is a set
 	// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T5).
@@ -795,7 +782,8 @@ func crossProduct(left, right Relation) Relation {
 
 	outputSyms := append(left.Symbols(), right.Symbols()...)
 	var results []Tuple
-	var scanErr error
+	// The first scan failure, and every close failure.
+	var iterErr, closeErr error
 
 	leftIt := left.Iterator()
 
@@ -810,23 +798,19 @@ func crossProduct(left, right Relation) Relation {
 			combined := append(append(Tuple{}, leftTuple...), rightTuple...)
 			results = append(results, combined)
 		}
-		if err := rightIt.Error(); err != nil && scanErr == nil {
-			scanErr = err
+		if err := rightIt.Error(); err != nil && iterErr == nil {
+			iterErr = err
 		}
-		if closeErr := rightIt.Close(); closeErr != nil && scanErr == nil {
-			scanErr = closeErr
-		}
+		closeErr = errjoin.Join(closeErr, rightIt.Close())
 	}
-	if err := leftIt.Error(); err != nil && scanErr == nil {
-		scanErr = err
+	if err := leftIt.Error(); err != nil && iterErr == nil {
+		iterErr = err
 	}
-	if closeErr := leftIt.Close(); closeErr != nil && scanErr == nil {
-		scanErr = closeErr
-	}
+	closeErr = errjoin.Join(closeErr, leftIt.Close())
 
 	// A failed scan is not an empty side — carry it as the result's
 	// deferred error.
 	result := NewMaterializedRelationWithOptions(outputSyms, results, opts)
-	result.err = scanErr
+	result.err = errjoin.Join(iterErr, closeErr)
 	return result
 }

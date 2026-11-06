@@ -71,9 +71,8 @@ One error channel, honored everywhere. No second, parallel channel. Two parts:
 // iterator failure — resolves the outcome. Returns:
 //   - fn's error if fn returned one (iteration stops),
 //   - else it.Error() if iteration aborted,
-//   - else any Close() error.
-// An iteration/fn error always takes precedence over a Close() error so a
-// cleanup failure can't mask the real cause.
+//   - joined with any Close() error.
+// A cleanup failure neither masks the real cause nor is lost.
 func ForEach(rel Relation, fn func(Tuple) error) error
 ```
 
@@ -81,7 +80,7 @@ Semantics, spelled out so the one implementation is unambiguous:
 
 - Drive `for it.Next()`, call `fn(it.Tuple())`. If `fn` returns an error, stop and return it, and still `Close()` the iterator.
 - After the loop, call `it.Error()`. Non-nil is returned.
-- `Close()` is deferred. Its error is returned only if no iteration or `fn` error already occurred. Close and Error are separate signals, and the iteration error is the more specific one and wins.
+- `Close()` is deferred. Its error is the result when no iteration or `fn` error occurred, and is joined with that error when one did.
 
 The boundaries route through it:
 

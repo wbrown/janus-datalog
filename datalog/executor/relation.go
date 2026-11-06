@@ -10,6 +10,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -30,10 +31,10 @@ func copyTuple(t Tuple) Tuple {
 // It checks RequiresCopy() to avoid unnecessary copying when the relation
 // guarantees stable tuple references (e.g., MaterializedRelation).
 // collectTuplesInto appends all tuples from rel into dest and returns any error
-// the source iterator deferred to Error() (per the Iterator contract), plus a
-// Close() error if iteration was otherwise clean. Callers that build a cached
-// relation from the result must carry this error onto that relation so the
-// failure isn't laundered by materialization.
+// the source iterator deferred to Error() (per the Iterator contract), joined
+// with any Close() error. Callers that build a cached relation from the result
+// must carry this error onto that relation so the failure isn't laundered by
+// materialization.
 func collectTuplesInto(dest *[]Tuple, rel Relation) error {
 	needsCopy := rel.RequiresCopy()
 	it := rel.Iterator()
@@ -44,31 +45,23 @@ func collectTuplesInto(dest *[]Tuple, rel Relation) error {
 		}
 		*dest = append(*dest, tuple)
 	}
-	err := it.Error()
-	if cerr := it.Close(); err == nil {
-		err = cerr
-	}
-	return err
+	return errjoin.Join(it.Error(), it.Close())
 }
 
 // ForEach drives rel's iterator per the documented Iterator contract: it yields
 // each tuple to fn, then resolves the outcome whether the loop ended by
-// exhaustion, an fn error, or an iterator failure. It returns, in priority
-// order: fn's error (iteration stops on the first), then it.Error() (iteration
-// aborted), then any Close() error. An iteration or fn error always wins over a
-// Close() error so a cleanup failure cannot mask the real cause.
+// exhaustion, an fn error, or an iterator failure. It returns fn's error
+// (iteration stops on the first), else it.Error() (iteration aborted), joined
+// with any Close() error, so a cleanup failure neither masks the cause nor is
+// lost.
 //
 // fn must copy the tuple if it retains it: streaming iterators may reuse the
 // tuple's backing memory across calls.
 func ForEach(rel Relation, fn func(Tuple) error) (err error) {
 	it := rel.Iterator()
-	// Close() is deferred (panic-safe) and is a separate signal: it only
-	// surfaces when nothing else failed, so a cleanup error can't mask the
-	// real iteration/fn error.
+	// Close() is deferred so that it runs when fn panics.
 	defer func() {
-		if cerr := it.Close(); err == nil {
-			err = cerr
-		}
+		err = errjoin.Join(err, it.Close())
 	}()
 	for it.Next() {
 		if e := fn(it.Tuple()); e != nil {
@@ -394,10 +387,7 @@ func (ci *CachingIterator) Close() error {
 		}
 		closeErr := ci.inner.Close()
 		ci.signalComplete()
-		if closeErr != nil {
-			return errors.Join(errIncompleteMaterialization, closeErr)
-		}
-		return errIncompleteMaterialization
+		return errjoin.Join(errIncompleteMaterialization, closeErr)
 	}
 	ci.signalComplete()
 	return ci.inner.Close()
@@ -618,11 +608,7 @@ func (r *MaterializedRelation) carryErr(derived Relation) Relation {
 func EmptyRelationError(rel Relation) error {
 	it := rel.Iterator()
 	_ = it.Next()
-	err := it.Error()
-	if closeErr := it.Close(); err == nil {
-		err = closeErr
-	}
-	return err
+	return errjoin.Join(it.Error(), it.Close())
 }
 
 func (r *MaterializedRelation) Size() int {
@@ -1267,11 +1253,7 @@ func (r *StreamingRelation) Get(i int) Tuple {
 	it := r.Iterator()
 	for it.Next() {
 	}
-	iterErr := it.Error()
-	if closeErr := it.Close(); iterErr == nil {
-		iterErr = closeErr
-	}
-	if iterErr != nil {
+	if errjoin.Join(it.Error(), it.Close()) != nil {
 		return nil
 	}
 	r.mu.Lock()
@@ -1637,10 +1619,7 @@ func Select(rel Relation, pred func(Tuple) bool) Relation {
 			selected = append(selected, tuple)
 		}
 	}
-	scanErr := it.Error()
-	if closeErr := it.Close(); scanErr == nil {
-		scanErr = closeErr
-	}
+	scanErr := errjoin.Join(it.Error(), it.Close())
 
 	// A failed scan is not an empty selection — carry it as the result's
 	// deferred error.
@@ -1914,6 +1893,9 @@ type ProductIterator struct {
 	// empty is set when a member holds no tuple: the product holds none, and
 	// no member's failure is its error.
 	empty bool
+	// closeErr holds the close failures of the member iterators the product
+	// reset, which Close answers with the rest.
+	closeErr error
 }
 
 func (pi *ProductIterator) Next() bool {
@@ -1975,7 +1957,7 @@ func (pi *ProductIterator) Next() bool {
 		}
 
 		// Reset this iterator
-		pi.iterators[i].Close()
+		pi.closeErr = errjoin.Join(pi.closeErr, pi.iterators[i].Close())
 		pi.iterators[i] = pi.relations[i].Iterator()
 		if !pi.iterators[i].Next() {
 			// Should not happen - relation became empty
@@ -2001,12 +1983,13 @@ func (pi *ProductIterator) Tuple() Tuple {
 func (pi *ProductIterator) RequiresCopy() bool { return false }
 
 func (pi *ProductIterator) Close() error {
+	err := pi.closeErr
 	for _, it := range pi.iterators {
 		if it != nil {
-			it.Close()
+			err = errjoin.Join(err, it.Close())
 		}
 	}
-	return nil
+	return err
 }
 
 func (pi *ProductIterator) Error() error {

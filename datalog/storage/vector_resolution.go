@@ -1,10 +1,10 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // VectorResolutionResult contains the resolved vector and metadata
@@ -100,7 +100,7 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte, report *scanRepo
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			loaded, loadErr = nil, errors.Join(loadErr, closeErr)
+			loaded, loadErr = nil, errjoin.Join(loadErr, closeErr)
 		}
 	}()
 

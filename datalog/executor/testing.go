@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -182,10 +183,7 @@ func FormatRelationSummary(rel Relation) string {
 		tuples = append(tuples, fmt.Sprintf("%v", it.Tuple()))
 		count++
 	}
-	scanErr := it.Error()
-	if closeErr := it.Close(); scanErr == nil {
-		scanErr = closeErr
-	}
+	scanErr := errjoin.Join(it.Error(), it.Close())
 	if rel.Size() > 20 {
 		tuples = append(tuples, fmt.Sprintf("... and %d more", rel.Size()-20))
 	}
@@ -215,11 +213,7 @@ func collectSortedTuples(rel Relation) ([]Tuple, error) {
 	for it.Next() {
 		tuples = append(tuples, it.Tuple())
 	}
-	scanErr := it.Error()
-	if closeErr := it.Close(); scanErr == nil {
-		scanErr = closeErr
-	}
-	if scanErr != nil {
+	if scanErr := errjoin.Join(it.Error(), it.Close()); scanErr != nil {
 		return nil, scanErr
 	}
 
@@ -241,11 +235,7 @@ func collectSortedTuplesReordered(rel Relation, symMap map[int]int) ([]Tuple, er
 		}
 		tuples = append(tuples, newTuple)
 	}
-	scanErr := it.Error()
-	if closeErr := it.Close(); scanErr == nil {
-		scanErr = closeErr
-	}
-	if scanErr != nil {
+	if scanErr := errjoin.Join(it.Error(), it.Close()); scanErr != nil {
 		return nil, scanErr
 	}
 

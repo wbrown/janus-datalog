@@ -1,9 +1,8 @@
 package storage
 
 import (
-	"errors"
-
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // SetResolutionResult contains the resolved set membership and metadata
@@ -85,7 +84,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanRe
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			resolved, resolveErr = nil, errors.Join(resolveErr, closeErr)
+			resolved, resolveErr = nil, errjoin.Join(resolveErr, closeErr)
 		}
 	}()
 
@@ -307,7 +306,7 @@ func (m *PatternMatcher) checkSetMembership(bound ScanBound, report *scanReport)
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			member, checkErr = false, errors.Join(checkErr, closeErr)
+			member, checkErr = false, errjoin.Join(checkErr, closeErr)
 		}
 	}()
 
