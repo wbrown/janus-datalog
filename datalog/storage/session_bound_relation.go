@@ -5,6 +5,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -70,8 +71,9 @@ func (r *sessionBoundRelation) Rename(subst query.Substitution) (executor.Relati
 }
 
 // sessionBoundIterator reports the query complete and releases the session
-// at exhaustion or Close, counting the tuples it yields on the way. A close
-// failure surfaces through Close's return or Error(), never silently.
+// at exhaustion or Close, counting the tuples it yields on the way. Error
+// answers the inner iterator's failure, and Close answers the session's close
+// failure beside the inner iterator's, so each reaches the reader once.
 type sessionBoundIterator struct {
 	executor.Iterator
 	session    ReadSession
@@ -106,17 +108,11 @@ func (it *sessionBoundIterator) Next() bool {
 func (it *sessionBoundIterator) Close() error {
 	err := it.Iterator.Close()
 	it.release(err)
-	if err == nil {
-		err = it.releaseErr
-	}
-	return err
+	return errjoin.Join(err, it.releaseErr)
 }
 
 func (it *sessionBoundIterator) Error() error {
-	if err := it.Iterator.Error(); err != nil {
-		return err
-	}
-	return it.releaseErr
+	return it.Iterator.Error()
 }
 
 func (it *sessionBoundIterator) RequiresCopy() bool { return it.Iterator.RequiresCopy() }

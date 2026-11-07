@@ -578,7 +578,8 @@ func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
 				opts,
 			)
 
-			strategy, binding := db.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, inputRel)
+			strategy, binding, err := db.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, inputRel)
+			require.NoError(t, err)
 			assert.Equal(t, AETV, strategy.Index, "should select AETV for E-from-input with CardinalityOne")
 
 			// The binding relation handed back is the input's: ?e bound to the

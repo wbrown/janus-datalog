@@ -63,8 +63,9 @@ type CRDTResolvingIterator struct {
 	// scan was acquired.
 	report *scanReport
 
-	// CardinalityVector: TODO - placeholder for discussion
-	rgaElements []rgaElement
+	// rgaElements is a CardinalityVector group's elements, gathered from its
+	// datoms by the rule every vector reader gathers by.
+	rgaElements vectorElements
 
 	// Emit buffer for CardinalityVector only
 	emitBuffer []*datalog.Datom
@@ -86,14 +87,6 @@ type CRDTResolvingIterator struct {
 	// (unique-attr max-other-Tx lookups). Surfaced via Error() (caller
 	// checks after iterator exhaustion).
 	err error
-}
-
-// rgaElement stores minimal state for RGA reconstruction (no datom pointers)
-type rgaElement struct {
-	id          datalog.ElementID
-	afterRef    datalog.ElementID
-	value       any
-	tombstoneID *datalog.ElementID
 }
 
 // NewCRDTResolvingIterator creates a new CRDT-resolving iterator wrapper.
@@ -245,7 +238,7 @@ func (it *CRDTResolvingIterator) Next() bool {
 			continue
 
 		case schema.CardinalityVector:
-			it.accumulateRGA(datom)
+			it.rgaElements.gather(datom)
 			continue
 
 		case schema.CardinalityUnknown:
@@ -315,7 +308,11 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 			it.tombstones = make(map[any]uint64)
 		}
 	case schema.CardinalityVector:
-		it.rgaElements = it.rgaElements[:0]
+		if it.rgaElements == nil {
+			it.rgaElements = make(vectorElements)
+		} else {
+			clear(it.rgaElements)
+		}
 	case schema.CardinalityUnknown:
 		// Default is CardinalityOne (LWW) — no state needed
 	}
@@ -367,39 +364,6 @@ func (it *CRDTResolvingIterator) processAddWins(datom *datalog.Datom) *datalog.D
 	return nil
 }
 
-// accumulateRGA collects RGA elements for tree reconstruction.
-// Stores minimal state, not datom pointers.
-func (it *CRDTResolvingIterator) accumulateRGA(datom *datalog.Datom) {
-	if datom.Op == datalog.OpRGAInsert {
-		it.rgaElements = append(it.rgaElements, rgaElement{
-			id:       datom.Tx,
-			afterRef: datom.AfterRef,
-			value:    datom.V,
-		})
-	} else if datom.Op == datalog.OpRGATombstone {
-		// Find and mark the target element, or create placeholder
-		targetID := datom.AfterRef
-		tombstoneID := datom.Tx
-		found := false
-		for i := range it.rgaElements {
-			if it.rgaElements[i].id == targetID {
-				if it.rgaElements[i].tombstoneID == nil || it.rgaElements[i].tombstoneID.Less(tombstoneID) {
-					it.rgaElements[i].tombstoneID = &tombstoneID
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			// Tombstone arrived before insert
-			it.rgaElements = append(it.rgaElements, rgaElement{
-				id:          targetID,
-				tombstoneID: &tombstoneID,
-			})
-		}
-	}
-}
-
 // emitRGAGroup resolves the RGA group at source exhaustion.
 func (it *CRDTResolvingIterator) emitRGAGroup() bool {
 	it.emitBuffer = it.resolveRGAGroup()
@@ -412,89 +376,30 @@ func (it *CRDTResolvingIterator) emitRGAGroup() bool {
 	return false
 }
 
-// resolveRGAGroup reconstructs the RGA tree and returns a single datom
-// with V = the resolved vector ([]any), matching the cache path behavior.
+// resolveRGAGroup resolves the group's elements by the RGA rule and returns a
+// single datom: V is the resolved vector ([]any), matching the cache path, and
+// Tx is the highest ElementID among the group's inserts and withdrawals.
 func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 	if len(it.rgaElements) == 0 {
 		return nil
 	}
 
-	// Deduplicate by ID (tombstone takes precedence)
-	elemByID := make(map[datalog.ElementID]*rgaElement)
-	for i := range it.rgaElements {
-		e := &it.rgaElements[i]
-		existing, exists := elemByID[e.id]
-		if !exists {
-			elemByID[e.id] = e
-		} else {
-			// Merge tombstone info
-			if e.tombstoneID != nil && (existing.tombstoneID == nil || existing.tombstoneID.Less(*e.tombstoneID)) {
-				existing.tombstoneID = e.tombstoneID
-			}
-			// Merge value/afterRef if we have it
-			if existing.value == nil && e.value != nil {
-				existing.value = e.value
-				existing.afterRef = e.afterRef
-			}
-		}
+	elements := make([]RGAElement, 0, len(it.rgaElements))
+	for _, e := range it.rgaElements {
+		elements = append(elements, e)
 	}
-
-	// Build children map
-	children := make(map[datalog.ElementID][]*rgaElement)
-	for _, e := range elemByID {
-		children[e.afterRef] = append(children[e.afterRef], e)
+	values := ReconstructRGA(elements)
+	if values == nil {
+		// Every element is withdrawn: the vector is the empty vector, a value.
+		values = []any{}
 	}
-
-	// Sort children by ID (ascending)
-	for k := range children {
-		sortRGAByID(children[k])
-	}
-
-	// DFS from HEAD, collect values into a single resolved list.
-	// Recursion depth ≈ vector length for sequentially-appended vectors; see
-	// the stack-depth note in storage/rga_reconstruct.go (ReconstructRGA).
-	values := make([]any, 0)
-	var maxTx datalog.ElementID
-	for _, element := range elemByID {
-		if maxTx.Less(element.id) {
-			maxTx = element.id
-		}
-		if element.tombstoneID != nil && maxTx.Less(*element.tombstoneID) {
-			maxTx = *element.tombstoneID
-		}
-	}
-	visited := make(map[datalog.ElementID]bool)
-	var walk func(id datalog.ElementID)
-	walk = func(id datalog.ElementID) {
-		if visited[id] {
-			return
-		}
-		visited[id] = true
-
-		for _, child := range children[id] {
-			if child.tombstoneID == nil && child.value != nil {
-				values = append(values, child.value)
-			}
-			walk(child.id)
-		}
-	}
-	walk(HEAD)
 
 	return []*datalog.Datom{{
 		E:  it.currentE,
 		A:  it.currentA,
 		V:  values,
-		Tx: maxTx,
+		Tx: FindMaxElementID(elements),
 	}}
-}
-
-func sortRGAByID(elems []*rgaElement) {
-	// Simple insertion sort (typically small lists)
-	for i := 1; i < len(elems); i++ {
-		for j := i; j > 0 && elems[j].id.Less(elems[j-1].id); j-- {
-			elems[j], elems[j-1] = elems[j-1], elems[j]
-		}
-	}
 }
 
 // Datom returns the current CRDT-resolved datom.
@@ -573,7 +478,10 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 
 	// Accrues whether or not the check fails: a failed supersession check
 	// still read the index to fail.
-	decision, err := it.matcher.walkApplyEntry(it.uniqueWalk, datom, eBytes, aBytes, it.report)
+	//
+	// What the decision read goes unused: no cache entry is built from a
+	// streamed datom.
+	decision, _, err := it.matcher.walkApplyEntry(it.uniqueWalk, datom, eBytes, aBytes, it.report)
 	if err != nil {
 		return false, err
 	}

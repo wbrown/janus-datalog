@@ -11,6 +11,8 @@ package executor
 import (
 	"runtime"
 	"sync"
+
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // iterGuard keeps an iterator alive via runtime.SetFinalizer.
@@ -29,10 +31,7 @@ type tupleSeqState struct {
 
 func (s *tupleSeqState) close() error {
 	s.closeOnce.Do(func() {
-		err := s.it.Error()
-		if closeErr := s.it.Close(); err == nil {
-			err = closeErr
-		}
+		err := errjoin.Join(s.it.Error(), s.it.Close())
 		s.errMu.Lock()
 		s.err = err
 		s.errMu.Unlock()

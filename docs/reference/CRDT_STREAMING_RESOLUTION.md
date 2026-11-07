@@ -123,43 +123,37 @@ But if B was inserted before C and D:
 
 ### Implementation: Buffer State, Not Datoms
 
-We don't store datom pointers. We store minimal state:
+We don't store datom pointers. A group's elements are gathered into `vectorElements` (`rga_element.go`), a map from ElementID to `RGAElement`:
 
 ```go
-type rgaElement struct {
-    id          ElementID  // from datom.Tx
-    afterRef    ElementID  // from datom.AfterRef
-    value       any        // from datom.V
-    tombstoneID *ElementID // if deleted
+type RGAElement struct {
+    ID        ElementID  // the insert's datom.Tx
+    Value     any        // the insert's datom.V
+    AfterRef  ElementID  // the insert's datom.AfterRef
+    Tombstone *ElementID // the highest tombstone naming the element
 }
 ```
 
 **Why this is safe**:
 - No datom pointers → no corruption from iterator reuse
 - Minimal state → memory bounded by element count, not datom size
-- Reconstruct at emit → datoms created fresh with correct E, A from group
+- Reconstruct at emit → the datom is created fresh with correct E, A from group
 
-At (E, A) boundary, reconstruct datoms:
+At the (E, A) boundary the group emits one datom, whose value is the resolved vector, as the cache path answers it:
 ```go
 &datalog.Datom{
-    E:        it.currentE,  // same for entire group
-    A:        it.currentA,  // same for entire group
-    V:        element.value,
-    Tx:       element.id,
-    Op:       datalog.OpRGAInsert,
-    AfterRef: element.afterRef,
+    E:  it.currentE,                // same for entire group
+    A:  it.currentA,                // same for entire group
+    V:  values,                     // the resolved vector, []any
+    Tx: FindMaxElementID(elements), // the highest insert or tombstone
 }
 ```
 
 ### Resolution Algorithm
 
-1. **Accumulate**: As datoms arrive, store `rgaElement` (id, afterRef, value, tombstoneID)
-2. **At boundary**: When (E, A) changes or source exhausts:
-   - Deduplicate by id (tombstone info takes precedence)
-   - Build children map: `map[ElementID][]*rgaElement`
-   - Sort children by ascending id
-   - DFS walk from HEAD, emit non-tombstoned elements
-3. **Reconstruct**: Create fresh `*Datom` from stored state during DFS
+1. **Gather**: As datoms arrive, `vectorElements.gather` records an insert's value and the element it follows, and marks the element a tombstone names, whichever of the two arrives first. `loadRGAElements` and `ResolveRGAFromDatoms` gather by the same rule.
+2. **At boundary**: When (E, A) changes or the source exhausts, `ReconstructRGA` builds the children map, sorts each child list by ascending ElementID, and walks from HEAD, emitting the elements no tombstone names. A tombstoned element keeps its place, so its children stay reachable.
+3. **Emit**: One fresh `*Datom` carries the resolved vector. A group whose every element is tombstoned resolves to the empty vector, which is a value.
 
 **No datom pointer storage. No corruption from iterator reuse. Reconstruct at emit.**
 
@@ -191,7 +185,7 @@ values panics without it — a defect that was found and fixed once already.
 
 **Vectors cannot reach this path.** A whole vector never reaches storage — a
 vector literal is a `query.VectorConstant`, not a `Constant` — and a
-cardinality-vector attribute stores *elements*, which route to `accumulateRGA`.
+cardinality-vector attribute stores *elements*, which route to `vectorElements.gather`.
 
 ## Call Site Conditions
 
@@ -219,7 +213,7 @@ source knows nothing about.
 |-------------|----------|-------|-----------|------------|
 | One | Emit first, skip rest | current (E, A) | None | ✓ Yes |
 | Many | Emit qualifying adds | emitted + tombstones maps | None | ✓ Yes |
-| Vector | Accumulate, resolve, emit | element list | State only, not datoms | ✗ No (proven impossible) |
+| Vector | Gather, resolve, emit | element map | State only, not datoms | ✗ No (proven impossible) |
 
 **Trust the architecture:**
 - Index ordering provides resolution (EATV = Tx descending = first entry wins)
@@ -234,6 +228,6 @@ The `CRDTResolvingIterator` in `crdt_resolving_iterator.go` implements all three
 - **CardinalityOne**: Zero state beyond current (E, A). First entry emitted, rest skipped.
 - **CardinalityMany**: `map[any]bool` for emitted values, `map[any]uint64` for tombstones, keyed by the value with `[]byte` converted to `string`. Emit immediately when qualifying.
 - **CardinalityOne + unique**: resolves by walking the entity (`uniqueMode`), not by first-entry-wins, when the schema declares the attribute unique and a matcher is supplied.
-- **CardinalityVector**: `[]rgaElement` accumulates minimal state. Resolve and reconstruct datoms at (E, A) boundary.
+- **CardinalityVector**: `vectorElements` gathers the group's elements, and at the (E, A) boundary `ReconstructRGA` resolves them into one datom carrying the vector.
 
 All 69 CRDT tests pass (5 CardinalityOne, 17 CardinalityMany, 47 CardinalityVector).

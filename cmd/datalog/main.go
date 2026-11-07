@@ -111,12 +111,21 @@ func run() (err error) {
 			return fmt.Errorf("-cpuprofile: %w", createErr)
 		}
 		if startErr := pprof.StartCPUProfile(profile); startErr != nil {
-			return errors.Join(fmt.Errorf("-cpuprofile: %w", startErr), profile.Close())
+			startErr = fmt.Errorf("-cpuprofile: %w", startErr)
+			if closeErr := profile.Close(); closeErr != nil {
+				return errors.Join(startErr, closeErr)
+			}
+			return startErr
 		}
 		defer func() {
 			pprof.StopCPUProfile()
 			if closeErr := profile.Close(); closeErr != nil {
-				err = errors.Join(err, fmt.Errorf("-cpuprofile: %w", closeErr))
+				closeErr = fmt.Errorf("-cpuprofile: %w", closeErr)
+				if err == nil {
+					err = closeErr
+				} else {
+					err = errors.Join(err, closeErr)
+				}
 			}
 		}()
 	}
@@ -129,10 +138,20 @@ func run() (err error) {
 			// The allocs profile is current as of the last collection.
 			runtime.GC()
 			if writeErr := pprof.Lookup("allocs").WriteTo(profile, 0); writeErr != nil {
-				err = errors.Join(err, fmt.Errorf("-memprofile: %w", writeErr))
+				writeErr = fmt.Errorf("-memprofile: %w", writeErr)
+				if err == nil {
+					err = writeErr
+				} else {
+					err = errors.Join(err, writeErr)
+				}
 			}
 			if closeErr := profile.Close(); closeErr != nil {
-				err = errors.Join(err, fmt.Errorf("-memprofile: %w", closeErr))
+				closeErr = fmt.Errorf("-memprofile: %w", closeErr)
+				if err == nil {
+					err = closeErr
+				} else {
+					err = errors.Join(err, closeErr)
+				}
 			}
 		}()
 	}
@@ -207,7 +226,16 @@ func run() (err error) {
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer func() {
+		if closeErr := cleanup(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close %s: %w", dbPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	if planOnly && queryStr == "" {
 		return fmt.Errorf("-plan-only requires -query")
@@ -310,7 +338,9 @@ func addInteractiveData(db *storage.Database, scanner *bufio.Scanner) {
 	for {
 		fmt.Print("  entity attribute value> ")
 		if !scanner.Scan() {
-			tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				fmt.Printf("Rollback failed: %v\n", err)
+			}
 			return
 		}
 
@@ -341,7 +371,9 @@ func addInteractiveData(db *storage.Database, scanner *bufio.Scanner) {
 			fmt.Printf("Committed %d datoms in transaction %v\n", count, txID)
 		}
 	} else {
-		tx.Rollback()
+		if err := tx.Rollback(); err != nil {
+			fmt.Printf("Rollback failed: %v\n", err)
+		}
 		fmt.Println("No data added")
 	}
 }
@@ -390,13 +422,14 @@ func parseAddLine(line string) (datalog.Identity, datalog.Keyword, interface{}, 
 
 // openDatabaseOrEDN opens dbPath as a database directory, or — when the path
 // ends in .edn or .jdzl — loads that dump into an in-process database. The
-// returned cleanup function closes the database; callers must invoke it. Writes
-// to a dump-backed database are discarded when the process exits.
+// returned cleanup function closes the database and answers the close's error;
+// callers must invoke it. Writes to a dump-backed database are discarded when
+// the process exits.
 //
 // plannerOpts, when non-nil, becomes the database's planner-options override
 // (the -optimize flag rides it); nil keeps the engine defaults — the
 // export/import/stats paths run no queries and pass nil.
-func openDatabaseOrEDN(dbPath string, plannerOpts *planner.PlannerOptions) (*storage.Database, func(), error) {
+func openDatabaseOrEDN(dbPath string, plannerOpts *planner.PlannerOptions) (*storage.Database, func() error, error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, nil, fmt.Errorf("database does not exist: %s", dbPath)
 	}
@@ -412,24 +445,42 @@ func openDatabaseOrEDN(dbPath string, plannerOpts *planner.PlannerOptions) (*sto
 	if storage.IsDumpPath(dbPath) {
 		fmt.Fprintf(os.Stderr, "Loaded dump %s into an in-process database (changes will be discarded)\n", dbPath)
 	}
-	return database, func() { database.Close() }, nil
+	return database, database.Close, nil
 }
 
 // runExport exports the database to an EDN file. The source may itself be an
 // .edn or .jdzl dump (re-encode / convert via a temporary database).
-func runExport(dbPath, exportPath string, compressed bool) error {
+func runExport(dbPath, exportPath string, compressed bool) (err error) {
 	db, cleanup, err := openDatabaseOrEDN(dbPath, nil)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer func() {
+		if closeErr := cleanup(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close %s: %w", dbPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	// Create export file
 	f, err := os.Create(exportPath)
 	if err != nil {
 		return fmt.Errorf("Failed to create export file: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close export file %s: %w", exportPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	// Export database
 	if err := db.Export(f, storage.ExportOptions{Compressed: compressed}); err != nil {
@@ -441,7 +492,7 @@ func runExport(dbPath, exportPath string, compressed bool) error {
 }
 
 // runImport imports an EDN file into the database
-func runImport(dbPath, importPath string) error {
+func runImport(dbPath, importPath string) (err error) {
 	// Importing into a dump path would open/create a Badger directory named
 	// after the dump file; the target must be a real database directory.
 	if storage.IsDumpPath(dbPath) {
@@ -458,14 +509,32 @@ func runImport(dbPath, importPath string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to open/create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close %s: %w", dbPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	// Open import file
 	f, err := os.Open(importPath)
 	if err != nil {
 		return fmt.Errorf("Failed to open import file: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close import file %s: %w", importPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	// Import into database
 	if err := db.Import(f); err != nil {
@@ -484,18 +553,36 @@ func runExportBin(dbPath, exportPath string) error {
 	return nil
 }
 
-func exportBinaryDatabase(dbPath, exportPath string) error {
+func exportBinaryDatabase(dbPath, exportPath string) (err error) {
 	db, cleanup, err := openDatabaseOrEDN(dbPath, nil)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer func() {
+		if closeErr := cleanup(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close %s: %w", dbPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	f, err := os.Create(exportPath)
 	if err != nil {
 		return fmt.Errorf("Failed to create binary export file: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close binary export file %s: %w", exportPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	if err := db.ExportBinary(f); err != nil {
 		return fmt.Errorf("Failed to export binary database: %v", err)
@@ -503,7 +590,7 @@ func exportBinaryDatabase(dbPath, exportPath string) error {
 	return nil
 }
 
-func runImportBin(dbPath, importPath string) error {
+func runImportBin(dbPath, importPath string) (err error) {
 	if storage.IsDumpPath(dbPath) {
 		return fmt.Errorf("Cannot import into %s: -db must be a database directory", dbPath)
 	}
@@ -515,13 +602,31 @@ func runImportBin(dbPath, importPath string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to open/create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close %s: %w", dbPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	f, err := os.Open(importPath)
 	if err != nil {
 		return fmt.Errorf("Failed to open binary import file: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close binary import file %s: %w", importPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	if err := db.ImportBinary(f); err != nil {
 		return fmt.Errorf("Failed to import binary dump: %v", err)

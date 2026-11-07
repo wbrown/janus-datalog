@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,12 +18,21 @@ import (
 // runStats scans the full database (EAVT index, all history) and reports
 // per-attribute cardinality, value size distribution, and value duplication.
 // The source may be a BadgerDB directory or an .edn/.jdzl dump.
-func runStats(dbPath string) error {
+func runStats(dbPath string) (err error) {
 	db, cleanup, err := openDatabaseOrEDN(dbPath, nil)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer func() {
+		if closeErr := cleanup(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close %s: %w", dbPath, closeErr)
+			if err == nil {
+				err = closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	report, err := collectStats(db)
 	if err != nil {
@@ -85,14 +95,23 @@ func newDBStats() *dbStats {
 
 // collectStats scans the EAVT index and accumulates statistics over every
 // datom in the database, including full CRDT history (removes, RGA ops).
-func collectStats(db *storage.Database) (*dbStats, error) {
+func collectStats(db *storage.Database) (collected *dbStats, err error) {
 	// Scan the entire EAVT index, same bound as Database.Export.
 	iter, err := storage.OpenScan(db.Store(), storage.DiscardIntake,
 		storage.ScanBound{Index: storage.EAVT})
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan database: %w", err)
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			closeErr = fmt.Errorf("failed to close database scan: %w", closeErr)
+			if err == nil {
+				collected, err = nil, closeErr
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	s := newDBStats()
 	for iter.Next() {
@@ -101,6 +120,9 @@ func collectStats(db *storage.Database) (*dbStats, error) {
 			return nil, fmt.Errorf("failed to read datom: %w", err)
 		}
 		s.record(d)
+	}
+	if err := iter.Error(); err != nil {
+		return nil, fmt.Errorf("failed to scan database: %w", err)
 	}
 	return s, nil
 }

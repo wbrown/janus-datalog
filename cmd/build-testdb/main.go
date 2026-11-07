@@ -37,10 +37,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to build database: %v\n", err)
 		os.Exit(1)
 	}
-	defer db.Close()
-
-	if err := storage.TestDatabaseStats(db); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to get stats: %v\n", err)
+	statsErr := storage.TestDatabaseStats(db)
+	closeErr := db.Close()
+	if statsErr != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get stats: %v\n", statsErr)
+	}
+	if closeErr != nil {
+		fmt.Fprintf(os.Stderr, "Failed to close database: %v\n", closeErr)
+	}
+	if statsErr != nil || closeErr != nil {
 		os.Exit(1)
 	}
 

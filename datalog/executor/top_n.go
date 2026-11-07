@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"sort"
 
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -43,9 +44,7 @@ func TopNRelation(rel Relation, orderBy []query.OrderByClause, limit int) (resul
 	it := rel.Iterator()
 	var iterErr error
 	defer func() {
-		if closeErr := it.Close(); iterErr == nil {
-			iterErr = closeErr
-		}
+		iterErr = errjoin.Join(iterErr, it.Close())
 		if iterErr != nil && result != nil {
 			if materialized, ok := result.(*MaterializedRelation); ok && materialized.err == nil {
 				materialized.err = iterErr

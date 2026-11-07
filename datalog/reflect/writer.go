@@ -47,15 +47,17 @@ type TransactionUpdater interface {
 	Set(e datalog.Identity, a datalog.Keyword, v interface{}) error
 }
 
-// EntityLookup provides lookup of existing entity attributes
-// This is used for upsert operations to find existing values to retract
+// EntityLookup answers an entity's attributes in the view a writer compares a
+// struct against. Update writes only what the struct changes in that view.
+// storage.Transaction answers its own view: the value its read session opened
+// on, with its own writes applied.
 type EntityLookup interface {
-	// LookupAttribute returns the current value of an attribute for an entity
+	// LookupAttribute returns an attribute's value for an entity in the view.
 	// Returns (nil, false, nil) when absent.
 	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool, error)
 
-	// LookupAllAttributes returns all values for a cardinality-many attribute
-	// Returns empty slice if attribute not found
+	// LookupAllAttributes returns all values of a cardinality-many attribute
+	// in the view. Returns empty slice if attribute not found
 	LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error)
 }
 
@@ -173,12 +175,13 @@ func (sw *StructWriter) Write(tx TransactionAdder, entity datalog.Identity, v in
 	return nil
 }
 
-// Update performs an upsert operation: retracts changed values and adds new ones.
-// For cardinality-one fields: if the value has changed, retracts the old value and adds the new one.
-// For cardinality-many fields: behavior depends on the UpdateMode.
+// Update writes what the struct changes in the lookup's view of the entity.
+// A cardinality-one field is asserted when its value differs from the view's,
+// and the assertion supersedes the old value. A cardinality-many field is
+// written as its UpdateMode says.
 //
-// This requires both a TransactionUpdater (for retract capability) and an EntityLookup
-// (to find existing values to compare/retract).
+// It requires a TransactionUpdater for its writes and withdrawals, and an
+// EntityLookup for the view it compares against.
 func (sw *StructWriter) Update(tx TransactionUpdater, lookup EntityLookup, entity datalog.Identity, v interface{}, mode UpdateMode) error {
 	modeStr := "add"
 	if mode == UpdateModeReplace {
@@ -272,7 +275,8 @@ func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, 
 		return nil
 	}
 
-	// Optimization: skip write if value hasn't changed
+	// A value the view holds unchanged is not asserted: asserting it again
+	// would supersede another writer's change to the field.
 	existingVal, found, err := lookup.LookupAttribute(entity, kw)
 	if err != nil {
 		return err
@@ -711,11 +715,11 @@ func (sw *StructWriter) UpdateAuto(tx TransactionUpdater, lookup EntityLookup, v
 // SaveStruct persists a struct with upsert semantics.
 // Generates entity ID if not set, returns the ID.
 //
-// Upsert behavior:
-//   - Cardinality-one fields: retracts old value if different, adds new value
+// Upsert behavior, against the lookup's view of the entity:
+//   - Cardinality-one fields: asserts the value when it differs from the view's
 //   - Cardinality-many fields (nil slice): leaves existing values unchanged
-//   - Cardinality-many fields (empty slice): clears all existing values
-//   - Cardinality-many fields (non-empty): diff-based update
+//   - Cardinality-many fields (empty slice): withdraws every member the view holds
+//   - Cardinality-many fields (non-empty): adds the members the view lacks and withdraws the ones the slice lacks
 func SaveStruct(tx TransactionUpdater, lookup EntityLookup, v interface{}, s schema.SchemaProvider) (datalog.Identity, error) {
 	writer, err := NewStructWriter(v, s)
 	if err != nil {

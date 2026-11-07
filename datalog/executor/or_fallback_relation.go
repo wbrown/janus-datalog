@@ -7,6 +7,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -746,8 +747,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run 
 		if !seen {
 			value, found, err := lookupMatcher.LookupAttribute(entity, aKw)
 			if err != nil {
-				it.err = err
-				_ = runIt.Close()
+				it.err = errjoin.Join(err, runIt.Close())
 				return nil, nil
 			}
 			looked = entityValue{value: value, found: found}
@@ -767,14 +767,8 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run 
 		extended[len(tuple)] = looked.value
 		collected = append(collected, extended)
 	}
-	runErr := runIt.Error()
-	closeErr := runIt.Close()
-	if runErr != nil {
-		it.err = runErr
-		return nil, nil
-	}
-	if closeErr != nil {
-		it.err = closeErr
+	if err := errjoin.Join(runIt.Error(), runIt.Close()); err != nil {
+		it.err = err
 		return nil, nil
 	}
 
@@ -800,10 +794,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run 
 		for nit.Next() {
 			filtered = append(filtered, nit.Tuple())
 		}
-		narrowErr := nit.Error()
-		if cErr := nit.Close(); narrowErr == nil {
-			narrowErr = cErr
-		}
+		narrowErr := errjoin.Join(nit.Error(), nit.Close())
 		if narrowErr != nil {
 			it.err = narrowErr
 			return nil, nil

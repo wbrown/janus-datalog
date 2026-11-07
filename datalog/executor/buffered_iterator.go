@@ -2,6 +2,8 @@ package executor
 
 import (
 	"sync"
+
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // BufferedIterator wraps a streaming iterator and buffers results for re-iteration
@@ -12,19 +14,14 @@ type BufferedIterator struct {
 	position int
 	mu       sync.Mutex
 	consumed bool  // true after source has been fully consumed
-	err      error // source's deferred error, captured at drain (first error wins)
+	err      error // source's deferred error joined with its Close failure, captured at drain
 }
 
-// captureSourceError records the consumed source's deferred error and Close
-// failure (first error wins) so a failed scan never presents as a clean
-// buffer — to this iterator's consumers or to any Clone.
+// captureSourceError records the consumed source's deferred error joined with
+// its Close failure, so a failed scan never presents as a clean buffer — to
+// this iterator's consumers or to any Clone.
 func (it *BufferedIterator) captureSourceError() {
-	if e := it.source.Error(); e != nil && it.err == nil {
-		it.err = e
-	}
-	if closeErr := it.source.Close(); closeErr != nil && it.err == nil {
-		it.err = closeErr
-	}
+	it.err = errjoin.Join(it.source.Error(), it.source.Close())
 }
 
 // NewBufferedIterator creates a new buffered iterator

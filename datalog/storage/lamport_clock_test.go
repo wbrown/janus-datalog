@@ -161,6 +161,27 @@ func TestLamportClockPeek(t *testing.T) {
 	assert.Equal(t, uint64(2), peek3.Lamport)
 }
 
+// TestLamportClockReadPoint pins the read point's contract: it is the greatest
+// ElementID at the clock's current Lamport time, so every ElementID drawn
+// before it, on this replica or received from another, is at or below it, and
+// the next ElementID the clock draws is above it.
+func TestLamportClockReadPoint(t *testing.T) {
+	clock := NewLamportClock(42)
+	drawn := []ElementID{clock.Next(), clock.Next()}
+	remote := ElementID{Lamport: 7, ReplicaID: ^uint64(0) - 1}
+	clock.Receive(remote)
+	drawn = append(drawn, remote, clock.Next())
+
+	point := clock.ReadPoint()
+	assert.Equal(t, ElementID{Lamport: clock.Current(), ReplicaID: ^uint64(0)}, point,
+		"the read point is the greatest ElementID at the clock's current Lamport time")
+	for _, id := range drawn {
+		assert.Falsef(t, point.Less(id), "%v was drawn before the read point %v, so it is at or below it", id, point)
+	}
+	later := clock.Next()
+	assert.Truef(t, point.Less(later), "%v was drawn after the read point %v, so it is above it", later, point)
+}
+
 func TestLamportClockConcurrency(t *testing.T) {
 	clock := NewLamportClock(1)
 	numGoroutines := 100

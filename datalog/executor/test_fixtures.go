@@ -2,6 +2,7 @@ package executor
 
 import (
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -74,11 +75,7 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 			}
 		}
 	}
-	scanErr := it.Error()
-	if closeErr := it.Close(); scanErr == nil {
-		scanErr = closeErr
-	}
-	if scanErr != nil {
+	if scanErr := errjoin.Join(it.Error(), it.Close()); scanErr != nil {
 		return nil, scanErr
 	}
 

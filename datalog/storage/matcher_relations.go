@@ -7,6 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -96,7 +97,11 @@ func (m *PatternMatcher) MatchWithConstraints(
 	aResolved = m.extractValue(pattern.GetA())
 	if aResolved == nil {
 		if aVar, ok := pattern.GetA().(query.Variable); ok {
-			if kw, found := resolveKeywordFromBindings(aVar, bindings); found {
+			kw, found, err := resolveKeywordFromBindings(aVar, bindings)
+			if err != nil {
+				return nil, err
+			}
+			if found {
 				aResolved = kw
 			}
 		}
@@ -188,7 +193,10 @@ func (m *PatternMatcher) MatchWithConstraints(
 
 	// Analyze if we can use iterator reuse
 	// For multi-position cases, the relation may be materialized to allow cardinality counting
-	strategy, bindingRel := m.analyzeReuseStrategy(pattern, bindingRel)
+	strategy, bindingRel, err := m.analyzeReuseStrategy(pattern, bindingRel)
+	if err != nil {
+		return nil, err
+	}
 
 	// Emit strategy selection event
 	if m.handler != nil {
@@ -380,8 +388,8 @@ func (m *PatternMatcher) matchUnboundScan(
 	}
 
 	// CACHE OPTIMIZATION: When E and A are bound, use the cache for O(1)
-	// access instead of storage scans. Concrete AsOf matchers use
-	// transaction-scoped cache keys; History matchers bypass cache.
+	// access instead of storage scans. An as-of matcher reads its view's cache
+	// (Cache.ForView); History matchers bypass cache.
 	if m.cache != nil && m.mode != historyMode && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
@@ -737,7 +745,6 @@ type validatingVBoundIterator struct {
 
 	// Iterator state - CRDTResolvingIterator wraps the raw scan
 	crdtIter        *CRDTResolvingIterator // Wraps VAET/AVET scan
-	rawIter         Iterator               // Underlying raw iterator (for Close)
 	currentTupleIdx int                    // Current binding tuple index
 	currentTuple    executor.Tuple         // Current result tuple
 	workspace       executor.Tuple
@@ -869,14 +876,9 @@ func (it *validatingVBoundIterator) Next() bool {
 			// so Error() surfaces failures (e.g., unique-walk sub-scan
 			// errors that caused the scan to abort rather than return
 			// a datom).
-			if srcErr := it.crdtIter.Error(); srcErr != nil && it.err == nil {
-				it.err = srcErr
-			}
-			if closeErr := it.crdtIter.Close(); closeErr != nil && it.err == nil {
-				it.err = closeErr
-			}
+			it.err = errjoin.Join(it.err, it.crdtIter.Error())
+			it.err = errjoin.Join(it.err, it.crdtIter.Close())
 			it.crdtIter = nil
-			it.rawIter = nil
 		}
 
 		// Move to next binding tuple
@@ -932,7 +934,7 @@ func (it *validatingVBoundIterator) Next() bool {
 
 		// Open CRDT-resolving scan on V-primary index
 		var err error
-		it.crdtIter, it.rawIter, err = it.openCRDTScan()
+		it.crdtIter, err = it.openCRDTScan()
 		if err != nil {
 			it.err = err
 			return false
@@ -1001,7 +1003,7 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 // validateCandidate checks if the current value of (E, A) matches boundV.
 // A storage or decode failure surfaces as an error — it must never collapse
 // to "candidate doesn't match", which would silently drop valid results.
-func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) (bool, error) {
+func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) (valid bool, validateErr error) {
 	// Convert E to storage bytes
 	eBytes := ToStorageDatom(datalog.Datom{E: e}).E
 
@@ -1072,7 +1074,11 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	if err != nil {
 		return false, err
 	}
-	defer rawIter.Close()
+	defer func() {
+		if closeErr := rawIter.Close(); closeErr != nil {
+			valid, validateErr = false, errjoin.Join(validateErr, closeErr)
+		}
+	}()
 
 	// Resolve the (E, A) winner visible in this matcher's mode: the highest-Tx
 	// entry not filtered out by the as-of target (EATV sorts Tx descending). In
@@ -1168,15 +1174,15 @@ func (it *validatingVBoundIterator) getCardinalityEnum(a datalog.Keyword) datalo
 }
 
 // openCRDTScan opens a CRDT-resolving scan on the V-primary index for current bound V.
-// Returns both the CRDTResolvingIterator wrapper and the raw iterator (for proper Close).
-func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iterator, error) {
+// The CRDTResolvingIterator owns the raw scan and closes it.
+func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, error) {
 	var bound ScanBound
 
 	if it.boundA != nil {
 		// A is constant: use AVET with (A, V) prefix
 		aKw, ok := it.boundA.(datalog.Keyword)
 		if !ok {
-			return nil, nil, fmt.Errorf("boundA is not a Keyword")
+			return nil, fmt.Errorf("boundA is not a Keyword")
 		}
 
 		bound = ScanBound{
@@ -1213,7 +1219,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// bound's place for this arm.
 	rawIter, err := OpenKeyScan(it.matcher.reader, it.report, bound)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if it.report != nil {
 		it.report.peers++
@@ -1249,7 +1255,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 		})
 	}
 
-	return crdtIter, rawIter, nil
+	return crdtIter, nil
 }
 
 func (it *validatingVBoundIterator) Tuple() executor.Tuple {
@@ -1261,20 +1267,16 @@ func (it *validatingVBoundIterator) Tuple() executor.Tuple {
 func (it *validatingVBoundIterator) RequiresCopy() bool { return false }
 
 func (it *validatingVBoundIterator) Close() error {
+	var closeErr error
 	if it.crdtIter != nil {
-		it.crdtIter.Close()
+		closeErr = errjoin.Join(closeErr, it.crdtIter.Close())
 		it.crdtIter = nil
 	}
-	if it.rawIter != nil {
-		it.rawIter.Close()
-		it.rawIter = nil
-	}
 	if it.vectorAnswers != nil {
-		if err := it.vectorAnswers.Close(); err != nil && it.err == nil {
-			it.err = err
-		}
+		closeErr = errjoin.Join(closeErr, it.vectorAnswers.Close())
 		it.vectorAnswers = nil
 	}
+	it.err = errjoin.Join(it.err, closeErr)
 
 	// Not gated on having opened a candidate scan: the unique short-circuit
 	// resolves its claimant through a walk and emits without opening one, so
@@ -1282,7 +1284,7 @@ func (it *validatingVBoundIterator) Close() error {
 	if it.report != nil {
 		it.report.close(it.err == nil)
 	}
-	return nil
+	return closeErr
 }
 
 func (it *validatingVBoundIterator) Error() error { return it.err }
@@ -1468,25 +1470,25 @@ func (m *PatternMatcher) matchFromCache(
 // resolveKeywordFromBindings searches all binding relations for a single-tuple relation
 // containing the given variable and returns its value as a Keyword. This covers scalar
 // inputs and single-tuple tuple inputs where A has exactly one known value.
-func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations) (datalog.Keyword, bool) {
+func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations) (kw datalog.Keyword, found bool, err error) {
 	for _, rel := range bindings {
 		idx := query.SymbolIndex(rel.Symbols(), aVar.Name)
 		if idx < 0 {
 			continue
 		}
 		if rel.Size() != 1 {
-			return nil, false // multi-tuple — can't extract single value
+			return nil, false, nil // multi-tuple — can't extract single value
 		}
 		iter := rel.Iterator()
-		defer iter.Close()
 		if iter.Next() {
-			if kw, ok := iter.Tuple()[idx].(datalog.Keyword); ok {
-				return kw, true
-			}
+			kw, found = iter.Tuple()[idx].(datalog.Keyword)
 		}
-		return nil, false
+		if scanErr := errjoin.Join(iter.Error(), iter.Close()); scanErr != nil {
+			return nil, false, scanErr
+		}
+		return kw, found, nil
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // matchWithBindingsFromCache handles patterns where E comes from bindings and A is known.
@@ -1509,7 +1511,7 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 	symbols []query.Symbol,
 	a datalog.Keyword,
 	aSymIdx int,
-) (executor.Relation, bool, error) {
+) (bindingMatch executor.Relation, fromCache bool, matchErr error) {
 	// Find which symbol in the binding relation has E
 	eVar, isVar := pattern.GetE().(query.Variable)
 	if !isVar {
@@ -1627,7 +1629,11 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		resultTuples = make([]executor.Tuple, 0, size)
 	}
 	iter := bindingRel.Iterator()
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			bindingMatch, fromCache, matchErr = nil, false, errjoin.Join(matchErr, closeErr)
+		}
+	}()
 
 	for iter.Next() {
 		bindingsRead++
@@ -1982,8 +1988,8 @@ func (m *PatternMatcher) matchVectorWithBindings(
 	// One RGA resolution per binding tuple, each walking its own run, so this
 	// names no index and reports the count instead. An RGA group is every insert
 	// and tombstone ever written for the (E, A), and the exits below that
-	// produce no tuple — never set, empty, bound V mismatched — are where the
-	// gap between what was read and what came out is widest.
+	// produce no tuple — never set, bound V mismatched — are where the gap
+	// between what was read and what came out is widest.
 	var opened time.Time
 	report := DiscardIntake
 	var resolutions, elementsResolved int
@@ -1995,7 +2001,11 @@ func (m *PatternMatcher) matchVectorWithBindings(
 	// Iterate through bindings and resolve vector for each entity
 	var tuples []executor.Tuple
 	it := bindingRel.Iterator()
-	defer it.Close()
+	defer func() {
+		if closeErr := it.Close(); closeErr != nil {
+			rel, matchErr = nil, errjoin.Join(matchErr, closeErr)
+		}
+	}()
 
 	if m.handler != nil {
 		defer func() {
@@ -2045,12 +2055,7 @@ func (m *PatternMatcher) matchVectorWithBindings(
 		}
 
 		// If V is bound, compare the resolved vector against bound value
-		if v != nil {
-			if !datalog.ValuesEqual(resolved, v) {
-				continue
-			}
-		} else if len(result.Elements) == 0 {
-			// Unbound V: skip entities with empty vectors
+		if v != nil && !datalog.ValuesEqual(resolved, v) {
 			continue
 		}
 
@@ -2344,7 +2349,8 @@ func (it *cardinalityManyScanAllEntitiesIterator) Error() error { return it.err 
 // entity the pattern names when its entity element is a constant, every
 // entity carrying the attribute when it is a variable or a blank. With v
 // bound, an entity answers when its resolved collection equals v; with v nil,
-// every entity with a non-empty collection answers.
+// every entity whose vector a write reached answers, an emptied one binding
+// the empty vector.
 func (m *PatternMatcher) matchVectorScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
@@ -2452,13 +2458,8 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 
 		resolved := typedVector(result.Elements, it.valueType)
 
-		if it.v != nil {
-			// V is bound — compare
-			if !datalog.ValuesEqual(resolved, it.v) {
-				continue
-			}
-		} else if len(result.Elements) == 0 {
-			// Unbound V: skip empty vectors
+		// V is bound — compare
+		if it.v != nil && !datalog.ValuesEqual(resolved, it.v) {
 			continue
 		}
 

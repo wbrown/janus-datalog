@@ -7,8 +7,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// A temporal handle is the parent database with a pinned transaction view and
-// its own cache scope — every other field is the parent's. These tests pin
+// A temporal handle is the parent database with a view of its own, its mode
+// and its as-of target, and for an AsOf handle the cache of that view — every
+// other field is the parent's. These tests pin
 // that contract two ways: behaviorally for the fields whose loss is
 // observable, and structurally for the whole field set, so a new Database
 // field cannot silently ship unclassified (the constructor-drops-new-fields
@@ -102,9 +103,10 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	// target, History reads every datom as written.
 	"mode": fieldPerHandle,
 	"asOf": fieldPerHandle,
-	// cache is deliberately divergent: AsOf owns a private snapshot-scoped
-	// EA cache (immutable view, fills lazily, freed with the handle);
-	// History shares the parent's cache. Asserted behaviorally below.
+	// cache: AsOf keeps its resolutions in a cache of its own over the
+	// parent's (Cache.ForView), freed with the handle and reached by every
+	// arrival the parent's cache records; History shares the parent's cache.
+	// Asserted behaviorally below.
 	"cache": fieldPerHandle,
 }
 
@@ -180,8 +182,8 @@ func testTemporalHandleFieldClassification(t *testing.T, backend Backend) {
 		}
 	}
 
-	if asOf := db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1}); asOf.cache == db.cache || asOf.cache == nil {
-		t.Error("AsOf: cache must be a fresh snapshot-scoped cache, not the parent's and not nil")
+	if asOf := db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1}); asOf.cache == db.cache || asOf.cache.arrivals != db.cache {
+		t.Error("AsOf: cache must be a cache of its own that reads the parent's arrivals")
 	}
 	if hist := db.History(); hist.cache != db.cache {
 		t.Error("History: cache must be the parent's (shared)")

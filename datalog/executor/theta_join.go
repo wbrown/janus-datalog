@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -129,19 +130,16 @@ outerLoop:
 		}
 	}
 	// A failed outer or inner iteration must not be presented as a
-	// completed join. First error wins; all errors return in-band.
+	// completed join. The first evaluation or iteration error is the join's,
+	// joined with every close error; all errors return in-band.
 	if err := outerIt.Error(); joinErr == nil {
 		joinErr = err
 	}
 	if err := innerBuf.Error(); joinErr == nil {
 		joinErr = err
 	}
-	if closeErr := outerIt.Close(); joinErr == nil {
-		joinErr = closeErr
-	}
-	if closeErr := innerBuf.Close(); joinErr == nil {
-		joinErr = closeErr
-	}
+	joinErr = errjoin.Join(joinErr, outerIt.Close())
+	joinErr = errjoin.Join(joinErr, innerBuf.Close())
 	if joinErr != nil {
 		return nil, joinErr
 	}

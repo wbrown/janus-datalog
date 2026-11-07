@@ -42,9 +42,9 @@ func cacheWithOneFreshEntry(tb testing.TB, backend Backend) (*Cache, CacheKey, d
 
 	// The build's report shows what a rebuild over this store reads, so a pin
 	// that a hit reads none tells a hit from a fallthrough to the rebuild path.
-	c := NewCache()
+	c := NewCache(db.clock)
 	build := &scanReport{}
-	if _, err := c.GetOrResolve(key, card, resolver, nil, nil, build); err != nil {
+	if _, err := c.GetOrResolve(key, card, resolver, c.ReadPoint(), nil, build); err != nil {
 		tb.Fatal(err)
 	}
 	if build.scanned == 0 {
@@ -68,7 +68,7 @@ func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 			// measure a single branch, and a per-iteration error test would be
 			// measuring itself.
 			hit := &scanReport{}
-			if _, err := c.GetOrResolve(key, card, resolver, nil, nil, hit); err != nil {
+			if _, err := c.GetOrResolve(key, card, resolver, c.ReadPoint(), nil, hit); err != nil {
 				b.Fatal(err)
 			}
 			if hit.scanned != 0 {
@@ -78,7 +78,7 @@ func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				getResolveSink, getResolveErrSink = c.GetOrResolve(key, card, resolver, nil, nil, DiscardIntake)
+				getResolveSink, getResolveErrSink = c.GetOrResolve(key, card, resolver, c.ReadPoint(), nil, DiscardIntake)
 			}
 		})
 	}
@@ -92,7 +92,7 @@ func TestGetOrResolveFreshHitAllocatesNothing(t *testing.T) {
 		t.Run(backend.Name, func(t *testing.T) {
 			c, key, card, resolver := cacheWithOneFreshEntry(t, backend)
 			allocs := testing.AllocsPerRun(100, func() {
-				getResolveSink, getResolveErrSink = c.GetOrResolve(key, card, resolver, nil, nil, DiscardIntake)
+				getResolveSink, getResolveErrSink = c.GetOrResolve(key, card, resolver, c.ReadPoint(), nil, DiscardIntake)
 			})
 			if getResolveErrSink != nil {
 				t.Fatal(getResolveErrSink)

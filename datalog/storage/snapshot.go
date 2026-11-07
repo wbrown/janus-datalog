@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // Snapshots are recorded as ordinary entities in a reserved :db.snapshot/* namespace,
@@ -36,9 +37,10 @@ var (
 	ErrSnapshotExists = errors.New("snapshot already exists")
 	// ErrSnapshotNotFound is returned when a named snapshot does not exist.
 	ErrSnapshotNotFound = errors.New("snapshot not found")
-	// ErrRollbackInProgress is returned by a write (Add/Retract/Commit) started while a
-	// TruncateTo rollback is running on the same handle. The write is dropped, not queued;
-	// retry on a fresh transaction once the rollback completes.
+	// ErrRollbackInProgress is returned by a transaction begun while a TruncateTo rollback
+	// is running on the same handle: by its writes (Add/Retract/Commit) and by every read
+	// of its view. The transaction is dropped, not queued; retry on a fresh transaction
+	// once the rollback completes.
 	ErrRollbackInProgress = errors.New("write rejected: a rollback (TruncateTo) is in progress")
 )
 
@@ -57,7 +59,7 @@ func snapshotEntity(name string) datalog.Identity {
 // Snapshot names the current state of this handle as a :db.snapshot/* entity. It captures
 // store.MaxElementID() as the snapshot point and writes the marker in a single
 // transaction. Returns ErrSnapshotExists if the name is already in use.
-func (d *Database) Snapshot(name string) (SnapshotInfo, error) {
+func (d *Database) Snapshot(name string) (snap SnapshotInfo, snapErr error) {
 	if d.mode != latestMode {
 		return SnapshotInfo{}, fmt.Errorf("Snapshot: cannot snapshot a read-only temporal handle (AsOf/History)")
 	}
@@ -86,7 +88,9 @@ func (d *Database) Snapshot(name string) (SnapshotInfo, error) {
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback()
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				snapErr = errjoin.Join(snapErr, rollbackErr)
+			}
 		}
 	}()
 
@@ -170,7 +174,7 @@ func (d *Database) Snapshots() ([]SnapshotInfo, error) {
 
 // DeleteSnapshot removes the named snapshot from the registry by retracting its marker.
 // The rewindable timeline is untouched; only the registry entry goes away.
-func (d *Database) DeleteSnapshot(name string) error {
+func (d *Database) DeleteSnapshot(name string) (deleteErr error) {
 	if d.mode != latestMode {
 		return fmt.Errorf("DeleteSnapshot: cannot modify a read-only temporal handle (AsOf/History)")
 	}
@@ -188,7 +192,9 @@ func (d *Database) DeleteSnapshot(name string) error {
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback()
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				deleteErr = errjoin.Join(deleteErr, rollbackErr)
+			}
 		}
 	}()
 

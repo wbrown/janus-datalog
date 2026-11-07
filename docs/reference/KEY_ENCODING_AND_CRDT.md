@@ -553,12 +553,13 @@ Tx = (Lamport:8, ReplicaID:8) with bitwise NOT
 
 ```go
 type Cache struct {
-    // Per-(E,A) resolved views
-    entries sync.Map // map[CacheKey]*CacheEntry
+    // Per-(E,A) slot: the resolved view and the key's version, read in one
+    // lock-free trie walk.
+    slots *cacheTrie // CacheKey → cacheSlot{entry *CacheEntry, version ElementID}
 
-    // Per-(E,A) max ElementID — updated atomically on every write.
-    // Drives per-(E,A) freshness without touching storage.
-    maxVersions sync.Map // map[CacheKey]ElementID
+    clock    *LamportClock             // the database's clock: read points and arrivals
+    floor    atomic.Pointer[ElementID] // the version a key with no slot reads
+    arrivals *Cache                    // the cache recording arrivals: itself, or the database's for a view's
 }
 
 type CacheEntry struct {
@@ -574,9 +575,12 @@ type CacheEntry struct {
 ```
 
 **Key insight:** The cache stores **resolved views**, not operation history.
-Freshness is per-(E,A) and write-tracked in memory: a commit advances
-`maxVersions[key]`, and a cached entry serves only while its own version still
-equals it.
+Freshness is per-(E,A) and tracked in memory. A commit draws an arrival from
+the database's clock once its datoms are readable. It raises each touched key's
+slot version to the arrival and clears the key's entry. A reader takes its read
+point from the clock before its session opens. An entry serves the reader when
+the slot's version lies at or below that read point, so every arrival on the
+key is in the reader's session.
 
 Freshness is tracked at that granularity only. ATEV's layout would support a
 coarser per-attribute gate — one seek skips every (E,A) under an unchanged
@@ -587,20 +591,21 @@ attribute — but nothing consumes it.
 ```
 WRITE PATH (Transaction.Commit):
 ┌─────────────────────────────────────────────────────────────┐
-│ for each datom:                                             │
-│   1. Write to BadgerDB (all 8 indices, ATEV included)       │
-│   2. cache.UpdateMaxVersion(key, elemID)  ← per-(E,A)       │
-│                                                             │
-│ After all writes:                                           │
-│   3. cache.Invalidate(touched)  ← remove stale per-(E,A)    │
+│ 1. cache.BeginInFlight(touched)  ← readers go to storage    │
+│ 2. Write to BadgerDB (all 8 indices, ATEV included)         │
+│ 3. arrival := clock.Next()  ← once the datoms are readable  │
+│ 4. cache.UpdateMaxVersion(key, arrival), each touched key   │
+│    ← raises the slot's version, clears the entry            │
+│ 5. cache.Invalidate(touched)  ← clears the sentinels        │
 └─────────────────────────────────────────────────────────────┘
 
 READ PATH — per-(E,A) (cache.GetOrResolve):
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. Load entry from cache                                    │
-│ 2. Compare entry.version to maxVersions[key] (O(1) map)     │
-│    EQUAL → Return cached (O(1))                             │
-│    LESS  → Rebuild from storage, store in cache             │
+│ 1. Load the key's slot (one trie walk)                      │
+│ 2. Compare the slot's version to the reader's read point    │
+│    AT OR BELOW → Return cached (O(1))                       │
+│    ABOVE       → Resolve through the session, and store     │
+│                  it if no arrival lies above the read point │
 └─────────────────────────────────────────────────────────────┘
 
 READ PATH — bypass (no cache, direct storage):
@@ -617,17 +622,18 @@ READ PATH — bypass (no cache, direct storage):
 **Per-(E,A) — write-tracked, no I/O.**
 
 ```go
-// On every write:
-cache.UpdateMaxVersion(key, elemID)  // O(1) map update
+// On every commit, once its datoms are readable:
+arrival := clock.Next()
+cache.UpdateMaxVersion(key, arrival)  // raises the slot's version, clears the entry
 
-// On every read:
-if entry.version == maxVersions[key] {
-    return entry  // Fresh.
+// On every read, readPoint taken before the reader's session opened:
+if !readPoint.Less(slot.version) {
+    return slot.entry  // Fresh: every arrival on the key is in the session.
 }
-// Stale — rebuild from storage.
+// Resolve through the session; store only if no arrival lies above readPoint.
 ```
 
-The `maxVersions` map is updated atomically on commit, so per-(E,A)
+Every commit to the key raises the slot's version in memory, so per-(E,A)
 freshness never touches storage on the read path.
 
 **Per-attribute — the property stands; the gate built on it does not, yet.**
@@ -647,8 +653,8 @@ that nothing called.
 
 ### Why the Cache Is Invalidated, Not Maintained, on Writes
 
-`UpdateMaxVersion` tracks the newest version without touching the
-resolved view. The view itself is only **invalidated** — actual
+`UpdateMaxVersion` records an arrival on the key and drops its resolved view
+without re-resolving it. The view is only **invalidated** — actual
 resolution happens lazily on next read.
 
 This separation matters because writes shouldn't pay the cost of re-resolving
@@ -882,7 +888,7 @@ There's no incremental update for RGA that's cheaper than rebuild.
 | **Cache lookup** | Hash computation + map probe + pointer chase (~50-100ns) |
 | **LSM seek** | Binary search memtable + check bloom filters + SSTable seek (~500ns-2µs) |
 | **Read 1 entry** | Key decode + value decode (~200-500ns) |
-| **Freshness check** | Two map lookups + ElementID comparison (~50ns) |
+| **Freshness check** | One trie walk for the key's slot + one comparison of its version with the read point |
 
 ### What "n" Looks Like in Practice
 

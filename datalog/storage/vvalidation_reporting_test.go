@@ -164,3 +164,73 @@ func testVValidationReportsWhatItsScansCost(t *testing.T, mode optimizerMode) {
 		})
 	}
 }
+
+// TestVValidationReportsAScanClosedBeforeItsEndOnce pins the intake of an arm
+// its consumer closes before the candidate scan ends. The fixture holds one
+// candidate, so a consumer that closes the arm after its first tuple reads the
+// datoms a consumer that drains it reads, and both completions report them once.
+func TestVValidationReportsAScanClosedBeforeItsEndOnce(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			name := datalog.NewKeyword(":person/name")
+			alice := datalog.NewIdentity("vvalidation:alice")
+
+			// DisableCache, so the binding-driven pattern reaches this arm, as in
+			// testVValidationReportsWhatItsScansCost.
+			var events []annotations.Event
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				DisableCache:      true,
+				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
+			})
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			require.NoError(t, db.SetSchema(s))
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, name, "Alice"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: name},
+					query.Variable{Name: datalog.NewSymbol("?v")},
+				},
+			}
+			bindings := executor.NewMaterializedRelation(
+				[]query.Symbol{datalog.NewSymbol("?v")},
+				[]executor.Tuple{{"Alice"}},
+			)
+			m := db.Matcher().(*PatternMatcher)
+
+			intake := func(read func(rel executor.Relation)) int {
+				t.Helper()
+				events = nil
+				rel, err := m.MatchWithConstraints(
+					query.PatternQuery(pattern), executor.Relations{bindings}, nil)
+				require.NoError(t, err)
+				read(rel)
+				complete := lastScanComplete(events, annotations.ScanVValidation)
+				require.NotNil(t, complete, "the arm reports its completion")
+				scanned, ok := complete.Data[annotations.KeyDatomsScanned].(int)
+				require.True(t, ok, "the completion carries intake")
+				return scanned
+			}
+
+			drained := intake(func(rel executor.Relation) {
+				tuples, err := executor.CollectTuples(rel, nil)
+				require.NoError(t, err)
+				require.Len(t, tuples, 1, "alice holds the value")
+			})
+			closedEarly := intake(func(rel executor.Relation) {
+				it := rel.Iterator()
+				require.True(t, it.Next(), "alice holds the value")
+				require.NoError(t, it.Close())
+			})
+			require.Equal(t, drained, closedEarly,
+				"an arm closed after its first tuple reports each datom its scans read once, as a drained arm does")
+		})
+	}
+}

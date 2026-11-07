@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
@@ -198,7 +199,8 @@ func TestProductionQueryPattern(t *testing.T) {
 				)
 
 				// Check what strategy would be chosen
-				strategy, _ := NewPatternMatcher(store).analyzeReuseStrategy(pattern, minuteRel)
+				strategy, _, err := NewPatternMatcher(store).analyzeReuseStrategy(pattern, minuteRel)
+				require.NoError(t, err)
 
 				t.Logf("Iterator reuse analysis for minute-of-day pattern:")
 				t.Logf("  Pattern: [?bar :price/minute-of-day ?mod]")

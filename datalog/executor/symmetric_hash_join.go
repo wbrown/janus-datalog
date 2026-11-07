@@ -3,6 +3,7 @@ package executor
 import (
 	"fmt"
 
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -269,10 +270,7 @@ func (it *symmetricHashJoinIterator) Close() error {
 	if it.rightIt != nil {
 		err2 = it.rightIt.Close()
 	}
-	if err1 != nil {
-		return err1
-	}
-	return err2
+	return errjoin.Join(err1, err2)
 }
 
 // Error answers the join's failure under the failure contract (joinFailure),

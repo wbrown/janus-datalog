@@ -7,6 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -102,20 +103,27 @@ func (d *Database) queryUnderPlannerOptions(
 	// refuses unknown attributes, for the check at its entry.
 	exec, err := d.executorOverSources(q, opts.sources, matcher, planOpts)
 	if err != nil {
-		_ = session.Close()
+		if closeErr := session.Close(); closeErr != nil {
+			err = errjoin.Join(err, closeErr)
+		}
 		return refused(q.String(), err)
 	}
 
 	inputRelations, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
-		_ = session.Close()
+		if closeErr := session.Close(); closeErr != nil {
+			err = errjoin.Join(err, closeErr)
+		}
 		return refused(q.String(), err)
 	}
 
 	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(opts.ctx), q, inputRelations)
 	if err != nil {
-		_ = session.Close()
-		return nil, nil, fmt.Errorf("query execution failed: %w", err)
+		err = fmt.Errorf("query execution failed: %w", err)
+		if closeErr := session.Close(); closeErr != nil {
+			err = errjoin.Join(err, closeErr)
+		}
+		return nil, nil, err
 	}
 
 	return q, newSessionBoundRelation(result, session, completion), nil
@@ -126,6 +134,10 @@ func (d *Database) queryUnderPlannerOptions(
 // caller owns the session's lifecycle; on success it is released by the
 // session-bound result, on failure the caller closes it directly.
 func (d *Database) sessionMatcher(opts planner.PlannerOptions) (executor.PatternMatcher, ReadSession, error) {
+	// The read point is taken before the session opens, so every datom the
+	// session reads was drawn at or below it, and every arrival after it is
+	// above it.
+	readPoint := d.clock.ReadPoint()
 	session, err := d.store.NewReadSession()
 	if err != nil {
 		return nil, nil, err
@@ -133,7 +145,7 @@ func (d *Database) sessionMatcher(opts planner.PlannerOptions) (executor.Pattern
 	matcher := d.matcherWithExecOptions(opts)
 	// matcherWithExecOptions constructs *PatternMatcher in both its arms
 	// (fresh, or the AsOf copy for temporal handles).
-	matcher.(*PatternMatcher).AttachReadSession(session)
+	matcher.(*PatternMatcher).AttachReadSession(session, readPoint)
 	return matcher, session, nil
 }
 
@@ -142,7 +154,9 @@ func (d *Database) Assert(datoms []datalog.Datom) error {
 	tx := d.NewTransaction()
 	for _, dat := range datoms {
 		if err := tx.Add(dat.E, dat.A, dat.V); err != nil {
-			tx.Rollback()
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				err = errjoin.Join(err, rollbackErr)
+			}
 			return err
 		}
 	}

@@ -1,6 +1,12 @@
 # A matcher's as-of copy shares the latest view's cache
 
-**Status**: Open, recorded 2026-10-28. Found in the review of `d1e765c`.
+**Status**: Resolved 2026-11-05. Recorded 2026-10-28, found in the review of
+`d1e765c`. An as-of view, `Database.AsOf`'s handle or `PatternMatcher.AsOf`'s
+copy, keeps its resolutions in a cache of its own over the database's
+(`Cache.ForView`), and every arrival the database's cache records reaches it.
+`TestCacheEntryIsTheResolutionOfEveryDatomOfItsKey` and
+`TestAnAsOfViewKeepsItsResolutionOfAKey` (`cache_entry_late_datom_test.go`) pin
+it.
 
 `PatternMatcher.AsOf` returns a copy of the matcher that holds the same EA
 cache as the matcher it was copied from. When that matcher is a database's

@@ -83,26 +83,67 @@ func TestSessionBoundedCacheRead(t *testing.T) {
 // an older snapshot must not replace a fresher cached entry — the cache never
 // regresses, it only declines to serve.
 func TestStoreGateKeepsFresherEntry(t *testing.T) {
-	c := NewCache()
+	// The entries' versions were drawn before the cache was made, so the
+	// cache's floor, its read point when made, lies above them.
+	clock := NewLamportClock(1)
+	clock.Restore(datalog.ElementID{Lamport: 3, ReplicaID: 1})
+	c := NewCache(clock)
+	floor := c.ReadPoint()
 	key := CacheKey{}
 	copy(key.A[:], ":gate/value")
 
 	fresh := &CacheEntry{version: datalog.ElementID{Lamport: 2, ReplicaID: 1}}
-	require.True(t, c.storeIfNotInFlight(key, fresh))
+	require.True(t, c.storeIfNotInFlight(key, fresh, c.ReadPoint()))
 
 	stale := &CacheEntry{version: datalog.ElementID{Lamport: 1, ReplicaID: 1}}
-	require.False(t, c.storeIfNotInFlight(key, stale),
+	require.False(t, c.storeIfNotInFlight(key, stale, c.ReadPoint()),
 		"an older-versioned entry must not replace a fresher one")
 
 	slot, ok := c.slots.Load(key)
 	require.True(t, ok)
 	require.Same(t, fresh, slot.entry, "the fresher entry must survive")
-	require.Equal(t, fresh.version, slot.version)
+	require.Equal(t, floor, slot.version,
+		"a store into an absent slot records the higher of the floor and the entry's version")
 
 	// Equal or newer versions still store.
 	newer := &CacheEntry{version: datalog.ElementID{Lamport: 3, ReplicaID: 1}}
-	require.True(t, c.storeIfNotInFlight(key, newer))
+	require.True(t, c.storeIfNotInFlight(key, newer, c.ReadPoint()))
 	slot, ok = c.slots.Load(key)
 	require.True(t, ok)
 	require.Same(t, newer, slot.entry)
+}
+
+// TestCacheDropRefusesAResolutionReadBeforeIt pins the floor each drop raises
+// (raiseFloor): once a key's slot is dropped, a resolution whose read point was
+// taken before the drop is not stored for the key, and one whose read point was
+// taken after it is.
+func TestCacheDropRefusesAResolutionReadBeforeIt(t *testing.T) {
+	var key CacheKey
+	copy(key.A[:], ":floor/value")
+
+	drops := []struct {
+		name string
+		drop func(c *Cache)
+	}{
+		{"clearing the cache", func(c *Cache) { c.Clear() }},
+		{"dropping the key's attribute", func(c *Cache) { c.InvalidateAttribute(key.A) }},
+		{"dropping the key on a rewind", func(c *Cache) { c.InvalidateRewind([]CacheKey{key}) }},
+	}
+	for _, d := range drops {
+		t.Run(d.name, func(t *testing.T) {
+			c := NewCache(NewLamportClock(1))
+			require.True(t, c.storeIfNotInFlight(key, &CacheEntry{}, c.ReadPoint()),
+				"a resolution read with nothing arrived on the key is stored")
+
+			before := c.ReadPoint()
+			d.drop(c)
+			require.False(t, c.storeIfNotInFlight(key, &CacheEntry{}, before),
+				"a resolution read before the drop may lack what the drop's change brought")
+			_, ok := c.slots.Load(key)
+			require.False(t, ok, "the refused resolution leaves the key without a slot")
+
+			require.True(t, c.storeIfNotInFlight(key, &CacheEntry{}, c.ReadPoint()),
+				"a resolution read after the drop is stored")
+		})
+	}
 }

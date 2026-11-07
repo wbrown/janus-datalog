@@ -55,7 +55,8 @@ func TestReuseStrategy_ASingleBoundValueIsValidatedWhenTheAttributeResolvesAsOne
 			t.Run(sc.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sc.s, DisableCache: true})
 				keys := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?d")}, []executor.Tuple{{d1}, {d2}})
-				strategy, _ := d.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, keys)
+				strategy, _, err := d.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, keys)
+				require.NoError(t, err)
 				require.Equal(t, SinglePositionReuse, strategy.Type)
 				require.Equal(t, 2, strategy.Position, "the value is the seek dimension")
 				require.Equal(t, !sc.many, strategy.NeedsValidation, "validation is requested exactly when the attribute resolves as cardinality one")
@@ -76,7 +77,8 @@ func TestReuseStrategy_SeveralBoundPositionsSeekOnTheValueForADeclaredManyAlone(
 				keys := executor.NewMaterializedRelation(
 					[]query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?d")},
 					[]executor.Tuple{{a, d1}, {a, d2}})
-				strategy, _ := d.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, keys)
+				strategy, _, err := d.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, keys)
+				require.NoError(t, err)
 				require.Equal(t, SinglePositionReuse, strategy.Type)
 				if sc.many {
 					require.Equal(t, 2, strategy.Position, "a declared many is sought on the value, the position with more distinct values")

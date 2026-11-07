@@ -7,6 +7,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // PrefetchEntities loads all attributes for a set of entities into the EA cache
@@ -67,6 +68,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		prev = e
 	}
 
+	readPoint := m.cacheBound()
 	for _, e := range deduped {
 		// Bind E on EATV. The dedup above works in the storage projection, so
 		// the identity is re-interned here; the constructor returns the
@@ -92,7 +94,9 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		for iter.Next() {
 			d, err := iter.Datom()
 			if err != nil {
-				_ = iter.Close()
+				if closeErr := iter.Close(); closeErr != nil {
+					err = errjoin.Join(err, closeErr)
+				}
 				return err
 			}
 			if m.shouldFilterTx(d.Tx) {
@@ -106,7 +110,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 				// Attribute boundary — resolve and cache the previous group
 				card := m.GetCardinality(currentKeyword)
 				if key, ok := m.cacheKey(e, currentAttr); ok {
-					m.cache.PopulateFromDatoms(key, card, currentDatoms)
+					m.cache.PopulateFromDatoms(key, card, currentDatoms, readPoint)
 					populated++
 				}
 				currentDatoms = currentDatoms[:0]
@@ -118,14 +122,16 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 			hasGroup = true
 		}
 		if err := iter.Error(); err != nil {
-			_ = iter.Close()
+			if closeErr := iter.Close(); closeErr != nil {
+				err = errjoin.Join(err, closeErr)
+			}
 			return err
 		}
 		// Flush last group
 		if hasGroup && len(currentDatoms) > 0 {
 			card := m.GetCardinality(currentKeyword)
 			if key, ok := m.cacheKey(e, currentAttr); ok {
-				m.cache.PopulateFromDatoms(key, card, currentDatoms)
+				m.cache.PopulateFromDatoms(key, card, currentDatoms, readPoint)
 				populated++
 			}
 		}

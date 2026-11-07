@@ -21,7 +21,7 @@ Every name below is the code's, given a symbol for the proof.
 - The **copy answer** is `Iterator.RequiresCopy`. It is true when the slice `Tuple` hands back is one the next `Next` overwrites, so a reader that keeps a tuple past the next pull copies it. It is false when every tuple is the caller's to keep. `Relation.RequiresCopy` is the answer of the iterator `Iterator` hands out. A `StreamingRelation` answers false once it caches and its iterator's answer otherwise.
 - The **size answer** is `Relation.Size`. A `StreamingRelation` answers its cache's length when the cache is ready, its known size, its materialization's size, or its counter's count once its iterator is done. Otherwise it answers -1 without opening the iterator.
 - The **index** is the `JoinIndex` the build side is held in: one group of held tuples per distinct key, probed by positions with no allocation.
-- The **join's iterator** is `hashJoinIterator`: the index, the probe iterator, the deferred build error, the projection plan, the current probe tuple, the current match group and its position.
+- The **join's iterator** is `hashJoinIterator`: the index, the probe iterator, the build's failure and its close failure, the projection plan, the current probe tuple, the current match group and its position.
 - The **symmetric join's iterator** is `symmetricHashJoinIterator`, which `ChooseJoinStrategy` selects under `EnableSymmetricHashJoin` when both sides stream. It keeps an index per side, reads each side in batches into its own index, and probes the other side's index with each tuple.
 - The **join's failure rule** is `joinFailure`, over what a join read of each side: whether the side yielded a tuple, and the failure it ended with. Where either side ended with no tuple and no failure, the rule answers no failure. Otherwise it answers the first side's failure, else the second's.
 - The **workspace** is one slice of the result's width the join's iterator owns, fills on each pull, and hands back from `Tuple`.
@@ -34,6 +34,9 @@ Every name below is the code's, given a symbol for the proof.
   - Under the contract, an assignment where some clause does not hold fails no query, whatever another clause raises there. That is the conjunction's reading, commutative and associative over the clauses, so every plan answers alike.
   - `TestAJoinWithAnEmptySideAnswersEmptyThoughTheOtherSideFails` (storage) pins it.
   - The engine departs from the contract in shapes §7 lists.
+- A side's or a group's **failure** is the one its iterator's `Error` answers. Its **close failure** is the one its iterator's `Close` answers.
+  - The close failure of a side or a group a reader closes is no failure at an assignment, so the failure contract does not decide it, and the join's failure rule reads none. It reaches the reader's caller whatever the other sides hold.
+  - An operator that reads its input to its end while it builds a relation closes the input itself: a subquery's branch, a materialization, an aggregate. The input's close failure is then part of the failure the relation keeps. That relation's readers meet it through `Error`, as a side's failure, so the failure contract decides it (T11).
 - The **pattern join iterator** is `patternJoinIterator`: the windowed join of a subject with a pattern. At its first pull it reads whether the pattern alone has a match, through the matcher and `hasTuple`, and it answers the windowed join's tuples only where the pattern has one.
 - The **identity symbols** of a relation are `RelationProperties.Identities`: the symbols whose every value is an identity, as a data pattern's entity position binds them.
 - The **evaluating mark** is `RelationProperties.Evaluates`. It says that reading the relation evaluates, as tuples are pulled, a function that can fail on a value, which `canFailOnAValue` decides:
@@ -95,7 +98,7 @@ Every name below is the code's, given a symbol for the proof.
   - `HashJoinWithOptions` reads its sides' sizes to choose the build side when both are materialized.
   - `HashJoinWithOptions` reads the build side's size for the index's capacity, falling back to `DefaultHashTableSize` or 256 when the answer is negative.
   - `SemiJoin` and `AntiJoin` read the right side's size for the key set's capacity.
-  - `hasTuple` reads no size. It pulls one tuple and closes, completing a filling cache, and answers the failure the iterator reports: a held relation's, a replayed cache's or a fold's.
+  - `hasTuple` reads no size. It pulls one tuple and closes, completing a filling cache. It answers the failure the iterator reports, a held relation's, a replayed cache's or a fold's, and its close failure apart.
   - `hasTuple`'s callers are the existence verdict, over the groups it decides and over the groups the find reads, the pattern join iterator, and the hash join over an empty build that failed. Each is the last reader of the relation it gives `hasTuple`.
   - `declaredTupleCount` answers -1 when any group declines.
   - `ProductRelation.Size` answers -1 when any operand declines.
@@ -129,7 +132,7 @@ Every name below is the code's, given a symbol for the proof.
   - The iterator answers each source tuple joined with each such tuple through `bindingAlignment.apply`. `apply` keeps a tuple only where every bound position unifies, answering a fresh tuple when a binding symbol extends the source tuple and the source tuple itself when none does.
 - **P10 (the readers that stop early).**
   - `LimitRelation.take` pulls at most its limit's tuples.
-  - `existenceVerdict` reads each group the find does not read until the group shows a tuple, ends, or fails, and decides once every group is read. With a failure to raise, it reads each group the find reads through `hasTuple`, and answers empty when one of them holds no tuple and no failure.
+  - `existenceVerdict` reads each group the find does not read until the group shows a tuple, ends, or fails, and decides once every group is read. With a failure to raise, it reads each group the find reads through `hasTuple`, and answers empty when one of them holds no tuple and no failure. The close failure of every group it opened is its error, joined after the failure it raises, or in place of the relation it would answer (L12).
   - `ProductIterator.Next`'s first pull reads every member to its first tuple, its end or its failure. A member ending with no tuple and no failure ends the product with no failure. Otherwise a member that failed ends the product with its failure.
   - Every other reader reads a relation to its end (P2), or reads a held relation.
   - The evaluating mark is set by:
@@ -183,7 +186,7 @@ Every name below is the code's, given a symbol for the proof.
 
 **T4 (allocation).** Per pair the join allocates nothing. Per probe tuple it allocates nothing, on a hit and on a miss alike. Per join it allocates the index, the workspace, the iterator and the relation.
 
-**T5 (the empty build and a side's failure).** When the build side is empty the join answers the empty relation over the result's symbols and properties. A build that read no failure leaves the probe side unopened, as its next reader finds it. A build that failed reads the probe side to its first tuple, its end or its failure, its one use, and the result carries the build's failure only where the probe side held a tuple or a failure. When the build side holds a tuple, the join's iterator answers the build's failure only where the probe side yielded a tuple or failed. The symmetric join's iterator answers a side's failure only where the other side yielded a tuple or failed.
+**T5 (the empty build and a side's failure).** When the build side is empty the join answers the empty relation over the result's symbols and properties. A build that read no failure leaves the probe side unopened, as its next reader finds it. A build that failed reads the probe side to its first tuple, its end or its failure, its one use, and the result carries the build's failure only where the probe side held a tuple or a failure. When the build side holds a tuple, the join's iterator answers the build's failure only where the probe side yielded a tuple or failed. The symmetric join's iterator answers a side's failure only where the other side yielded a tuple or failed. Every close failure reaches the caller whatever the other side holds. The empty build's result carries the build side's, and the probe side's where `hasTuple` read it. The join's iterator answers the build side's from `Close` beside the probe side's, and the symmetric join's iterator answers both sides' from `Close`.
 
 **T6 (the route).** A join result whose build holds a tuple answers -1 for its size, and an empty build's result, the empty relation held (T5), answers 0. A later pattern or invocation sharing the first's symbols takes the windowed route, which reads the join result once and answers the tuples the matcher's route answers, and one sharing the second's takes the held route over the empty relation. A scan failure on the windowed route surfaces when the result is driven, where the matcher's route surfaced it from the call. At the public boundary a query whose final relation is a join result with a build, or a projection of one, answers -1 for its size, as a query ending in a scan does (P8), and a caller that counts iterates; a query whose final relation is an empty build's answers 0.
 
@@ -199,6 +202,7 @@ Every name below is the code's, given a symbol for the proof.
 - `:limit` reads an evaluating source to its end after the tuples it keeps.
 - The existence verdict reads an evaluating group to its end once every group has shown a tuple, and reads no group past its first tuple when one has none.
 - A group's failure in place of a first tuple, an evaluating group's or one the group keeps from reading its source, is the query's error only when no group is empty, neither a group the verdict decides nor a group the find reads.
+- The close failure of every group the verdict opens is the query's error, whether or not a group is empty.
 - A product's member failing in place of a first tuple fails the product only when no member is empty.
 - A relation that carries no mark keeps the early stop. A `:limit 0` stops before its first tuple (§7).
 
@@ -230,7 +234,7 @@ By P3 every consumer that reads a join result more than once materializes it fir
 
 ### L6. The empty build and the build's failure (T5)
 
-By P6 the join is empty when the index holds no tuple, whatever the probe holds. So the empty relation over the result's symbols and properties is the answer, and no pull of the probe side is needed to compute it. The build side was drained, so its deferred error is in hand.
+By P6 the join is empty when the index holds no tuple, whatever the probe holds. So the empty relation over the result's symbols and properties is the answer, and no pull of the probe side is needed to compute it. The build side was drained and closed, so its failure and its close failure are in hand.
 
 A build that read no failure leaves the probe side's iterator uncalled. So a stream among the probe sides keeps its one use, and a caching stream records no incomplete materialization.
 
@@ -240,7 +244,9 @@ When the build holds a tuple, the join's iterator holds the current probe tuple.
 
 The join's iterator computes this answer through the join's failure rule. The build side is a side that yielded a tuple, and the probe side is one that yielded once a probe tuple was read. The empty build's branch computes its answer through the rule too, the build side as one that yielded none and the probe side as `hasTuple` read it.
 
-The symmetric join's iterator reads each side in batches until the side ends, by its end or its failure. Its `Next` answers false only once both sides have ended. It records whether each side yielded a tuple, and its `Error` answers the rule over the two sides. A side that ended with no tuple and no failure holds at no assignment, so no failure is raised beside it. Where both sides yielded a tuple or failed, the rule answers the left side's failure, else the right side's. ∎
+The symmetric join's iterator reads each side in batches until the side ends, by its end or its failure. Its `Next` answers false only once both sides have ended. It records whether each side yielded a tuple, and its `Error` answers the rule over the two sides. A side that ended with no tuple and no failure holds at no assignment, so no failure is raised beside it. Where both sides yielded a tuple or failed, the rule answers the left side's failure, else the right side's.
+
+The rule reads no close failure (§1). The empty build's branch carries the build side's close failure, and the probe side's where `hasTuple` read it, beside the rule's answer. The join's iterator answers the build side's close failure from `Close`, joined with the probe side's, and the symmetric join's iterator answers both sides' from `Close`. ∎
 
 ### L7. The route (T6)
 
@@ -284,7 +290,9 @@ The existence verdict reads past a first tuple only once every group has shown o
 
 A group can fail in place of a first tuple. An evaluating group's first pull can fail, and `hasTuple` answers the failure a group keeps (P4). The verdict reads every group to its first tuple, its end, or its failure before it decides. When some group ends with no tuple and no failure, no assignment holds every group, so no group's failure is raised. When none does, the first failure is the verdict's. Where every other group holds a tuple, the groups are disjoint, so the failing tuple meets a tuple of each in an assignment where every other clause holds. Where another group failed in place of a tuple too, the verdict raises the first failure (§7).
 
-With a failure to raise, the verdict reads each group the find reads through `hasTuple`, as their last reader (P4, P10). One with no tuple and no failure holds at no assignment, so the verdict answers empty and raises nothing. Otherwise the failure is the query's error.
+With a failure to raise, the verdict reads each group the find reads through `hasTuple`, as their last reader (P4, P10). One with no tuple and no failure holds at no assignment, so the verdict answers empty and raises no failure. Otherwise the failure is the query's error.
+
+The verdict closes every group it opens, and the failure contract does not decide a close failure (§1). So the close failure of every group it opened is the verdict's error whatever the groups hold, joined after the failure it raises.
 
 A product's first pull reads its members as the verdict reads its groups (P10). A member with no tuple and no failure ends the product with no failure, since no assignment holds every member. Otherwise the first failed member's failure is the product's error. ∎
 
@@ -315,13 +323,14 @@ The change carries these tests, each pinning the theorem named, mapped to the re
   - `TestQueriesAnswerAlikeUnderBothOptimizerModes` and `TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation` (storage) are the differentials over real queries and rule evaluation, run unchanged (T2).
 - Gate 2, the shapes: the same test's cases for an empty side, one tuple on each side, a key repeated on one side, on both, and a large input (T1).
 - Gate 3, iterator and close errors:
-  - `TestHashJoinPropagatesBuildAndProbeCloseErrors` (executor). The build case runs unchanged. The probe case drives the join through `CollectTuples`, which reads what `Close` returns, since the join's iterator returns the probe's close error from `Close` (P2).
+  - `TestHashJoinPropagatesBuildAndProbeCloseErrors` (executor). Both cases drive the join through `CollectTuples`, which reads what `Close` returns, since the join's iterator returns each side's close error from `Close` (P2, T5).
   - `TestHashJoinSurfacesErroredEmptySide` (executor), run unchanged. It joins a relation with an errored empty one. Whichever side the join takes as its build, the error reaches the result: as the build's deferred error carried by the empty-build answer, or as the probe's error when the probe is opened under a non-empty build (T5).
   - `TestHashJoinRaisesABuildFailureOnlyWhereTheProbeSideHoldsATuple` (executor, new). A build failing at its first tuple, its index empty, or past it fails nothing beside an empty probe side, and fails the join beside a probe side with a tuple (T5, T10).
   - `TestEveryJoinStrategyAnswersASideFailureOnlyWhereTheOtherSideHoldsATuple` (executor, new). Under the hash join and the symmetric join, a side failing at its first tuple or past it answers no tuple and no failure beside an empty side, and the failure beside a side with a tuple. Both sides failing answer the failure, and both holding tuples answer their pair (T5, T10).
   - `TestJoinFailureIsTheFirstSidesFailureUnlessASideEndedEmpty` (executor, new). The join's failure rule answers each case of what two sides yielded and ended with (T5).
   - `TestReviewMark_AFailureBesideAnEmptyJoinSideFailsNoQueryUnderEveryJoin` (storage, new) and `TestRefuteMark_EveryJoinStrategyAnswersAFailureBesideAnEmptySideAlike` (db, new). Under `EnableSymmetricHashJoin`, a failing group joined with an empty group answers empty in either clause order, on both optimizer paths, as under the hash join (T5, T10).
   - `TestAFailureBesideAClauseHoldingNowhereFailsNoQuery` (storage, new). A failing group joined with an empty group on the failing expression's output answers empty in either clause order, on both optimizer paths (T5, T10).
+  - `TestAHashJoinAnswersEachSidesCloseFailureWhateverTheOtherSideHolds` (executor). A build side's close failure beside a probe side with no tuple, the build holding a tuple or none, and a probe side's close failure beside an empty build that failed, each reach the caller, and the build's failure is not raised beside the probe side with no tuple (T5, L6).
 - The materialized arm's contract, which the executor's older tests read, moves to the stream's (T4, T6):
   - `TestHashJoin`, `TestJoinMultipleSymbols`, `TestEmptyJoin`, `TestDatomJoinScenario`, `TestStreamingRelationSingleUseInJoin`, `TestEqualVectorValuesJoin`, `TestSignedZeroHashesConsistentlyAcrossSetOperations` and `TestRelationsCollapse` count the tuples they collect in place of reading the join result's size.
   - `collectTuples` in `join_test.go` and `assertNoDuplicates` in `set_semantics_test.go` copy a kept tuple under the copy answer.
@@ -367,6 +376,7 @@ The change carries these tests, each pinning the theorem named, mapped to the re
   - `TestProductRelation_AMembersFailureIsItsFailureOnlyWhereEveryOtherMemberHasATuple` (executor, new). A member failing in place of a first tuple fails the product beside a member with a tuple, and fails nothing beside an empty member, on either side of it.
   - `TestAFailureBesideAClauseHoldingNowhereFailsNoQuery` (storage, new). A group failing at its first tuple, or past it, beside the find's empty group answers empty. So does a find or an aggregating find spanning a failing group and an empty group, in either order, on both optimizer paths.
   - `TestTheExistenceVerdictReadsAFailureARelationKeepsBehindItsSize` (executor, new). An aggregate whose fold of an expression's result failed, and a stream whose replay cache completed with its source's failure, each fail the verdict beside a group with a tuple, and fail nothing beside an empty group, on either side of it.
+  - `TestTheExistenceVerdictAnswersTheCloseFailureOfEveryGroupItOpens` (executor). The close failure of every group the verdict opens reaches the caller: a group read after a failing group, a failing group beside a group or a held group with no tuple, a held group read after a failure, and an evaluating group closed before another evaluating group's failure. Beside a group with no tuple, the failure is not raised (T11, L12).
   - `TestALimitOverEvaluateFunctionAnswersAFailurePastItsTuples` (executor, new). On the stream and the lazy sequence, a limit over a failing function's result answers the failure, and over a function reading no variable it pulls the one tuple it keeps.
   - `TestALimitOverFilterWithPredicateReadsAsThePredicateCanFail` (executor, new). On the stream and the lazy sequence, a limit over a transaction range answers its failure past the kept tuple, and over a comparison it pulls the one tuple it keeps.
   - `TestCanFailOnAValue` (executor, new). Each clause kind's verdict, through header forms, a subquery's body and the rule bodies an invocation reaches. A clause that can fail keeps the verdict when a function reading no variable follows it.
@@ -421,12 +431,14 @@ The change carries these tests, each pinning the theorem named, mapped to the re
   - when the index is empty after the build, answers the empty relation over the result's symbols and properties through `newMaterializedRelationFromSet` and emits the `JoinProbe` event with no probe tuple
   - over an empty build that read no failure, does not call the probe side's `Iterator`
   - over an empty build that failed, reads the probe side through `hasTuple`, and carries the build's failure only where the probe side held a tuple or a failure (T5)
+  - over an empty build, carries the build side's close failure, and the probe side's where `hasTuple` read it, whatever either side holds (T5)
 - `join.go`, `hashJoinIterator`:
   - owns a workspace of the result's width
   - fills it on each pull in place of building a fresh tuple, and hands it back from `Tuple`
   - answers `RequiresCopy` true
   - copies no probe tuple, and `probeNeedsCopy` goes
   - answers the build's failure from `Error` only once a probe tuple was read or the probe failed (T5)
+  - answers the build's close failure from `Close`, joined with the probe side's (T5)
 - `join.go`, `joinFailure`: the join's failure rule, which `hashJoinIterator.Error` and the empty build's branch of `hashJoinWithSet` answer through (T5).
 - `symmetric_hash_join.go`, `symmetricHashJoinIterator`: records whether each side yielded a tuple, and its `Error` answers `joinFailure` over the two sides (T5).
 - `executor_utils.go`: `BindQueryInputs` collects its fold through `collectTuplesInto` into a proven-set materialized relation before answering it.

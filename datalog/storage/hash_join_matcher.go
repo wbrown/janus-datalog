@@ -8,6 +8,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -408,10 +409,7 @@ func (m *PatternMatcher) buildHashSet(
 			keys = append(keys, tuple[position])
 		}
 	}
-	iterErr := iter.Error()
-	if closeErr := iter.Close(); iterErr == nil {
-		iterErr = closeErr
-	}
+	iterErr := errjoin.Join(iter.Error(), iter.Close())
 	if iterErr != nil {
 		return nil, nil, 0, iterErr
 	}

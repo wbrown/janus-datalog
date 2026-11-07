@@ -12,6 +12,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/edn"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
 
 // ExportOptions configures EDN export behavior.
@@ -46,12 +47,16 @@ func (d *Database) ExportCompressed(w io.Writer) error {
 }
 
 // export is the shared implementation for Export and ExportCompressed.
-func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, skipEntity func(datalog.Identity) bool) error {
+func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, skipEntity func(datalog.Identity) bool) (exportErr error) {
 	iter, err := OpenScan(d.store, DiscardIntake, ScanBound{Index: EAVT})
 	if err != nil {
 		return fmt.Errorf("failed to scan database: %w", err)
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			exportErr = errjoin.Join(exportErr, fmt.Errorf("failed to close database scan: %w", closeErr))
+		}
+	}()
 
 	bw := bufio.NewWriter(w)
 

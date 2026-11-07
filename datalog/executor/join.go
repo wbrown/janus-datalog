@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -28,13 +29,14 @@ type hashJoinIterator struct {
 	// naming a tuple of keptTuples, the set's tuples up to that count. Exactly
 	// one of buildIndex and kept is nil: a build side with no set named is
 	// drained into buildIndex.
-	kept         *ordinalIndex
-	keptTuples   []Tuple
-	probeIndices []int
-	bound        int
-	probeIt      Iterator
-	buildErr     error // deferred error captured from the (eagerly consumed) build relation
-	buildIsLeft  bool
+	kept          *ordinalIndex
+	keptTuples    []Tuple
+	probeIndices  []int
+	bound         int
+	probeIt       Iterator
+	buildErr      error // the build scan's read failure, which Error decides under the failure contract
+	buildCloseErr error // the build scan's close failure, which Close answers
+	buildIsLeft   bool
 	// rightNonJoinIndices identifies positions in the right-side tuple
 	// (per buildIsLeft, the probe side when buildIsLeft is true, otherwise
 	// the build side) whose values are written after the left tuple in the
@@ -155,17 +157,20 @@ func (it *hashJoinIterator) Tuple() Tuple {
 // overwrites.
 func (it *hashJoinIterator) RequiresCopy() bool { return true }
 
+// Close answers the build scan's close failure and the probe side's.
 func (it *hashJoinIterator) Close() error {
-	if !it.closed {
-		it.closed = true
-		if it.metrics != nil {
-			it.emitProbeAnnotation()
-		}
-		if it.probeIt != nil {
-			return it.probeIt.Close()
-		}
+	if it.closed {
+		return nil
 	}
-	return nil
+	it.closed = true
+	if it.metrics != nil {
+		it.emitProbeAnnotation()
+	}
+	var probeCloseErr error
+	if it.probeIt != nil {
+		probeCloseErr = it.probeIt.Close()
+	}
+	return errjoin.Join(it.buildCloseErr, probeCloseErr)
 }
 
 // sideRead is what a join read of one of its sides: whether the side yielded
@@ -402,7 +407,7 @@ func hashJoinWithSet(
 	}
 
 	var buildIndex *JoinIndex
-	var buildErr error
+	var buildErr, buildCloseErr error
 	var buildCount int
 	if kept != nil {
 		// The build side is the set's tuples up to its count: the kept index
@@ -506,9 +511,7 @@ func hashJoinWithSet(
 		// The build relation may share underlying iterators with the probe relation
 		// (e.g., OrFallbackRelation wraps a StreamingRelation that is also the probe).
 		// Close() signals the CachingIterator, unblocking probe's Size()/Iterator().
-		if closeErr := buildIt.Close(); buildErr == nil {
-			buildErr = closeErr
-		}
+		buildCloseErr = buildIt.Close()
 		if trackCopy {
 			buildEnd = time.Now()
 		}
@@ -553,15 +556,17 @@ func hashJoinWithSet(
 	// side holds. A build that read no failure leaves the probe side unopened:
 	// a stream among the probe sides keeps its one use
 	// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T5). A build that failed
-	// has its deferred error in hand, and the result carries it only where
-	// the probe side holds a tuple or a failure, so the probe side is read to
-	// its first tuple, its end or its failure, its one use: an empty probe
-	// side holds at no assignment, so the build's failure is not raised (the
-	// failure contract).
+	// has its read failure in hand, and the result carries it only where the
+	// probe side holds a tuple or a read failure, so the probe side is read to
+	// its first tuple, its end or its read failure, its one use: an empty
+	// probe side holds at no assignment, so the build's read failure is not
+	// raised (the failure contract). The result carries the build's close
+	// failure, and the probe side's where it was read, whatever either holds.
 	if buildCount == 0 {
 		if buildErr != nil {
-			has, probeErr := hasTuple(probeRel)
-			buildErr = joinFailure(sideRead{err: buildErr}, sideRead{yielded: has, err: probeErr})
+			has, probeReadErr, probeCloseErr := hasTuple(probeRel)
+			buildErr = joinFailure(sideRead{err: buildErr}, sideRead{yielded: has, err: probeReadErr})
+			buildCloseErr = errjoin.Join(buildCloseErr, probeCloseErr)
 		}
 		if opts.Handler != nil {
 			opts.Handler(annotations.Event{
@@ -575,7 +580,7 @@ func hashJoinWithSet(
 			})
 		}
 		result := newMaterializedRelationFromSet(outputSyms, nil, opts, resultProperties)
-		result.err = buildErr
+		result.err = errjoin.Join(buildErr, buildCloseErr)
 		return result
 	}
 
@@ -592,6 +597,7 @@ func hashJoinWithSet(
 		bound:               bound,
 		probeIt:             probeRel.Iterator(),
 		buildErr:            buildErr,
+		buildCloseErr:       buildCloseErr,
 		buildIsLeft:         buildIsLeft,
 		rightNonJoinIndices: rightNonJoinIndices,
 		options:             opts,
@@ -654,10 +660,7 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		}
 		rightKeys.Add(tuple, hash)
 	}
-	rerr := rightIt.Error()
-	if cerr := rightIt.Close(); rerr == nil {
-		rerr = cerr
-	}
+	rerr := errjoin.Join(rightIt.Error(), rightIt.Close())
 	if rerr != nil {
 		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
 		res.err = rerr
@@ -678,10 +681,7 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 			}
 		}
 	}
-	lerr := leftIt.Error()
-	if cerr := leftIt.Close(); lerr == nil {
-		lerr = cerr
-	}
+	lerr := errjoin.Join(leftIt.Error(), leftIt.Close())
 
 	// A selection of a set is a set
 	// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T5).
@@ -742,10 +742,7 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		}
 		rightKeys.Add(tuple, hash)
 	}
-	rerr := rightIt.Error()
-	if cerr := rightIt.Close(); rerr == nil {
-		rerr = cerr
-	}
+	rerr := errjoin.Join(rightIt.Error(), rightIt.Close())
 	if rerr != nil {
 		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
 		res.err = rerr
@@ -766,10 +763,7 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 			}
 		}
 	}
-	lerr := leftIt.Error()
-	if cerr := leftIt.Close(); lerr == nil {
-		lerr = cerr
-	}
+	lerr := errjoin.Join(leftIt.Error(), leftIt.Close())
 
 	// A selection of a set is a set
 	// (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T5).
@@ -795,7 +789,8 @@ func crossProduct(left, right Relation) Relation {
 
 	outputSyms := append(left.Symbols(), right.Symbols()...)
 	var results []Tuple
-	var scanErr error
+	// The first scan failure, and every close failure.
+	var iterErr, closeErr error
 
 	leftIt := left.Iterator()
 
@@ -810,23 +805,19 @@ func crossProduct(left, right Relation) Relation {
 			combined := append(append(Tuple{}, leftTuple...), rightTuple...)
 			results = append(results, combined)
 		}
-		if err := rightIt.Error(); err != nil && scanErr == nil {
-			scanErr = err
+		if err := rightIt.Error(); err != nil && iterErr == nil {
+			iterErr = err
 		}
-		if closeErr := rightIt.Close(); closeErr != nil && scanErr == nil {
-			scanErr = closeErr
-		}
+		closeErr = errjoin.Join(closeErr, rightIt.Close())
 	}
-	if err := leftIt.Error(); err != nil && scanErr == nil {
-		scanErr = err
+	if err := leftIt.Error(); err != nil && iterErr == nil {
+		iterErr = err
 	}
-	if closeErr := leftIt.Close(); closeErr != nil && scanErr == nil {
-		scanErr = closeErr
-	}
+	closeErr = errjoin.Join(closeErr, leftIt.Close())
 
 	// A failed scan is not an empty side — carry it as the result's
 	// deferred error.
 	result := NewMaterializedRelationWithOptions(outputSyms, results, opts)
-	result.err = scanErr
+	result.err = errjoin.Join(iterErr, closeErr)
 	return result
 }

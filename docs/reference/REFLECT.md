@@ -175,12 +175,13 @@ The omission is for scalar fields only. On a many or vector attribute the proper
 
 `SaveStruct` provides upsert semantics - calling it on an entity that already exists will update it.
 
+Each field is compared against the transaction's view of the entity: the value its read session opened on, with the transaction's own writes applied. `SaveStruct` writes only what the struct changes in that view. A field the struct holds unchanged is not written, so another transaction's change to that field stands.
+
 ### Cardinality-One Fields
 
-For single-value fields, `SaveStruct` automatically:
-1. Looks up the existing value
-2. If different, retracts the old value
-3. Adds the new value
+For single-value fields, `SaveStruct`:
+1. Looks up the field's value in the transaction's view
+2. Asserts the struct's value if it differs, and the assertion supersedes the old value
 
 ```go
 // Original: Alice, age 30
@@ -190,15 +191,15 @@ alice.Age = 31
 tx := d.NewTransaction()
 tx.SaveStruct(&alice)
 tx.Commit()
-// Now: Alice Smith, age 31 (old values retracted)
+// Now: Alice Smith, age 31 (the new values supersede the old)
 ```
 
 ### Cardinality-Many Fields
 
-For slice fields, `SaveStruct` uses diff-based updates:
-- Retracts values in existing but not in new
-- Adds values in new but not in existing
-- Values present in both are unchanged
+For slice fields, `SaveStruct` diffs against the members the transaction's view holds:
+- Withdraws members the view holds and the slice lacks
+- Adds members the slice holds and the view lacks
+- Leaves members in both unchanged
 
 ```go
 // Original tags: ["developer", "golang"]
@@ -208,7 +209,7 @@ tx := d.NewTransaction()
 tx.SaveStruct(&alice)
 tx.Commit()
 // Result: ["developer", "rust", "architect"]
-// "golang" retracted, "rust" and "architect" added, "developer" unchanged
+// "golang" withdrawn, "rust" and "architect" added, "developer" unchanged
 ```
 
 ### Nil vs Empty Slice Semantics

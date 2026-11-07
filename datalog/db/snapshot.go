@@ -13,6 +13,7 @@ var (
 	ErrSnapshotExists = storage.ErrSnapshotExists
 	// ErrSnapshotNotFound is returned when a named snapshot does not exist.
 	ErrSnapshotNotFound = storage.ErrSnapshotNotFound
-	// ErrRollbackInProgress is returned by a write started while a TruncateTo is running.
+	// ErrRollbackInProgress is returned by the writes, and every read of the view, of a
+	// transaction begun while a TruncateTo is running.
 	ErrRollbackInProgress = storage.ErrRollbackInProgress
 )

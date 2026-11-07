@@ -132,50 +132,9 @@ func ResolveRGAFromDatoms(datoms []datalog.Datom) ([]any, []datalog.ElementID, d
 		return nil, nil, datalog.ElementID{}
 	}
 
-	// Build RGAElement map with deduplication
-	elemByID := make(map[datalog.ElementID]RGAElement)
-
-	for _, d := range datoms {
-		if d.Op != datalog.OpRGAInsert && d.Op != datalog.OpRGATombstone {
-			continue
-		}
-
-		if d.Op == datalog.OpRGAInsert {
-			rgaElem := RGAElement{
-				ID:       d.Tx,
-				Value:    d.V,
-				AfterRef: d.AfterRef,
-			}
-
-			existing, exists := elemByID[rgaElem.ID]
-			if !exists {
-				elemByID[rgaElem.ID] = rgaElem
-			} else if existing.Tombstone == nil {
-				elemByID[rgaElem.ID] = rgaElem
-			}
-
-		} else if d.Op == datalog.OpRGATombstone {
-			targetID := d.AfterRef
-			tombstoneID := d.Tx
-
-			existing, exists := elemByID[targetID]
-			if !exists {
-				elemByID[targetID] = RGAElement{
-					ID:        targetID,
-					Value:     d.V,
-					AfterRef:  datalog.ElementID{},
-					Tombstone: &tombstoneID,
-				}
-			} else {
-				if existing.Tombstone == nil || existing.Tombstone.Less(tombstoneID) {
-					existing.Tombstone = &tombstoneID
-					if existing.Value == nil {
-						existing.Value = d.V
-					}
-					elemByID[targetID] = existing
-				}
-			}
-		}
+	elemByID := make(vectorElements)
+	for i := range datoms {
+		elemByID.gather(&datoms[i])
 	}
 
 	// Convert to slice

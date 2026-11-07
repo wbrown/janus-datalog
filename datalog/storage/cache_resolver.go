@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -45,13 +46,15 @@ func (m *PatternMatcher) ResolvesUnique(a Attribute) bool {
 // unique rule (ResolvesUnique), delegates to walkUniqueEntityValue for
 // walk-based resolution: the returned value is the entity's first
 // non-superseded assertion, which may fall back to an older entry if the
-// latest has been claimed by another entity.
+// latest has been claimed by another entity, and the returned ElementID is
+// the walk's version, the highest among the datoms it read, other entities'
+// superseding claims included.
 func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (v any, tx datalog.ElementID, present bool, resolveErr error) {
 	if m.ResolvesUnique(a) {
 		// The walk acquires through report, so its intake — the deepest read
 		// on this path — reaches the arm whether or not the walk goes on to
 		// fail.
-		v, tx, found, present, err := m.walkUniqueEntityValue(e, a, report)
+		v, _, version, found, present, err := m.walkUniqueEntityValue(newUniqueWalkState(), e, a, report)
 		if err != nil {
 			return nil, datalog.ElementID{}, false, err
 		}
@@ -63,9 +66,9 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (
 			// none falls through to the plain EATV first-entry scan — which
 			// never applies the unique rule and hands back the superseded
 			// value.
-			return nil, datalog.ElementID{}, present, nil
+			return nil, version, present, nil
 		}
-		return v, tx, true, nil
+		return v, version, true, nil
 	}
 
 	// Scan EATV for the first entry visible in this matcher mode (highest
@@ -82,9 +85,7 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (
 		return nil, datalog.ElementID{}, false, err
 	}
 	defer func() {
-		if closeErr := iter.Close(); resolveErr == nil {
-			resolveErr = closeErr
-		}
+		resolveErr = errjoin.Join(resolveErr, iter.Close())
 	}()
 
 	for iter.Next() {

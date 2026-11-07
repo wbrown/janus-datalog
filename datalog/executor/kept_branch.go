@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -169,12 +170,8 @@ func collectBranch(branchResult Relation) ([]Tuple, error) {
 		}
 		collected = append(collected, t)
 	}
-	iterErr := iter.Error()
-	if closeErr := iter.Close(); iterErr == nil {
-		iterErr = closeErr
-	}
-	if iterErr != nil {
-		return nil, iterErr
+	if err := errjoin.Join(iter.Error(), iter.Close()); err != nil {
+		return nil, err
 	}
 	return collected, nil
 }

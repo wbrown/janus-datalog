@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/storage"
@@ -59,7 +60,7 @@ var ErrStoreLocked = storage.ErrStoreLocked
 // store. A persistent backend has nowhere of its own to put one, so Open makes
 // a temporary directory that the database removes when it closes, and that
 // Open removes itself when it answers no database.
-func Open(source interface{}, opts ...Option) (*DB, error) {
+func Open(source interface{}, opts ...Option) (opened *DB, openErr error) {
 	var cfg config
 	for _, opt := range opts {
 		opt(&cfg)
@@ -86,7 +87,20 @@ func Open(source interface{}, opts ...Option) (*DB, error) {
 		if err != nil {
 			return nil, fmt.Errorf("db.Open: %w", err)
 		}
-		defer file.Close()
+		defer func() {
+			closeErr := file.Close()
+			if closeErr == nil {
+				return
+			}
+			closeErr = fmt.Errorf("db.Open: closing %s: %w", src, closeErr)
+			// Open answers no database beside an error, so the one the
+			// replay built is closed, which removes its scratch directory.
+			if opened != nil {
+				closeErr = errjoin.Join(closeErr, opened.Close())
+				opened = nil
+			}
+			openErr = errjoin.Join(openErr, closeErr)
+		}()
 		dump = file
 	case []byte:
 		dump = bytes.NewReader(src)

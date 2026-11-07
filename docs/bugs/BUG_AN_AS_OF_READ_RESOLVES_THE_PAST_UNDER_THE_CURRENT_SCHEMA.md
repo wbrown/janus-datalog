@@ -15,7 +15,7 @@ An as-of read is the database as it stood at its target: the facts up to the tar
 
 - An attribute declared cardinality-one holds a value whose commit's mark is T1. A later `SetSchema` declares the attribute cardinality-vector.
 - A cardinality-one write records its value with no op.
-- A vector resolves from its RGA inserts and tombstones alone. `CRDTResolvingIterator.accumulateRGA` acts on those two ops, and `PatternMatcher.loadRGAElements` skips every other datom ("Only process RGA operations"). `TestResolveRGAFromDatoms_IgnoresNonRGAOps` pins the skip.
+- A vector resolves from its RGA inserts and tombstones alone. `CRDTResolvingIterator`, `PatternMatcher.loadRGAElements` and `ResolveRGAFromDatoms` gather through `vectorElements.gather`, which passes over every other datom ("A datom whose op is neither an insert nor a withdrawal is passed over"). `TestResolveRGAFromDatoms_IgnoresNonRGAOps` pins the skip.
 - With no RGA datom at the entity, `PatternMatcher.ResolveRGA` answers the attribute as absent.
 - So `d.AsOf(T1)` answers the attribute as absent, where a read at T1 answered the value.
 - A handle made before the declaration keeps the definitions it copied, so two handles on one target answer differently.

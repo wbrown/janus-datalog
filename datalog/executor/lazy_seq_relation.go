@@ -209,6 +209,10 @@ func (r *LazySeqRelation) Aggregate(findElements []query.FindElement) Relation {
 }
 
 // lazySeqIterator walks a LazySeq chain, producing one Tuple per Next() call.
+// The chain's end carries the shared source's read failure joined with its
+// close failure, which Error answers once the iterator reaches it. Close closes
+// the shared source when the iterator stopped before the end, and answers that
+// close's failure.
 type lazySeqIterator struct {
 	cur     *LazySeq
 	current Tuple
@@ -226,8 +230,10 @@ func (it *lazySeqIterator) Next() bool {
 	}
 	v, err := it.cur.First()
 	if err != nil {
+		// The chain's end: the source is closed and its failure is err.
 		it.err = err
 		it.done = true
+		it.cur = nil
 		return false
 	}
 	if v == nil {
@@ -271,7 +277,7 @@ func (it *lazySeqIterator) Close() error {
 	if it.cur != nil {
 		return it.cur.Close()
 	}
-	return it.err
+	return nil
 }
 
 func (it *lazySeqIterator) Error() error { return it.err }

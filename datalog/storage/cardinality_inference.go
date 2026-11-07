@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -73,13 +74,17 @@ func valueTypeFromValue(v interface{}) datalog.Keyword {
 // OpCRDTRemove entries are skipped because they are ambiguous, and an attribute
 // whose entries are ALL removes resolves empty under either cardinality, so it
 // defaults to one. Returns a non-nil (possibly empty) schema.
-func inferSchemaFromStore(store Store) (*schema.Schema, error) {
+func inferSchemaFromStore(store Store) (inferred *schema.Schema, inferErr error) {
 	s := schema.NewSchema()
 	iter, err := OpenKeyScan(store, DiscardIntake, ScanBound{Index: ATEV})
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			inferred, inferErr = nil, errjoin.Join(inferErr, closeErr)
+		}
+	}()
 
 	var curA datalog.Keyword
 	haveA := false

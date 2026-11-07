@@ -55,7 +55,7 @@ func resolveOne(db *Database, e datalog.Identity, a datalog.Keyword) (any, error
 	key := CacheKey{E: Entity(e.Hash()), A: aBytes}
 	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(db.Schema())
-	entry, err := db.cache.GetOrResolve(key, matcher.GetCardinality(a), matcher, nil, nil, DiscardIntake)
+	entry, err := db.cache.GetOrResolve(key, matcher.GetCardinality(a), matcher, db.cache.ReadPoint(), nil, DiscardIntake)
 	if err != nil {
 		return nil, err
 	}
@@ -69,8 +69,8 @@ func resolveOne(db *Database, e datalog.Identity, a datalog.Keyword) (any, error
 // the cache for (e, k) at v1, then overwrites to v2 and — via the test-only
 // onCommitWindow hook, which fires after the storage commit but before the cache
 // update — resolves (e, k) in exactly the window where a stale cache hit was once
-// possible. With the in-flight fix the read sees v2; without it (maxVersions not
-// yet bumped, entry still v1) it would see the stale v1.
+// possible. With the in-flight fix the read sees v2; without it (the commit's
+// arrival not yet recorded, entry still v1) it would see the stale v1.
 func TestCommit_NoStaleCachedReadAfterCommitReturns(t *testing.T) {
 	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -169,7 +169,7 @@ func TestCommit_ConcurrentReadersSeeCommittedValue(t *testing.T) {
 
 // TestCommit_RollbackPathDoesNotPoisonCache exercises the commit-failure cleanup:
 // Commit marks keys in-flight before stx.Commit(), and on failure clears them via
-// Invalidate WITHOUT bumping maxVersions. This drives that exact sequence (storage
+// Invalidate WITHOUT recording an arrival. This drives that exact sequence (storage
 // unchanged) and asserts the cache rebuilds the correct pre-"commit" value and
 // isn't left poisoned for the next real commit.
 func TestCommit_RollbackPathDoesNotPoisonCache(t *testing.T) {
@@ -193,7 +193,7 @@ func TestCommit_RollbackPathDoesNotPoisonCache(t *testing.T) {
 			db.cache.BeginInFlight([]CacheKey{key})
 			db.cache.Invalidate([]CacheKey{key})
 
-			// Storage still holds v7, and maxVersions was never bumped, so the cache must
+			// Storage still holds v7, and no arrival was recorded, so the cache must
 			// rebuild and serve v7 — no stale value, no permanent bypass.
 			rolledBack, err := resolveOne(db, e, k)
 			require.NoError(t, err)
