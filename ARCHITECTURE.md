@@ -315,6 +315,8 @@ Every body runs through the phase executor above. Its patterns stream from stora
 ### Transaction Lifecycle
 
 1. **`d.NewTransaction()`** — Creates transaction, holds `[]Datom` buffer
+   - Under the database's lock, takes a read point and opens the read session its view reads (lookups, `Set`, `Remove`, `SaveStruct`), and registers the transaction, so a `TruncateTo` drains it
+   - Begun while a `TruncateTo` holds writers, it is dropped: it opens no session, and its writes and every read of its view return `ErrRollbackInProgress`
 2. **`tx.Add(entity, attr, value)`** — Per-datom:
    - Schema validation (type check against declared attribute type, skipped if no schema)
    - Lamport clock increment → `ElementID{Lamport, ReplicaID}`
@@ -328,6 +330,7 @@ Every body runs through the phase executor above. Its patterns stream from stora
    - `store.Retract(retracts)` — write tombstones
    - `store.Assert(datoms)` — write to all 8 indices per datom
    - Transaction metadata datom (`tx:N :db/txInstant time`)
+   - The read session closes before the storage commit; a failed close rolls the storage transaction back and commits nothing
    - EA cache invalidation for touched (entity, attribute) pairs
 
 ### Reflect Write Path

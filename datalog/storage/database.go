@@ -644,6 +644,9 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 
 // NewTransaction starts a new write transaction. It opens a read session,
 // which holds the value the transaction's view reads until Commit or Rollback.
+// A transaction begun while a TruncateTo holds writers is dropped: it opens no
+// session, and its writes and every read of its view answer
+// ErrRollbackInProgress.
 //
 // Panics if called on a read-only temporal handle (AsOf/History). Temporal
 // views share the parent's store and have no write-side state; use the
@@ -652,18 +655,29 @@ func (d *Database) NewTransaction() *Transaction {
 	if d.mode != latestMode {
 		panic("NewTransaction called on a read-only temporal database handle (AsOf/History); use the parent handle for writes")
 	}
-	// The read point is taken before the session opens, as a query's is
-	// (sessionMatcher), so every arrival at or below it is in the session. A
-	// failed open is answered by every read of the transaction's view.
-	readPoint := d.clock.ReadPoint()
-	session, err := d.store.NewReadSession()
-	var sessionErr error
-	if err != nil {
-		sessionErr = fmt.Errorf("open the transaction's read session: %w", err)
-	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	// The view is taken in the section that admits the transaction, so a
+	// TruncateTo either finds it registered and drains it, or holds writers
+	// already and drops it. The read point is taken before the session opens,
+	// as a query's is (sessionMatcher), so every arrival at or below it is in
+	// the session. A failed open is answered by every read of the
+	// transaction's view.
+	doomed := d.rollbackInProgress
+	var readPoint datalog.ElementID
+	var session ReadSession
+	sessionErr := ErrRollbackInProgress
+	if !doomed {
+		readPoint = d.clock.ReadPoint()
+		var err error
+		session, err = d.store.NewReadSession()
+		sessionErr = nil
+		if err != nil {
+			sessionErr = fmt.Errorf("open the transaction's read session: %w", err)
+		}
+	}
 
 	installed := d.installed.Load()
 	tx := &Transaction{
@@ -671,7 +685,7 @@ func (d *Database) NewTransaction() *Transaction {
 		datoms:            make([]datalog.Datom, 0),
 		retracts:          make([]datalog.Datom, 0),
 		lastVectorElement: make(map[entityAttrKey]datalog.ElementID),
-		doomed:            d.rollbackInProgress,
+		doomed:            doomed,
 		schema:            installed.effective,
 		admission:         installed.admission,
 		readPoint:         readPoint,
@@ -679,8 +693,9 @@ func (d *Database) NewTransaction() *Transaction {
 		sessionErr:        sessionErr,
 	}
 
-	// A transaction born during a rollback is dropped (its writes return
-	// ErrRollbackInProgress) and is not registered, so it never holds up the drain.
+	// A transaction born during a rollback is dropped (its writes and the reads
+	// of its view return ErrRollbackInProgress) and is not registered, so it
+	// never holds up the drain.
 	if !tx.doomed {
 		d.activeTx[tx] = true
 	}
@@ -1840,7 +1855,9 @@ type Transaction struct {
 	// transaction writes. Commit and Rollback close it.
 	session ReadSession
 	// sessionErr is what every read of the view answers once session is nil:
-	// the failure opening it, or errReadSessionClosed once it is closed.
+	// ErrRollbackInProgress for a transaction admitted while a TruncateTo holds
+	// writers, which opens none, the failure opening it, or
+	// errReadSessionClosed once it is closed.
 	sessionErr error
 }
 

@@ -1049,7 +1049,7 @@ So reads need no lock for storage correctness. Only the clock and the cache do. 
 **Writer semantics: drain in-flight, drop new.** A rollback lets the writes already in flight finish and rejects writes that start while it runs:
 
 - A transaction created _before_ the rollback, already in `activeTx`, is allowed to commit, and the drain waits for it. Its post-snapshot datoms are then erased by the delete like any other `Tx > markerMax`. "Clearing" means committing cleanly, not surviving.
-- A transaction created _while_ a rollback is in progress is dropped: its writes return `ErrRollbackInProgress`.
+- A transaction created _while_ a rollback is in progress is dropped. It opens no read session, and its writes and every read of its view return `ErrRollbackInProgress`.
 
 Dropping rather than blocking-then-applying is what makes the result deterministic. A blocked-then-resumed write would land at `markerMax+1` after the restore and survive, so a write that merely raced the rollback would leak onto the rewound timeline, and the post-rollback state would be "the snapshot plus whatever happened to race", not the snapshot. Dropping also keeps any writer from hanging for the rollback's duration. The drop is a retryable sentinel error, never a silent no-op: the caller learns its write did not land and can retry after the rollback or abandon it. Silent write loss is the failure that stays invisible until it has corrupted downstream state.
 
@@ -1067,7 +1067,7 @@ Dropping rather than blocking-then-applying is what makes the result determinist
 
 Steps 2–6 run without `db.mu` held, so a rollback never blocks the brief `db.mu` sections `NewTransaction` and `Commit` take. `rollbackInProgress`, not the lock, gates writers across the storage work.
 
-**Concurrency surface.** The entire addition: a `doomed bool` per `Transaction`, stamped from `rollbackInProgress` at `NewTransaction` time, with `Add`, `Retract` and `Commit` returning `ErrRollbackInProgress` when it is set; a `rollbackInProgress bool` and a `sync.Cond` over the existing `db.mu`, used only for the drain; and a `rollbackMu` serializing rollbacks. The read path is untouched: no new lock, no atomic. The write path gains, per operation, one bool check and, in commit and rollback cleanup, only while a rollback is draining, one `cond.Broadcast`, both inside a `db.mu` section those paths already take.
+**Concurrency surface.** The entire addition: a `doomed bool` per `Transaction`, stamped from `rollbackInProgress` in the `db.mu` section of `NewTransaction` that also takes the transaction's read point and read session and registers it, so its view and its admission are on one side of a rollback, with `Add`, `Retract`, `Commit` and every read of its view returning `ErrRollbackInProgress` when it is set; a `rollbackInProgress bool` and a `sync.Cond` over the existing `db.mu`, used only for the drain; and a `rollbackMu` serializing rollbacks. The read path is untouched: no new lock, no atomic. The write path gains, per operation, one bool check and, in commit and rollback cleanup, only while a rollback is draining, one `cond.Broadcast`, both inside a `db.mu` section those paths already take.
 
 **Consequences and contract.**
 

@@ -183,3 +183,60 @@ func TestATransactionsLookupAfterItsCommitAnswersThatItIsClosed(t *testing.T) {
 	_, err = tx.LookupAllAttributes(e, readSessionCells)
 	require.ErrorContains(t, err, "transaction is closed", "LookupAllAttributes after the commit")
 }
+
+// A transaction admitted while a TruncateTo holds writers is dropped, and
+// every read of its view answers the drop: it holds no view, since a read
+// session opened while the rewind deletes reads either side of it.
+func TestATransactionAdmittedWhileARewindHoldsWritersAnswersTheDropAtEveryReadOfItsView(t *testing.T) {
+	type named struct {
+		ID   datalog.Identity `datalog:"-,id"`
+		Name string           `datalog:"rs/name"`
+	}
+	e := datalog.NewIdentity("read-session:dropped")
+	reads := []struct {
+		name string
+		read func(tx *Transaction) error
+	}{
+		{"LookupAttribute of a value", func(tx *Transaction) error {
+			_, _, err := tx.LookupAttribute(e, readSessionName)
+			return err
+		}},
+		{"LookupAllAttributes of a vector", func(tx *Transaction) error {
+			_, err := tx.LookupAllAttributes(e, readSessionCells)
+			return err
+		}},
+		{"SaveStruct of the value the view holds", func(tx *Transaction) error {
+			_, err := tx.SaveStruct(&named{ID: e, Name: "m"})
+			return err
+		}},
+	}
+	for _, r := range reads {
+		t.Run(r.name, func(t *testing.T) {
+			d := readSessionDatabase(t, NewBadgerEmulatorStore(nil), e)
+			_, err := d.Snapshot("before")
+			require.NoError(t, err)
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Add(e, readSessionName, "m"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			draining := make(chan struct{}, 1)
+			d.onDrainWait = func() {
+				select {
+				case draining <- struct{}{}:
+				default:
+				}
+			}
+			inFlight := d.NewTransaction()
+			rewound := make(chan error, 1)
+			go func() { rewound <- d.TruncateTo("before") }()
+			<-draining
+
+			dropped := d.NewTransaction()
+			require.ErrorIs(t, r.read(dropped), ErrRollbackInProgress, "the read answers the drop of a transaction admitted while the rewind holds writers")
+			require.NoError(t, dropped.Rollback())
+			require.NoError(t, inFlight.Rollback())
+			require.NoError(t, <-rewound)
+		})
+	}
+}

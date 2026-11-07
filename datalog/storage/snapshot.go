@@ -37,9 +37,10 @@ var (
 	ErrSnapshotExists = errors.New("snapshot already exists")
 	// ErrSnapshotNotFound is returned when a named snapshot does not exist.
 	ErrSnapshotNotFound = errors.New("snapshot not found")
-	// ErrRollbackInProgress is returned by a write (Add/Retract/Commit) started while a
-	// TruncateTo rollback is running on the same handle. The write is dropped, not queued;
-	// retry on a fresh transaction once the rollback completes.
+	// ErrRollbackInProgress is returned by a transaction begun while a TruncateTo rollback
+	// is running on the same handle: by its writes (Add/Retract/Commit) and by every read
+	// of its view. The transaction is dropped, not queued; retry on a fresh transaction
+	// once the rollback completes.
 	ErrRollbackInProgress = errors.New("write rejected: a rollback (TruncateTo) is in progress")
 )
 
