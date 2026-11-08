@@ -40,6 +40,40 @@ func (m *PatternMatcher) Match(q *query.Query, bindings executor.Relations) (exe
 	return m.MatchWithConstraints(q, bindings, nil)
 }
 
+// matchAsAssertions matches a pattern of five elements in a view that
+// resolves, the latest or one as of a target. Every tuple such a view answers
+// is a resolved value, an assertion, so the fifth position, whether the datom
+// asserts, holds true for each. The constant true and a blank answer what the
+// pattern's first four positions answer. A variable is bound to true beside
+// each of their tuples. Any other constant, false among them, answers nothing.
+func (m *PatternMatcher) matchAsAssertions(
+	pattern *query.DataPattern,
+	bindings executor.Relations,
+	constraints []executor.StorageConstraint,
+) (executor.Relation, error) {
+	four := &query.DataPattern{Source: pattern.Source, Elements: pattern.Elements[:query.PatternPositions-1]}
+	switch added := pattern.GetAdded().(type) {
+	case query.Blank:
+		return m.MatchWithConstraints(query.PatternQuery(four), bindings, constraints)
+	case query.Variable:
+		rel, err := m.MatchWithConstraints(query.PatternQuery(four), bindings, constraints)
+		if err != nil {
+			return nil, err
+		}
+		asserted := executor.NewMaterializedRelationWithOptions([]query.Symbol{added.Name}, []executor.Tuple{{true}}, m.options)
+		return executor.NewProductRelation([]executor.Relation{rel, asserted}), nil
+	case query.Constant:
+		if added.Value != true {
+			return executor.NewMaterializedRelationWithOptions(pattern.Symbols(), nil, m.options), nil
+		}
+		return m.MatchWithConstraints(query.PatternQuery(four), bindings, constraints)
+	case query.VectorConstant:
+		return executor.NewMaterializedRelationWithOptions(pattern.Symbols(), nil, m.options), nil
+	default:
+		panic(fmt.Sprintf("BUG: unknown pattern element %T at the fifth position", added))
+	}
+}
+
 // MatchWithConstraints implements predicate-aware matching with storage-level filtering
 func (m *PatternMatcher) MatchWithConstraints(
 	q *query.Query,
@@ -55,6 +89,9 @@ func (m *PatternMatcher) MatchWithConstraints(
 	}
 	if err := query.ValidateAttributeBinding(m.extractValue(pattern.GetA())); err != nil {
 		return nil, err
+	}
+	if m.mode != historyMode && len(pattern.Elements) == query.PatternPositions {
+		return m.matchAsAssertions(pattern, bindings, constraints)
 	}
 	// Determine pattern symbols
 	symbols := pattern.Symbols()
@@ -356,12 +393,14 @@ func (m *PatternMatcher) matchUnboundScan(
 	useVectorResolution := false
 	var card datalog.Keyword = schema.CardinalityOne // Default for schemaless
 	var valueType datalog.Keyword
+	var def *schema.AttributeDefinition
 
 	// Determine cardinality and value type when A is bound (regardless of E)
 	if a != nil {
 		if m.schema != nil {
 			if aKw, ok := a.(datalog.Keyword); ok {
-				if def := m.schema.GetAttribute(aKw); def != nil {
+				def = m.schema.GetAttribute(aKw)
+				if def != nil {
 					card = def.Cardinality
 					valueType = def.ValueType
 				}
@@ -393,7 +432,7 @@ func (m *PatternMatcher) matchUnboundScan(
 	if m.cache != nil && m.mode != historyMode && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
-				cacheResult, handled, err := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card, valueType)
+				cacheResult, handled, err := m.matchFromCache(pattern, symbols, eIdent, aKw, v, def, valueType)
 				if err != nil {
 					return nil, err
 				}
@@ -457,7 +496,7 @@ func (m *PatternMatcher) matchUnboundScan(
 		// its element datoms and compare it against V, nil for unbound or the
 		// bound literal. Under History nothing resolves: the raw scan below
 		// reads each element datom as written.
-		return m.matchVectorScanAllEntities(pattern, symbols, a, v, valueType)
+		return m.matchVectorScanAllEntities(pattern, symbols, a.(datalog.Keyword), v, valueType)
 	} else if e == nil && a != nil && card == schema.CardinalityMany {
 		// E is unbound, A is bound, cardinality-many
 		// Need to scan all entities with this attribute and apply add-wins resolution
@@ -483,22 +522,22 @@ func (m *PatternMatcher) matchUnboundScan(
 
 	// For cardinality-vector with E+A bound: use vector resolution
 	if useVectorResolution {
-		return m.matchCardinalityVectorAsRelation(pattern, symbols, e, a, v, valueType)
+		return m.matchCardinalityVectorAsRelation(pattern, symbols, e.(datalog.Identity), a.(datalog.Keyword), v, valueType)
 	}
 
 	// For cardinality-many with E+A bound, V unbound: use add-wins resolution
 	if useAddWinsResolution {
-		return m.matchCardinalityManyAsRelation(pattern, symbols, e, a)
+		return m.matchCardinalityManyAsRelation(pattern, symbols, e.(datalog.Identity), a.(datalog.Keyword))
 	}
 
 	// For cardinality-many with E+A+V bound: use membership check
 	if useMembershipCheck {
-		return m.matchCardinalityManyMembership(pattern, symbols, e, a, v)
+		return m.matchCardinalityManyMembership(pattern, symbols, e.(datalog.Identity), a.(datalog.Keyword), v)
 	}
 
 	// For cardinality-many with A bound, E unbound, V unbound: scan all entities
 	if useAddWinsScanAllEntities {
-		return m.matchCardinalityManyScanAllEntities(pattern, symbols, a)
+		return m.matchCardinalityManyScanAllEntities(pattern, symbols, a.(datalog.Keyword), def)
 	}
 
 	// For cardinality-many with A bound, E unbound, V bound: find entities with value
@@ -552,6 +591,7 @@ func (m *PatternMatcher) matchUnboundScan(
 		a:               a,
 		v:               v,
 		tx:              tx,
+		added:           m.extractValue(pattern.GetAdded()),
 		constraints:     constraints,
 		workspace:       make(executor.Tuple, len(symbols)),
 		tupleBuilder:    m.getTupleBuilder(pattern, symbols),
@@ -971,14 +1011,12 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	}
 
 	aKw := it.boundA.(datalog.Keyword)
-	var aStorage Attribute
-	copy(aStorage[:], aKw.String())
 
 	// Nested resolution contributes to the enclosing pattern's counts rather
 	// than emitting an event of its own. Intake and what the walk resolved both
 	// travel back on its funnel; matched stays this iterator's to report, from
 	// what it actually emits.
-	owner, ownerTx, err := it.matcher.resolveAVLWW(aStorage, it.currentBoundV, it.report)
+	owner, ownerTx, err := it.matcher.resolveAVLWW(aKw, it.currentBoundV, it.report)
 	if err != nil {
 		return false, err
 	}
@@ -1004,40 +1042,29 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 // A storage or decode failure surfaces as an error — it must never collapse
 // to "candidate doesn't match", which would silently drop valid results.
 func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) (valid bool, validateErr error) {
-	// Convert E to storage bytes
-	eBytes := ToStorageDatom(datalog.Datom{E: e}).E
+	var def *schema.AttributeDefinition
+	if it.matcher.schema != nil {
+		def = it.matcher.schema.GetAttribute(a)
+	}
 
-	// Convert A to storage bytes; the keyword is already interned
-	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
-
-	// Latest-mode CardinalityOne fast path. The EA cache resolves the current
-	// (E, A) value with the same EATV-first-entry + tombstone semantics this
-	// scan performs, but memoized — turning a per-candidate Badger seek into an
-	// O(1) cache lookup. For a set-once attribute (e.g. a type tag), every
-	// candidate after the first is a permanent cache hit.
+	// CardinalityOne fast path. The view's EA cache resolves the (E, A) value
+	// with the same EATV-first-entry + tombstone semantics this scan performs,
+	// but memoized — turning a per-candidate seek into an O(1) cache lookup.
+	// For a set-once attribute (e.g. a type tag), every candidate after the
+	// first is a permanent cache hit.
 	//
 	// Equivalence preconditions (all required):
 	//   - cache != nil: cache exists (not DisableCache).
-	//   - latest mode. The scan below reads the absolute-latest entry with NO
-	//     shouldFilterTx, so it equals ResolveLWW only when no as-of/history
-	//     filter applies. Concrete-AsOf and history keep the scan path
-	//     untouched.
+	//   - not History. The scan below and ResolveLWW both skip the datoms after
+	//     an as-of view's target (shouldFilterTx), and an as-of matcher reads
+	//     its view's own cache (Cache.ForView). History resolves nothing, so it
+	//     keeps the scan path.
 	//   - non-unique: ResolveLWW walks for unique attributes (CRDT-unique
 	//     fallback), which differs from this scan's naive first-entry. Unique
 	//     attributes already short-circuit before validation via
 	//     tryEmitUniqueWinner; this guard makes the precondition self-evident.
-	if it.matcher.cache != nil && it.matcher.mode == latestMode && !it.attrIsUnique(a) {
-		var eEnt Entity
-		var aAttr Attribute
-		copy(eEnt[:], eBytes[:])
-		copy(aAttr[:], aStorage[:])
-		card := schema.CardinalityOne
-		if it.matcher.schema != nil {
-			if def := it.matcher.schema.GetAttribute(a); def != nil {
-				card = def.Cardinality
-			}
-		}
-		entry, err := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, card, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
+	if it.matcher.cache != nil && it.matcher.mode != historyMode && !def.HasUniqueConstraint() {
+		entry, err := it.matcher.cache.GetOrResolve(CacheKey{E: e, A: a}, def, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
 		if err != nil {
 			return false, err
 		}
@@ -1147,17 +1174,6 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		})
 	}
 	return false, nil
-}
-
-// attrIsUnique reports whether attribute a is declared unique in the schema.
-// Keeps the validateCandidate cache fast-path off unique attributes, whose
-// ResolveLWW uses walk-based resolution that differs from the naive
-// first-entry scan the fast path is proven equivalent to.
-func (it *validatingVBoundIterator) attrIsUnique(a datalog.Keyword) bool {
-	if it.matcher.schema == nil {
-		return false
-	}
-	return it.matcher.schema.GetAttribute(a).HasUniqueConstraint()
 }
 
 // getCardinalityEnum looks up the cardinality enum for an attribute
@@ -1305,18 +1321,14 @@ func (m *PatternMatcher) matchFromCache(
 	e datalog.Identity,
 	a datalog.Keyword,
 	v interface{}, // nil if V is unbound
-	card datalog.Keyword,
+	def *schema.AttributeDefinition,
 	valueType datalog.Keyword,
 ) (executor.Relation, bool, error) {
-	// Build cache key
-	eBytes := Entity(e.Hash())
-	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
-	var aAttr Attribute
-	copy(aAttr[:], aStorage[:])
-	key, ok := m.cacheKey(eBytes, aAttr)
+	key, ok := m.cacheKey(e, a)
 	if !ok {
 		return nil, false, nil
 	}
+	card := resolvedCardinality(def)
 
 	// Get or resolve from cache
 	annotating := m.handler != nil
@@ -1326,7 +1338,7 @@ func (m *PatternMatcher) matchFromCache(
 		report = &scanReport{}
 		opened = time.Now()
 	}
-	entry, err := m.cache.GetOrResolve(key, card, m, m.cacheBound(), m.handler, report)
+	entry, err := m.cache.GetOrResolve(key, def, m, m.cacheBound(), m.handler, report)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1534,17 +1546,16 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 	// Pre-compute fixed-A values when A is constant across all tuples
 	var fixedCard datalog.Keyword
 	var fixedValueType datalog.Keyword
-	var fixedAAttr Attribute
+	var fixedDef *schema.AttributeDefinition
 	if aSymIdx < 0 {
 		fixedCard = schema.CardinalityOne
 		if m.schema != nil {
-			if def := m.schema.GetAttribute(a); def != nil {
-				fixedCard = def.Cardinality
-				fixedValueType = def.ValueType
+			fixedDef = m.schema.GetAttribute(a)
+			if fixedDef != nil {
+				fixedCard = fixedDef.Cardinality
+				fixedValueType = fixedDef.ValueType
 			}
 		}
-		aStorage := ToStorageDatom(datalog.Datom{A: a}).A
-		copy(fixedAAttr[:], aStorage[:])
 	}
 
 	// Extract V if bound
@@ -1658,7 +1669,8 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		// Determine A and cardinality for this tuple
 		var tupleCard datalog.Keyword
 		var tupleValueType datalog.Keyword
-		var tupleAAttr Attribute
+		var tupleA datalog.Keyword
+		var tupleDef *schema.AttributeDefinition
 		if aSymIdx >= 0 {
 			// Per-tuple A: extract from binding tuple
 			if aSymIdx >= len(tuple) {
@@ -1670,26 +1682,27 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			}
 			tupleCard = schema.CardinalityOne
 			if m.schema != nil {
-				if def := m.schema.GetAttribute(aKw); def != nil {
-					tupleCard = def.Cardinality
-					tupleValueType = def.ValueType
+				tupleDef = m.schema.GetAttribute(aKw)
+				if tupleDef != nil {
+					tupleCard = tupleDef.Cardinality
+					tupleValueType = tupleDef.ValueType
 				}
 			}
-			aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
-			copy(tupleAAttr[:], aStorage[:])
+			tupleA = aKw
 			datomBuf.A = aKw
 		} else {
 			tupleCard = fixedCard
 			tupleValueType = fixedValueType
-			tupleAAttr = fixedAAttr
+			tupleDef = fixedDef
+			tupleA = a
 		}
 
 		// The one refusal cacheKey makes is settled above, so the key here is
 		// the pair itself.
-		key := CacheKey{E: Entity(eIdent.Hash()), A: tupleAAttr}
+		key := CacheKey{E: eIdent, A: tupleA}
 
 		// Get from cache
-		entry, err := m.cache.GetOrResolve(key, tupleCard, m, m.cacheBound(), m.handler, report)
+		entry, err := m.cache.GetOrResolve(key, tupleDef, m, m.cacheBound(), m.handler, report)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1780,19 +1793,9 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 func (m *PatternMatcher) matchCardinalityManyAsRelation(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
-	e, a interface{},
+	e datalog.Identity,
+	a datalog.Keyword,
 ) (rel executor.Relation, matchErr error) {
-	// Get entity and attribute bytes
-	var eBytes [20]byte
-	var aBytes [32]byte
-
-	if ident, ok := e.(datalog.Identity); ok {
-		copy(eBytes[:], ident.Bytes())
-	}
-	if kw, ok := a.(datalog.Keyword); ok {
-		copy(aBytes[:], kw.String())
-	}
-
 	// The resolver acquires its scan through this report, so the run it walks is
 	// recorded here without the arm holding an iterator or writing an emit.
 	// Intake is every add and remove ever written for the (E, A); the members
@@ -1808,7 +1811,7 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 		defer func() { report.close(matchErr == nil) }()
 	}
 
-	result, err := m.resolveAddWinsSet(eBytes[:], aBytes[:], report)
+	result, err := m.resolveAddWinsSet(e, a, report)
 	if err != nil {
 		return nil, fmt.Errorf("add-wins resolution failed: %w", err)
 	}
@@ -1854,20 +1857,11 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
-	e, a, v interface{},
+	e datalog.Identity,
+	a datalog.Keyword,
+	v interface{},
 	valueType datalog.Keyword,
 ) (rel executor.Relation, matchErr error) {
-	// Get entity and attribute bytes
-	var eBytes [20]byte
-	var aBytes [32]byte
-
-	if ident, ok := e.(datalog.Identity); ok {
-		copy(eBytes[:], ident.Bytes())
-	}
-	if kw, ok := a.(datalog.Keyword); ok {
-		copy(aBytes[:], kw.String())
-	}
-
 	// Resolve the vector using RGA reconstruction
 	var opened time.Time
 	report := DiscardIntake
@@ -1875,7 +1869,7 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 		report = &scanReport{}
 		opened = time.Now()
 	}
-	result, err := m.resolveVector(eBytes[:], aBytes[:], report)
+	result, err := m.resolveVector(e, a, report)
 	if err != nil {
 		return nil, fmt.Errorf("vector resolution failed: %w", err)
 	}
@@ -1981,10 +1975,6 @@ func (m *PatternMatcher) matchVectorWithBindings(
 		return m.matchVectorScanAllEntities(pattern, symbols, attr, v, valueType)
 	}
 
-	// Get attribute bytes once
-	var aBytes [32]byte
-	copy(aBytes[:], attr.String())
-
 	// One RGA resolution per binding tuple, each walking its own run, so this
 	// names no index and reports the count instead. An RGA group is every insert
 	// and tombstone ever written for the (E, A), and the exits below that
@@ -2029,17 +2019,14 @@ func (m *PatternMatcher) matchVectorWithBindings(
 		bindingTuple := it.Tuple()
 		eVal := bindingTuple[eSymIdx]
 
-		// Get entity bytes
-		var eBytes [20]byte
-		if ident, ok := eVal.(datalog.Identity); ok {
-			copy(eBytes[:], ident.Bytes())
-		} else {
+		ident, ok := eVal.(datalog.Identity)
+		if !ok {
 			continue // Skip non-identity values
 		}
 
 		// Resolve the vector using RGA reconstruction
 		resolutions++
-		result, err := m.resolveVector(eBytes[:], aBytes[:], report)
+		result, err := m.resolveVector(ident, attr, report)
 		if err != nil {
 			return nil, fmt.Errorf("vector resolution failed for entity: %w", err)
 		}
@@ -2101,33 +2088,17 @@ func (m *PatternMatcher) matchVectorWithBindings(
 func (m *PatternMatcher) matchCardinalityManyMembership(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
-	e, a, v interface{},
+	e datalog.Identity,
+	a datalog.Keyword,
+	v interface{},
 ) (executor.Relation, error) {
-	// Get entity and attribute bytes
-	var eBytes [20]byte
-	var aBytes [32]byte
-
-	if ident, ok := e.(datalog.Identity); ok {
-		copy(eBytes[:], ident.Bytes())
-	}
-	if kw, ok := a.(datalog.Keyword); ok {
-		copy(aBytes[:], kw.String())
-	}
-
 	// Bind [E][A][V] on EAVT, which covers every op recorded for this value.
 	// A string or bytes V makes the run inexact, so the store steps over the
 	// keys the range over-covers; the statistics below are what make that
 	// stepping visible.
-	//
-	// The caller holds storage projections; both constructors return the
-	// canonical interned pointer for an already-interned value.
 	bound := ScanBound{
-		Index: EAVT,
-		Prefix: []datalog.Value{
-			datalog.NewIdentityFromHash(eBytes),
-			datalog.InternKeywordFromBytes(aBytes),
-			v,
-		},
+		Index:  EAVT,
+		Prefix: []datalog.Value{e, a, v},
 	}
 	report := DiscardIntake
 	if m.handler != nil {
@@ -2194,10 +2165,10 @@ type cardinalityManyScanAllEntitiesIterator struct {
 	matcher      *PatternMatcher
 	pattern      *query.DataPattern
 	symbols      []query.Symbol
-	a            interface{}
-	aBytes       [32]byte
+	a            datalog.Keyword
+	def          *schema.AttributeDefinition
 	storageIter  Iterator
-	seenEntities map[[20]byte]bool
+	seenEntities map[datalog.Identity]bool
 
 	// report accounts for this arm. The per-entity add-wins resolutions acquire
 	// through it as well: the outer AEVT scan only finds the entities and every
@@ -2256,14 +2227,11 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 				return false
 			}
 
-			// Get entity bytes
-			eBytes := datom.E.Hash()
-
 			// Skip if we've already processed this entity
-			if it.seenEntities[eBytes] {
+			if it.seenEntities[datom.E] {
 				continue
 			}
-			it.seenEntities[eBytes] = true
+			it.seenEntities[datom.E] = true
 
 			// The entity's current set under add-wins: through the cache when
 			// the matcher has one and its view is served by it (cacheKey), as
@@ -2273,9 +2241,9 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			// error return below.
 			var members map[string]any
 			var version datalog.ElementID
-			key, cached := it.matcher.cacheKey(Entity(eBytes), Attribute(it.aBytes))
+			key, cached := it.matcher.cacheKey(datom.E, it.a)
 			if cached && it.matcher.cache != nil {
-				entry, err := it.matcher.cache.GetOrResolve(key, schema.CardinalityMany, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
+				entry, err := it.matcher.cache.GetOrResolve(key, it.def, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
 				if err != nil {
 					it.err = err
 					return false
@@ -2285,7 +2253,7 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 					version = entry.Version()
 				}
 			} else {
-				result, err := it.matcher.resolveAddWinsSet(eBytes[:], it.aBytes[:], it.report)
+				result, err := it.matcher.resolveAddWinsSet(datom.E, it.a, it.report)
 				if err != nil {
 					it.err = err
 					return false
@@ -2354,14 +2322,10 @@ func (it *cardinalityManyScanAllEntitiesIterator) Error() error { return it.err 
 func (m *PatternMatcher) matchVectorScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
-	a, v interface{},
+	a datalog.Keyword,
+	v interface{},
 	valueType datalog.Keyword,
 ) (executor.Relation, error) {
-	var aBytes [32]byte
-	if kw, ok := a.(datalog.Keyword); ok {
-		copy(aBytes[:], kw.String())
-	}
-
 	// AEVT orders the attribute's datoms by entity, so the pattern's entity,
 	// when it names one, extends the prefix to that entity's own.
 	prefix := []datalog.Value{a}
@@ -2391,10 +2355,9 @@ func (m *PatternMatcher) matchVectorScanAllEntities(
 		symbols:      symbols,
 		a:            a,
 		v:            v,
-		aBytes:       aBytes,
 		valueType:    valueType,
 		storageIter:  storageIter,
-		seenEntities: make(map[[20]byte]bool),
+		seenEntities: make(map[datalog.Identity]bool),
 		report:       report,
 	}
 
@@ -2408,11 +2371,11 @@ type vectorScanAllEntitiesIterator struct {
 	matcher      *PatternMatcher
 	pattern      *query.DataPattern
 	symbols      []query.Symbol
-	a, v         interface{}
-	aBytes       [32]byte
+	a            datalog.Keyword
+	v            interface{}
 	valueType    datalog.Keyword
 	storageIter  Iterator
-	seenEntities map[[20]byte]bool
+	seenEntities map[datalog.Identity]bool
 
 	// report accounts for this arm. The per-entity RGA reconstructions acquire
 	// through it as well: an RGA group is every insert and tombstone ever
@@ -2434,15 +2397,14 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 			return false
 		}
 
-		eBytes := datom.E.Hash()
-		if it.seenEntities[eBytes] {
+		if it.seenEntities[datom.E] {
 			continue
 		}
-		it.seenEntities[eBytes] = true
+		it.seenEntities[datom.E] = true
 
 		// Intake accrues into the report at scan time, so it survives the error
 		// return below; only what the result carries has to wait for one.
-		result, err := it.matcher.resolveVector(eBytes[:], it.aBytes[:], it.report)
+		result, err := it.matcher.resolveVector(datom.E, it.a, it.report)
 		if err != nil {
 			it.err = err
 			return false
@@ -2561,14 +2523,9 @@ func (m *PatternMatcher) matchVectorUnderOpenAttribute(
 func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
-	a interface{},
+	a datalog.Keyword,
+	def *schema.AttributeDefinition,
 ) (executor.Relation, error) {
-	// Get attribute bytes
-	var aBytes [32]byte
-	if kw, ok := a.(datalog.Keyword); ok {
-		copy(aBytes[:], kw.String())
-	}
-
 	// Scan AEVT to find all entities with this attribute
 	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{a}}
 	report := DiscardIntake
@@ -2593,9 +2550,9 @@ func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 		pattern:      pattern,
 		symbols:      symbols,
 		a:            a,
-		aBytes:       aBytes,
+		def:          def,
 		storageIter:  storageIter,
-		seenEntities: make(map[[20]byte]bool),
+		seenEntities: make(map[datalog.Identity]bool),
 		report:       report,
 	}
 
@@ -2617,7 +2574,6 @@ type cardinalityManyAVETValueIterator struct {
 	symbols     []query.Symbol
 	indexer     *query.TupleIndexer
 	a, v        interface{}
-	aBytes      [32]byte
 	storageIter Iterator
 
 	// report accounts for this arm, and carries the run whole rather than as
@@ -2632,9 +2588,8 @@ type cardinalityManyAVETValueIterator struct {
 	report *scanReport
 
 	// Current entity being processed
-	currentEntity     datalog.Identity
-	currentEntityHash [20]byte
-	hasCurrentEntity  bool
+	currentEntity    datalog.Identity
+	hasCurrentEntity bool
 
 	// Add-wins state for current entity
 	highestAddLamport    uint64
@@ -2675,25 +2630,23 @@ func (it *cardinalityManyAVETValueIterator) Next() bool {
 			return false
 		}
 
-		eBytes := datom.E.Hash()
-
 		// Check if this is a new entity
 		if !it.hasCurrentEntity {
 			// First entity
-			it.startNewEntity(datom.E, eBytes, datom.Op, datom.Tx.Lamport)
+			it.startNewEntity(datom.E, datom.Op, datom.Tx.Lamport)
 			continue
 		}
 
-		if eBytes != it.currentEntityHash {
+		if datom.E != it.currentEntity {
 			// Moving to new entity - check if previous entity is a member
 			if it.isCurrentEntityMember() {
 				it.buildTuple()
 				// Start tracking new entity for next iteration
-				it.startNewEntity(datom.E, eBytes, datom.Op, datom.Tx.Lamport)
+				it.startNewEntity(datom.E, datom.Op, datom.Tx.Lamport)
 				return true
 			}
 			// Previous entity not a member, start tracking new entity
-			it.startNewEntity(datom.E, eBytes, datom.Op, datom.Tx.Lamport)
+			it.startNewEntity(datom.E, datom.Op, datom.Tx.Lamport)
 			continue
 		}
 
@@ -2702,9 +2655,8 @@ func (it *cardinalityManyAVETValueIterator) Next() bool {
 	}
 }
 
-func (it *cardinalityManyAVETValueIterator) startNewEntity(e datalog.Identity, eHash [20]byte, op datalog.CRDTOp, lamport uint64) {
+func (it *cardinalityManyAVETValueIterator) startNewEntity(e datalog.Identity, op datalog.CRDTOp, lamport uint64) {
 	it.currentEntity = e
-	it.currentEntityHash = eHash
 	it.hasCurrentEntity = true
 	it.highestAddLamport = 0
 	it.highestRemoveLamport = 0
@@ -2828,12 +2780,6 @@ func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 	symbols []query.Symbol,
 	a, v interface{},
 ) (executor.Relation, error) {
-	// Get attribute bytes
-	var aBytes [32]byte
-	if kw, ok := a.(datalog.Keyword); ok {
-		copy(aBytes[:], kw.String())
-	}
-
 	// Bind [A][V] on AVET, which seeks straight to entries carrying this
 	// value — O(k) in those entries, not O(n) in the attribute's entities.
 	// A string or bytes V makes this run inexact, so the store steps over the
@@ -2863,7 +2809,6 @@ func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 		indexer:     query.NewTupleIndexer(pattern, symbols),
 		a:           a,
 		v:           v,
-		aBytes:      aBytes,
 		storageIter: storageIter,
 		report:      report,
 	}

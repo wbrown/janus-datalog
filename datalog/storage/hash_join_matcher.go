@@ -440,7 +440,7 @@ type bindingMatchSlot struct {
 }
 
 type bindingMatchPlan struct {
-	slots [4]bindingMatchSlot
+	slots [query.PatternPositions]bindingMatchSlot
 }
 
 func compileBindingMatchPlan(
@@ -461,6 +461,7 @@ func compileBindingMatchPlan(
 		pattern.GetA(),
 		pattern.GetV(),
 		pattern.GetT(),
+		pattern.GetAdded(),
 	}
 	for i, element := range elements {
 		switch value := element.(type) {
@@ -487,7 +488,7 @@ func (p bindingMatchPlan) matches(
 	datom *datalog.Datom,
 	bindingTuple executor.Tuple,
 ) bool {
-	var values [4]interface{}
+	var values [query.PatternPositions]interface{}
 	for i, slot := range p.slots {
 		if slot.hasConstant {
 			values[i] = slot.constant
@@ -495,7 +496,7 @@ func (p bindingMatchPlan) matches(
 			values[i] = bindingTuple[slot.bindingIndex]
 		}
 	}
-	return matcher.matchesDatom(datom, values[0], values[1], values[2], values[3])
+	return matcher.matchesDatom(datom, values[0], values[1], values[2], values[3], values[4])
 }
 
 // matchesWithBindingTuple checks if datom matches pattern with the given binding tuple
@@ -557,8 +558,18 @@ func (m *PatternMatcher) matchesWithBindingTuple(
 		}
 	}
 
+	// Added, whether the datom asserts
+	var added interface{}
+	if c, ok := pattern.GetAdded().(query.Constant); ok {
+		added = c.Value
+	} else if sym, ok := pattern.GetAdded().(query.Variable); ok {
+		if idx, found := symIndex[sym.Name]; found && idx < len(bindingTuple) {
+			added = bindingTuple[idx]
+		}
+	}
+
 	// Use existing matchesDatom logic
-	return m.matchesDatom(datom, e, a, v, tx)
+	return m.matchesDatom(datom, e, a, v, tx, added)
 }
 
 // matchWithMergeJoin performs a merge join between sorted binding relation and sorted scan

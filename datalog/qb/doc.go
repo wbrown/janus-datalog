@@ -41,13 +41,14 @@
 //
 // # Patterns
 //
-// Pat creates a data pattern of one to four elements, a position it omits
-// being unbound; Build refuses no element and more than four:
+// Pat creates a data pattern of one to five elements, a position it omits
+// being unbound; Build refuses no element and more than five:
 //
 //	qb.Pat(e)                 // [e]
 //	qb.Pat(e, a)              // [e a]
 //	qb.Pat(e, a, v)           // [e a v]
 //	qb.Pat(e, a, v, tx)       // [e a v tx] with the transaction
+//	qb.Pat(e, a, v, tx, added) // [e a v tx added], whether the datom asserts
 //
 // # Input Parameters
 //

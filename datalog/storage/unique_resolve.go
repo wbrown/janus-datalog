@@ -79,14 +79,14 @@ func newUniqueWalkState() *uniqueWalkState {
 // entry's own, and, where the supersession check ran, the other entities'
 // highest claim to its value.
 //
-// The (E, A) bytes parameters are required for the supersession check
-// against other entities via AVET. The as-of / history-mode filtering
-// is applied at the caller's iteration level (not here), because the
-// streaming path already filters at its source.
+// The entity and attribute are required for the supersession check against
+// other entities via AVET. The as-of / history-mode filtering is applied at
+// the caller's iteration level (not here), because the streaming path already
+// filters at its source.
 //
 // The supersession scan accrues into report; the decisions that short-circuit
 // before it read no index.
-func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute, report *scanReport) (decision walkEntryDecision, read datalog.ElementID, err error) {
+func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, e datalog.Identity, a datalog.Keyword, report *scanReport) (decision walkEntryDecision, read datalog.ElementID, err error) {
 	state.probe[0] = datom.V
 	if datom.Op == datalog.OpCRDTRemove {
 		existing, ok := state.removedAt.Get(state.probe)
@@ -104,7 +104,7 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 
 	// Supersession check against other entities' assertions of V, the
 	// store's and the ones the walker holds beside it.
-	maxOther, err := m.resolveMaxOtherTxForValue(aBytes, datom.V, eBytes, report)
+	maxOther, err := m.resolveMaxOtherTxForValue(a, datom.V, e, report)
 	if err != nil {
 		return walkEntrySkip, datalog.ElementID{}, err
 	}
@@ -150,15 +150,10 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 // opens underneath it acquire through report. Those AVET reads are real index
 // reads on the resolution path — one per Set entry the walk considers — and an
 // arm seeing only the outer scan would be told the cheapest part of the work.
-func (m *PatternMatcher) walkUniqueEntityValue(state *uniqueWalkState, eBytes Entity, aBytes Attribute, report *scanReport) (value any, tx datalog.ElementID, version datalog.ElementID, found bool, present bool, err error) {
-	// The caller holds storage projections; both constructors return the
-	// canonical interned pointer for an already-interned value.
+func (m *PatternMatcher) walkUniqueEntityValue(state *uniqueWalkState, e datalog.Identity, a datalog.Keyword, report *scanReport) (value any, tx datalog.ElementID, version datalog.ElementID, found bool, present bool, err error) {
 	iter, err := OpenKeyScan(m.reader, report, ScanBound{
-		Index: EATV,
-		Prefix: []datalog.Value{
-			datalog.NewIdentityFromHash(eBytes),
-			datalog.InternKeywordFromBytes(aBytes),
-		},
+		Index:  EATV,
+		Prefix: []datalog.Value{e, a},
 	})
 	if err != nil {
 		return nil, datalog.ElementID{}, datalog.ElementID{}, false, false, err
@@ -178,7 +173,7 @@ func (m *PatternMatcher) walkUniqueEntityValue(state *uniqueWalkState, eBytes En
 		// A datom for (E, a) exists within the bound. Whatever the walk decides
 		// about its value, the attribute is present from here on.
 		present = true
-		decision, read, err := m.walkApplyEntry(state, datom, eBytes, aBytes, report)
+		decision, read, err := m.walkApplyEntry(state, datom, e, a, report)
 		if err != nil {
 			return nil, datalog.ElementID{}, datalog.ElementID{}, false, present, err
 		}
@@ -203,10 +198,10 @@ func (m *PatternMatcher) walkUniqueEntityValue(state *uniqueWalkState, eBytes En
 //
 // Honors the matcher's temporal mode — an entry after the as-of target is
 // excluded (m.shouldFilterTx).
-func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity, report *scanReport) (maxTx datalog.ElementID, resolveErr error) {
+func (m *PatternMatcher) resolveMaxOtherTxForValue(a datalog.Keyword, v any, exceptE datalog.Identity, report *scanReport) (maxTx datalog.ElementID, resolveErr error) {
 	iter, err := OpenKeyScan(m.reader, report, ScanBound{
 		Index:  AVET,
-		Prefix: []datalog.Value{datalog.InternKeywordFromBytes(aBytes), v},
+		Prefix: []datalog.Value{a, v},
 	})
 	if err != nil {
 		return datalog.ElementID{}, err
@@ -223,7 +218,7 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 		if datom.E == nil {
 			continue
 		}
-		if Entity(datom.E.Hash()) == exceptE {
+		if datom.E == exceptE {
 			continue
 		}
 		if m.shouldFilterTx(datom.Tx) {
@@ -280,11 +275,11 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 // since replaced, and rejecting it cost a scan and a walk. Reporting that as
 // "nothing found" makes it read like a value nobody ever wrote, which costs
 // nothing.
-func (m *PatternMatcher) resolveAVLWW(a Attribute, v any, report *scanReport) (datalog.Identity, datalog.ElementID, error) {
+func (m *PatternMatcher) resolveAVLWW(a datalog.Keyword, v any, report *scanReport) (datalog.Identity, datalog.ElementID, error) {
 	// Step 1: find the max-Tx entry for (a, v) across all entities.
 	iter, err := OpenKeyScan(m.reader, report, ScanBound{
 		Index:  AVET,
-		Prefix: []datalog.Value{datalog.InternKeywordFromBytes(a), v},
+		Prefix: []datalog.Value{a, v},
 	})
 	if err != nil {
 		return nil, datalog.ElementID{}, err
@@ -339,7 +334,7 @@ func (m *PatternMatcher) resolveAVLWW(a Attribute, v any, report *scanReport) (d
 	//
 	// version is discarded because no cache entry is built from this answer;
 	// walkTx, the claimant's own assertion, is the Tx it reports.
-	walkV, walkTx, _, found, _, err := m.walkUniqueEntityValue(newUniqueWalkState(), Entity(bestE.Hash()), a, report)
+	walkV, walkTx, _, found, _, err := m.walkUniqueEntityValue(newUniqueWalkState(), bestE, a, report)
 	if err != nil {
 		return nil, datalog.ElementID{}, err
 	}

@@ -9,14 +9,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// trieKey builds a CacheKey directly from raw bytes. Tests construct keys
-// byte-wise because routing is deterministic and public: collision coverage
+// trieKey builds a CacheKey from an entity whose hash is zero but for its last
+// byte, e, and the keyword attr. Routing is deterministic and reads the
+// entity hash's first word and the keyword's hash, so collision coverage
 // crafts real colliding keys instead of injecting an artificial hash.
 func trieKey(e byte, attr string) CacheKey {
-	var key CacheKey
-	key.E[19] = e
-	copy(key.A[:], attr)
-	return key
+	var hash [20]byte
+	hash[19] = e
+	return CacheKey{E: datalog.NewIdentityFromHash(hash), A: datalog.NewKeyword(attr)}
 }
 
 // collidingKeys returns n distinct keys with identical routing values: they
@@ -51,12 +51,12 @@ func slotFor(version uint64) cacheSlot {
 }
 
 func TestCacheKeyRoutingSeparatesSameEntityAttributes(t *testing.T) {
-	// Same entity, same-namespace keywords that agree through byte 7 —
-	// the case a first-word-only fold would collide.
+	// Same entity, same-namespace keywords that agree through byte 7: routing
+	// folds the keyword's hash of its whole text, so they route apart.
 	name := trieKey(1, ":person/name")
 	age := trieKey(1, ":person/age")
 	if name.routing() == age.routing() {
-		t.Error("same-entity same-namespace attributes must route apart — the fold must consume every attribute word")
+		t.Error("same-entity same-namespace attributes must route apart")
 	}
 	// And the collision harness really collides.
 	keys := collidingKeys(3)

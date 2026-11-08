@@ -332,6 +332,7 @@ Every body runs through the phase executor above. Its patterns stream from stora
    - Transaction metadata datom (`tx:N :db/txInstant time`)
    - The read session closes before the storage commit; a failed close rolls the storage transaction back and commits nothing
    - EA cache invalidation for touched (entity, attribute) pairs
+   - A transaction holding no write opens no storage transaction and writes no metadata datom; its commit returns the store's highest ElementID
 
 ### Reflect Write Path
 

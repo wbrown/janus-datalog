@@ -21,22 +21,24 @@ func NewPatternExtractor(pattern *DataPattern, symbols []Symbol) *PatternExtract
 	}
 }
 
-// BoundValues contains the extracted E, A, V, T values from a pattern.
+// BoundValues contains the values extracted from a pattern's positions: E,
+// A, V, T, and Added, whether the datom asserts.
 type BoundValues struct {
-	E, A, V, T interface{}
+	E, A, V, T, Added interface{}
 }
 
 // Extract extracts bound values from the pattern using the given binding tuple.
-// For each position in the pattern (E, A, V, T):
+// For each position in the pattern (E, A, V, T, Added):
 // - If it's a Constant, returns the constant value
 // - If it's a Variable, looks up the value in the binding tuple
 // - If it's a Blank or variable not in binding, returns nil
 func (pe *PatternExtractor) Extract(bindingTuple Tuple) BoundValues {
 	return BoundValues{
-		E: pe.extractElement(pe.pattern.GetE(), bindingTuple),
-		A: pe.extractElement(pe.pattern.GetA(), bindingTuple),
-		V: pe.extractElement(pe.pattern.GetV(), bindingTuple),
-		T: pe.extractElement(pe.pattern.GetT(), bindingTuple),
+		E:     pe.extractElement(pe.pattern.GetE(), bindingTuple),
+		A:     pe.extractElement(pe.pattern.GetA(), bindingTuple),
+		V:     pe.extractElement(pe.pattern.GetV(), bindingTuple),
+		T:     pe.extractElement(pe.pattern.GetT(), bindingTuple),
+		Added: pe.extractElement(pe.pattern.GetAdded(), bindingTuple),
 	}
 }
 

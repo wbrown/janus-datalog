@@ -205,11 +205,7 @@ func TestResolveMaxOtherTxForValueSurfacesScanErrors(t *testing.T) {
 				iter:  iter,
 			})
 
-			var aStorage Attribute
-			copy(aStorage[:], datalog.NewKeyword(":user/email").String())
-			except := Entity(datalog.NewIdentity("user:alice").Hash())
-
-			_, err := matcher.resolveMaxOtherTxForValue(aStorage, "a@example.com", except, DiscardIntake)
+			_, err := matcher.resolveMaxOtherTxForValue(datalog.NewKeyword(":user/email"), "a@example.com", datalog.NewIdentity("user:alice"), DiscardIntake)
 			if err == nil {
 				t.Fatal("expected the scan failure to surface, got nil error")
 			}
@@ -233,10 +229,7 @@ func TestResolveAVLWWSurfacesScanErrors(t *testing.T) {
 				iter:  iter,
 			})
 
-			var aStorage Attribute
-			copy(aStorage[:], datalog.NewKeyword(":user/email").String())
-
-			_, _, err := matcher.resolveAVLWW(aStorage, "a@example.com", DiscardIntake)
+			_, _, err := matcher.resolveAVLWW(datalog.NewKeyword(":user/email"), "a@example.com", DiscardIntake)
 			if err == nil {
 				t.Fatal("expected the scan failure to surface, got nil error")
 			}

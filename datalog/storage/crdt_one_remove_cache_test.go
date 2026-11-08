@@ -504,11 +504,8 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 			// Verify ResolveLWW returns value
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(db.Schema())
-			eStorage := entityFromIdentity(e)
-			var aStorage Attribute
-			copy(aStorage[:], a.String())
 
-			val, _, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
+			val, _, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 			require.NoError(t, err)
 			assert.True(t, present, "precondition: the (E, A) carries datoms")
 			assert.Equal(t, "Alice", val, "precondition: ResolveLWW should return value")
@@ -520,7 +517,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 			require.NoError(t, err)
 
 			// ResolveLWW should return nil after Remove
-			val, _, present, err = matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
+			val, _, present, err = matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 			require.NoError(t, err)
 			assert.True(t, present,
 				"a tombstone is a datom: the (E, A) stays present and holds no value")
@@ -556,14 +553,11 @@ func TestCacheRemove_CacheRebuild(t *testing.T) {
 			db.Cache().Clear()
 
 			// Cache rebuild should reflect tombstone
-			eStorage := entityFromIdentity(e)
-			var aStorage Attribute
-			copy(aStorage[:], a.String())
-			key := CacheKey{E: eStorage, A: aStorage}
+			key := CacheKey{E: e, A: a}
 
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(db.Schema())
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(a), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.schema.GetAttribute(a), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 
 			// Entry should either be nil or have nil OneValue
@@ -728,11 +722,8 @@ func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
 			// ResolveLWW → nil
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(db.Schema())
-			eStorage := entityFromIdentity(e)
-			var aStorage Attribute
-			copy(aStorage[:], a.String())
 
-			val, _, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
+			val, _, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 			require.NoError(t, err)
 			assert.True(t, present,
 				"a tombstone is a datom: the (E, A) stays present and holds no value")
@@ -847,11 +838,8 @@ func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
 			// ResolveLWW should return nil value but non-zero ElementID
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(db.Schema())
-			eStorage := entityFromIdentity(e)
-			var aStorage Attribute
-			copy(aStorage[:], a.String())
 
-			val, elemID, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
+			val, elemID, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 			require.NoError(t, err, "ResolveLWW should not error after Remove")
 			assert.True(t, present,
 				"a tombstone is a datom: the (E, A) stays present and holds no value")
@@ -1053,10 +1041,7 @@ func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keywor
 	t.Helper()
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	eStorage := entityFromIdentity(e)
-	var aStorage Attribute
-	copy(aStorage[:], a.String())
-	val, eid, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
+	val, eid, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 	require.NoError(t, err)
 	require.True(t, present,
 		"(e, a) was written before this read, so it is present whether or not a value survived")
@@ -1206,13 +1191,10 @@ func TestCacheRemove_ResolveLWW_MultipleEntities(t *testing.T) {
 func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) any {
 	t.Helper()
 	db.Cache().Clear()
-	eStorage := entityFromIdentity(e)
-	var aStorage Attribute
-	copy(aStorage[:], a.String())
-	key := CacheKey{E: eStorage, A: aStorage}
+	key := CacheKey{E: e, A: a}
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(a), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+	entry, err := db.Cache().GetOrResolve(key, matcher.schema.GetAttribute(a), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 	require.NoError(t, err)
 	if entry == nil {
 		return nil

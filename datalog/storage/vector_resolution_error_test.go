@@ -39,8 +39,6 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 	require.NoError(t, rawTx.Set(malformed, nil))
 	require.NoError(t, rawTx.Commit())
 
-	entityBytes := entity.Bytes()
-	attributeBytes := ToStorageDatom(datalog.Datom{A: attribute}).A
 	iter, err := store.Scan(ScanBound{Index: EATV, Prefix: []datalog.Value{entity, attribute}})
 	require.NoError(t, err)
 	require.True(t, iter.Next(), "malformed key is still a positioned scan entry")
@@ -52,7 +50,7 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 
 	matcher := NewPatternMatcher(store)
 	report := &scanReport{}
-	_, _, err = matcher.loadRGAElements(entityBytes[:], attributeBytes[:], report)
+	_, _, err = matcher.loadRGAElements(entity, attribute, report)
 	require.Error(t, err)
 
 	// The failing resolution still read the index to discover the malformed

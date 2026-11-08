@@ -13,7 +13,7 @@ import (
 // itself, over an inner query holding the shape, and by the rule set over a
 // rule body holding it. The shapes: a form with no branch, a branch with no
 // clause, a not or a not-join with no clause, an or-default with fewer than
-// two branches, a data pattern of no element or of more than four, a
+// two branches, a data pattern of no element or of more than five, a
 // negative limit and an unknown aggregate. A refusal inside a form names the
 // form and the branch, or the clause of a not or a not-join, by its position
 // counted from one.
@@ -22,7 +22,7 @@ func TestValidateQueryRefusesTheShapesTheParserRefuses(t *testing.T) {
 	first := scopePattern("?e", "t/a", "?v")
 	second := scopePattern("?e", "t/b", "?w")
 	noElements := &DataPattern{}
-	fiveElements := &DataPattern{Elements: []PatternElement{Variable{Name: e}, Constant{Value: datalog.NewKeyword(":t/a")}, Variable{Name: v}, Variable{Name: w}, Variable{Name: w}}}
+	sixElements := &DataPattern{Elements: []PatternElement{Variable{Name: e}, Constant{Value: datalog.NewKeyword(":t/a")}, Variable{Name: v}, Variable{Name: w}, Variable{Name: w}, Variable{Name: w}}}
 	emptyNot := &NotClause{}
 
 	clauseShapes := []struct {
@@ -37,8 +37,8 @@ func TestValidateQueryRefusesTheShapesTheParserRefuses(t *testing.T) {
 		{"a not-join with no clause", &NotJoinClause{RequiredVars: []Symbol{e}}, "not-join clause must have at least one inner clause"},
 		{"an or-default with one branch", &OrDefaultClause{Branches: [][]Clause{{second}}}, "or-default clause must have at least two branches"},
 		{"an or-default-join with a branch of no clause", &OrDefaultJoinClause{RequiredVars: []Symbol{e}, OutputVars: []Symbol{w}, Branches: [][]Clause{{}, {second}}}, "or-default-join branch 1 must have at least one clause"},
-		{"a data pattern of no element", noElements, "data pattern must have 1 to 4 elements, got 0"},
-		{"a data pattern of five elements", fiveElements, "data pattern must have 1 to 4 elements, got 5"},
+		{"a data pattern of no element", noElements, "data pattern must have 1 to 5 elements, got 0"},
+		{"a data pattern of six elements", sixElements, "data pattern must have 1 to 5 elements, got 6"},
 		{"a not with no clause in an or's second branch", &OrClause{Branches: [][]Clause{{second}, {emptyNot}}}, "or branch 2: not clause must have at least one inner clause"},
 		{"a not with no clause in an or-join's second branch", &OrJoinClause{OutputVars: []Symbol{w}, Branches: [][]Clause{{second}, {emptyNot}}}, "or-join branch 2: not clause must have at least one inner clause"},
 		{"a not with no clause in an or-default's second branch", &OrDefaultClause{Branches: [][]Clause{{second}, {emptyNot}}}, "or-default branch 2: not clause must have at least one inner clause"},

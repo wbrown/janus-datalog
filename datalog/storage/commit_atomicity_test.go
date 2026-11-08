@@ -25,8 +25,8 @@ import (
 )
 
 // TestCommitWritesTxInstantOnSuccess locks in the contract that every
-// successful Commit() produces a :db/txInstant datom. Before the
-// atomicity refactor this write was best-effort: the storage layer
+// successful Commit() that writes a datom produces a :db/txInstant datom.
+// Before the atomicity refactor this write was best-effort: the storage layer
 // logged failures and Commit() still returned success. After the
 // refactor, the metadata write joins the same atomic storage txn as
 // the rest of the commit, so failure rolls back the entire transaction.

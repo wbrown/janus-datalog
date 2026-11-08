@@ -23,34 +23,21 @@ func (m *PatternMatcher) GetCardinality(attr datalog.Keyword) datalog.Keyword {
 	return def.Cardinality
 }
 
-// ResolvesUnique implements CacheResolver: whether this matcher resolves a
-// under the unique rule, the entity's first assertion no other entity's later
-// claim supersedes. It does when the schema declares a unique and the matcher
-// reads current state; in history mode raw assertions are exposed with no
-// resolution, so the walk would produce fallback values corresponding to no
-// datom. A cache entry carries the answer it was resolved under, so a reader
-// whose answer differs rebuilds instead of being served the other rule's
-// value.
-func (m *PatternMatcher) ResolvesUnique(a Attribute) bool {
-	if m.schema == nil || m.mode == historyMode {
-		return false
-	}
-	return m.schema.GetAttribute(datalog.InternKeywordFromBytes(a)).HasUniqueConstraint()
-}
-
 // ResolveLWW returns the current value for cardinality-one (highest
-// ElementID wins).
+// ElementID wins), given def, the attribute's definition, nil for an
+// attribute the schema does not declare.
 //
-// For non-unique attributes, uses the EATV first-entry shortcut (highest
-// Tx due to descending sort). For attributes the matcher resolves under the
-// unique rule (ResolvesUnique), delegates to walkUniqueEntityValue for
-// walk-based resolution: the returned value is the entity's first
-// non-superseded assertion, which may fall back to an older entry if the
-// latest has been claimed by another entity, and the returned ElementID is
-// the walk's version, the highest among the datoms it read, other entities'
-// superseding claims included.
-func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (v any, tx datalog.ElementID, present bool, resolveErr error) {
-	if m.ResolvesUnique(a) {
+// When def declares no unique, and in History, it uses the EATV first-entry
+// shortcut (highest Tx due to descending sort). History reads raw assertions
+// with no resolution, so the unique walk would produce values corresponding
+// to no datom. When def declares a unique and the matcher reads resolved
+// state, it delegates to walkUniqueEntityValue for walk-based resolution: the
+// returned value is the entity's first non-superseded assertion, which may
+// fall back to an older entry if the latest has been claimed by another
+// entity, and the returned ElementID is the walk's version, the highest among
+// the datoms it read, other entities' superseding claims included.
+func (m *PatternMatcher) ResolveLWW(e datalog.Identity, a datalog.Keyword, def *schema.AttributeDefinition, report *scanReport) (v any, tx datalog.ElementID, present bool, resolveErr error) {
+	if m.mode != historyMode && def.HasUniqueConstraint() {
 		// The walk acquires through report, so its intake — the deepest read
 		// on this path — reaches the arm whether or not the walk goes on to
 		// fail.
@@ -72,14 +59,11 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (
 	}
 
 	// Scan EATV for the first entry visible in this matcher mode (highest
-	// non-filtered Tx due to descending sort). The caller holds the storage
-	// projections, so the bound's components are re-interned from them; both
-	// constructors return the canonical pointer for an already-interned value.
-	// The scan accrues into the report as it closes, so the failures below keep the
-	// intake they spent.
+	// non-filtered Tx due to descending sort). The scan accrues into the report
+	// as it closes, so the failures below keep the intake they spent.
 	iter, err := OpenScan(m.reader, report, ScanBound{
 		Index:  EATV,
-		Prefix: []datalog.Value{datalog.NewIdentityFromHash(e), datalog.InternKeywordFromBytes(a)},
+		Prefix: []datalog.Value{e, a},
 	})
 	if err != nil {
 		return nil, datalog.ElementID{}, false, err
@@ -115,8 +99,8 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (
 
 // ResolveAddWins returns the current set members for cardinality-many, each
 // under its memberKey, through resolveAddWinsSet.
-func (m *PatternMatcher) ResolveAddWins(e Entity, a Attribute, report *scanReport) (map[string]any, datalog.ElementID, bool, error) {
-	result, err := m.resolveAddWinsSet(e[:], a[:], report)
+func (m *PatternMatcher) ResolveAddWins(e datalog.Identity, a datalog.Keyword, report *scanReport) (map[string]any, datalog.ElementID, bool, error) {
+	result, err := m.resolveAddWinsSet(e, a, report)
 	if err != nil {
 		// The scan read the index before it failed, and the report kept that
 		// where the result struct it never built could not.
@@ -127,10 +111,10 @@ func (m *PatternMatcher) ResolveAddWins(e Entity, a Attribute, report *scanRepor
 
 // ResolveRGA returns the ordered vector for cardinality-vector
 // Returns (values, positionToElementID, maxElementID, present, error)
-func (m *PatternMatcher) ResolveRGA(e Entity, a Attribute, report *scanReport) ([]any, []datalog.ElementID, datalog.ElementID, bool, error) {
+func (m *PatternMatcher) ResolveRGA(e datalog.Identity, a datalog.Keyword, report *scanReport) ([]any, []datalog.ElementID, datalog.ElementID, bool, error) {
 	// Load raw RGA elements. The bound is the resolver's own; a cache rebuild
 	// has no pattern arm above it to announce one.
-	elements, _, err := m.loadRGAElements(e[:], a[:], report)
+	elements, _, err := m.loadRGAElements(e, a, report)
 	if err != nil {
 		return nil, nil, datalog.ElementID{}, false, err
 	}
@@ -163,21 +147,4 @@ func (m *PatternMatcher) ResolveRGA(e Entity, a Attribute, report *scanReport) (
 	// tombstoning. An all-tombstoned vector resolves to the empty vector, which
 	// is a value and not an absence.
 	return values, positions, maxID, true, nil
-}
-
-// decodeAttribute converts Attribute bytes to a string (keyword representation)
-func decodeAttribute(a Attribute) string {
-	// Find the first null byte to determine actual string length
-	length := 0
-	for i, b := range a {
-		if b == 0 {
-			length = i
-			break
-		}
-		length = i + 1
-	}
-	if length == 0 {
-		return ""
-	}
-	return string(a[:length])
 }

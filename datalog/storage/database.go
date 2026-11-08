@@ -470,6 +470,9 @@ func (d *Database) Cache() *Cache {
 // This is O(n) where n = total datoms for the specified attributes.
 // Call during application startup, not on the hot path.
 //
+// A History handle resolves nothing, so its matcher refuses every cache key
+// (cacheKey) and the call stores nothing.
+//
 // With DisableCache there is no cache to warm and the call does nothing. Every
 // other reader of d.cache in this file resolves from storage instead, because
 // the cache is an optimization rather than a correctness requirement; warming
@@ -482,19 +485,14 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 	matcher := d.Matcher().(*PatternMatcher)
 
 	for _, attr := range attributes {
-		// Cache keys carry the storage projection of the attribute, so it is
-		// rendered once here and reused for every entity the scan turns up.
-		var aBytes Attribute
-		copy(aBytes[:], attr.String())
-
 		// Scan AEVT for all entities with this attribute
 		iter, err := OpenScan(d.store, DiscardIntake, ScanBound{Index: AEVT, Prefix: []datalog.Value{attr}})
 		if err != nil {
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
-		card := matcher.GetCardinality(attr)
+		def := matcher.schema.GetAttribute(attr)
 
-		seenEntities := make(map[Entity]bool)
+		seenEntities := make(map[datalog.Identity]bool)
 
 		for iter.Next() {
 			datom, err := iter.Datom()
@@ -505,14 +503,14 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 				return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 			}
 
-			// Get entity bytes
-			eBytes := Entity(datom.E.Hash())
-
 			// Resolve each (E, A) once
-			if !seenEntities[eBytes] {
-				seenEntities[eBytes] = true
-				key := CacheKey{E: eBytes, A: aBytes}
-				if _, err := d.cache.GetOrResolve(key, card, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake); err != nil {
+			if !seenEntities[datom.E] {
+				seenEntities[datom.E] = true
+				key, cached := matcher.cacheKey(datom.E, attr)
+				if !cached {
+					continue
+				}
+				if _, err := d.cache.GetOrResolve(key, def, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake); err != nil {
 					if closeErr := iter.Close(); closeErr != nil {
 						err = errjoin.Join(err, closeErr)
 					}
@@ -549,26 +547,21 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
 		return nil, err
 	}
-	eBytes := Entity(e.Hash())
-
-	var aBytes Attribute
-	copy(aBytes[:], a.String())
-
-	key := CacheKey{E: eBytes, A: aBytes}
 
 	matcher := d.Matcher().(*PatternMatcher)
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
-	// is set (d.cache == nil), resolve the entry directly from storage via
-	// ResolveEntry, which produces the same *CacheEntry shape and determines
-	// cardinality the same way (GetCardinality over d.schema).
-	card := matcher.GetCardinality(a)
+	// is set (d.cache == nil), or the handle's matcher refuses the key because
+	// History resolves nothing (cacheKey), resolve the entry directly from
+	// storage via ResolveEntry, which produces the same *CacheEntry shape under
+	// the same definition.
+	def := matcher.schema.GetAttribute(a)
 	var entry *CacheEntry
 	var err error
-	if d.cache != nil {
-		entry, err = d.cache.GetOrResolve(key, card, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+	if key, cached := matcher.cacheKey(e, a); cached && d.cache != nil {
+		entry, err = d.cache.GetOrResolve(key, def, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 	} else {
-		entry, err = ResolveEntry(key, card, matcher, DiscardIntake)
+		entry, err = ResolveEntry(CacheKey{E: e, A: a}, def, matcher, DiscardIntake)
 	}
 	if err != nil {
 		return nil, err
@@ -605,26 +598,21 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
 		return 0, err
 	}
-	eBytes := Entity(e.Hash())
-
-	var aBytes Attribute
-	copy(aBytes[:], a.String())
-
-	key := CacheKey{E: eBytes, A: aBytes}
 
 	matcher := d.Matcher().(*PatternMatcher)
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
-	// is set (d.cache == nil), resolve the entry directly from storage via
-	// ResolveEntry, which produces the same *CacheEntry shape and determines
-	// cardinality the same way (GetCardinality over d.schema).
-	card := matcher.GetCardinality(a)
+	// is set (d.cache == nil), or the handle's matcher refuses the key because
+	// History resolves nothing (cacheKey), resolve the entry directly from
+	// storage via ResolveEntry, which produces the same *CacheEntry shape under
+	// the same definition.
+	def := matcher.schema.GetAttribute(a)
 	var entry *CacheEntry
 	var err error
-	if d.cache != nil {
-		entry, err = d.cache.GetOrResolve(key, card, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+	if key, cached := matcher.cacheKey(e, a); cached && d.cache != nil {
+		entry, err = d.cache.GetOrResolve(key, def, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 	} else {
-		entry, err = ResolveEntry(key, card, matcher, DiscardIntake)
+		entry, err = ResolveEntry(CacheKey{E: e, A: a}, def, matcher, DiscardIntake)
 	}
 	if err != nil {
 		return 0, err
@@ -2425,17 +2413,15 @@ func (t *Transaction) startMatcher(session ReadSession) *PatternMatcher {
 // arrived on (e, a) after the transaction's read point. A nil entry is an
 // attribute that value holds no datom of.
 func (t *Transaction) startEntry(atStart *PatternMatcher, e datalog.Identity, a datalog.Keyword) (*CacheEntry, error) {
-	var aBytes Attribute
-	copy(aBytes[:], a.String())
-	key := CacheKey{E: Entity(e.Hash()), A: aBytes}
-	card := atStart.GetCardinality(a)
+	key := CacheKey{E: e, A: a}
+	def := atStart.schema.GetAttribute(a)
 
 	var entry *CacheEntry
 	var err error
 	if t.db.cache != nil {
-		entry, err = t.db.cache.GetOrResolve(key, card, atStart, t.readPoint, t.db.plannerOptions.Handler, DiscardIntake)
+		entry, err = t.db.cache.GetOrResolve(key, def, atStart, t.readPoint, t.db.plannerOptions.Handler, DiscardIntake)
 	} else {
-		entry, err = ResolveEntry(key, card, atStart, DiscardIntake)
+		entry, err = ResolveEntry(key, def, atStart, DiscardIntake)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s in the value the transaction opened on: %w", a.String(), err)
@@ -2534,10 +2520,8 @@ func (t *Transaction) pendingOf(a datalog.Keyword) ([]datalog.Datom, ReadSession
 // as well as the value's.
 func (t *Transaction) heldOne(e datalog.Identity, a datalog.Keyword, pending []datalog.Datom, session ReadSession) (value any, found bool, err error) {
 	atStart := t.startMatcher(session)
-	var aBytes Attribute
-	copy(aBytes[:], a.String())
 
-	if atStart.ResolvesUnique(aBytes) {
+	if atStart.schema.GetAttribute(a).HasUniqueConstraint() {
 		state := newUniqueWalkState()
 		state.claims = executor.NewTupleKeyMap([]int{0}, []int{0}, 0)
 		// pending is in the order the transaction drew their ElementIDs, so
@@ -2547,13 +2531,12 @@ func (t *Transaction) heldOne(e datalog.Identity, a datalog.Keyword, pending []d
 				state.claims.Put(executor.Tuple{d.V}, d.Tx)
 			}
 		}
-		eBytes := Entity(e.Hash())
 		for i := len(pending) - 1; i >= 0; i-- {
 			d := &pending[i]
 			if d.E != e {
 				continue
 			}
-			decision, _, err := atStart.walkApplyEntry(state, d, eBytes, aBytes, DiscardIntake)
+			decision, _, err := atStart.walkApplyEntry(state, d, e, a, DiscardIntake)
 			if err != nil {
 				return nil, false, err
 			}
@@ -2561,7 +2544,7 @@ func (t *Transaction) heldOne(e datalog.Identity, a datalog.Keyword, pending []d
 				return d.V, true, nil
 			}
 		}
-		value, _, _, found, _, err := atStart.walkUniqueEntityValue(state, eBytes, aBytes, DiscardIntake)
+		value, _, _, found, _, err := atStart.walkUniqueEntityValue(state, e, a, DiscardIntake)
 		if err != nil {
 			return nil, false, err
 		}
@@ -2875,7 +2858,10 @@ func (t *Transaction) SaveStruct(v interface{}) (datalog.Identity, error) {
 	return dlreflect.SaveStruct(t, t, v, t.schema)
 }
 
-// Commit commits the transaction
+// Commit commits the transaction's writes and a :db/txInstant mark in one
+// storage transaction, and returns the mark's ElementID, the point at which
+// AsOf reads the commit. A transaction holding no write commits nothing and
+// returns the store's highest ElementID.
 func (t *Transaction) Commit() (datalog.ElementID, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -2885,6 +2871,23 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 	}
 	if t.doomed {
 		return datalog.ElementID{}, ErrRollbackInProgress
+	}
+
+	// A transaction holding no write asserts and withdraws nothing, so its
+	// commit writes no datom, its mark included: a mark bounds its commit's
+	// datoms, and this commit has none. Its point is the store's highest
+	// ElementID, the zero ElementID on an empty store.
+	if len(t.datoms) == 0 && len(t.retracts) == 0 {
+		point, err := t.db.store.MaxElementID()
+		if err != nil {
+			return datalog.ElementID{}, fmt.Errorf("read the store's highest ElementID: %w", err)
+		}
+		if err := t.closeSession(); err != nil {
+			return datalog.ElementID{}, err
+		}
+		t.closed = true
+		t.deregister()
+		return point, nil
 	}
 
 	// Uniqueness is a read-time CRDT resolution rule, not a write-time gate.
@@ -2990,48 +2993,21 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 	// Skip if cache is disabled
 	if t.db.cache != nil {
 		arrival := t.db.clock.Next()
-		seenKeys := make(map[CacheKey]bool)
 
 		// Attributes written in this commit that are declared Unique.
 		// Writes to these attributes can silently supersede other entities'
 		// cached values under (A, V)-LWW fallback, so we invalidate all
 		// cached (E, A) entries for the attribute after per-key updates.
-		uniqueAttrsWritten := make(map[Attribute]bool)
+		uniqueAttrsWritten := make(map[datalog.Keyword]bool)
 		sch := t.db.Schema()
-		checkUnique := func(a datalog.Keyword, aBytes Attribute) {
-			if sch.GetAttribute(a).HasUniqueConstraint() {
-				uniqueAttrsWritten[aBytes] = true
+
+		// Record the arrival on every (E, A) the asserted and retracted datoms
+		// touch.
+		for _, key := range touched {
+			t.db.cache.UpdateMaxVersion(key, arrival)
+			if sch.GetAttribute(key.A).HasUniqueConstraint() {
+				uniqueAttrsWritten[key.A] = true
 			}
-		}
-
-		// Process asserted datoms
-		for _, d := range t.datoms {
-			eBytes := Entity(d.E.Hash())
-
-			var aBytes Attribute
-			copy(aBytes[:], d.A.String())
-
-			key := CacheKey{E: eBytes, A: aBytes}
-			if !seenKeys[key] {
-				seenKeys[key] = true
-				t.db.cache.UpdateMaxVersion(key, arrival)
-			}
-			checkUnique(d.A, aBytes)
-		}
-
-		// Process retracted datoms
-		for _, d := range t.retracts {
-			eBytes := Entity(d.E.Hash())
-
-			var aBytes Attribute
-			copy(aBytes[:], d.A.String())
-
-			key := CacheKey{E: eBytes, A: aBytes}
-			if !seenKeys[key] {
-				seenKeys[key] = true
-				t.db.cache.UpdateMaxVersion(key, arrival)
-			}
-			checkUnique(d.A, aBytes)
 		}
 
 		// Invalidate cache entries for all touched (E, A) pairs. This also
@@ -3043,23 +3019,29 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		// Conservative unique-attr invalidation: for each unique attribute
 		// written in this commit, invalidate every cached entry for that
 		// attribute across all entities. See CRDT_UNIQUE_SEMANTICS.md D3.
-		for aBytes := range uniqueAttrsWritten {
-			t.db.cache.InvalidateAttribute(aBytes)
+		for a := range uniqueAttrsWritten {
+			t.db.cache.InvalidateAttribute(a)
 		}
 	}
 
 	// Clean up
 	t.closed = true
+	t.deregister()
+
+	// Return the metadata ElementID - it has the highest Lamport in this tx,
+	// making it the correct high-water mark for as-of queries
+	return metadataElemID, nil
+}
+
+// deregister removes the transaction from the database's open transactions
+// and wakes a rewind waiting on their drain. The caller holds t.mu.
+func (t *Transaction) deregister() {
 	t.db.mu.Lock()
 	delete(t.db.activeTx, t)
 	if t.db.rollbackInProgress {
 		t.db.drainCond.Broadcast()
 	}
 	t.db.mu.Unlock()
-
-	// Return the metadata ElementID - it has the highest Lamport in this tx,
-	// making it the correct high-water mark for as-of queries
-	return metadataElemID, nil
 }
 
 // touchedCacheKeys returns the deduplicated set of (E, A) cache keys this
@@ -3069,9 +3051,7 @@ func (t *Transaction) touchedCacheKeys() []CacheKey {
 	touched := make([]CacheKey, 0, len(t.datoms)+len(t.retracts))
 	seen := make(map[CacheKey]bool)
 	add := func(e datalog.Identity, a datalog.Keyword) {
-		var aBytes Attribute
-		copy(aBytes[:], a.String())
-		key := CacheKey{E: Entity(e.Hash()), A: aBytes}
+		key := CacheKey{E: e, A: a}
 		if !seen[key] {
 			seen[key] = true
 			touched = append(touched, key)
@@ -3099,13 +3079,7 @@ func (t *Transaction) Rollback() error {
 	t.datoms = nil
 	t.retracts = nil
 	closeErr := t.closeSession()
-
-	t.db.mu.Lock()
-	delete(t.db.activeTx, t)
-	if t.db.rollbackInProgress {
-		t.db.drainCond.Broadcast()
-	}
-	t.db.mu.Unlock()
+	t.deregister()
 
 	return closeErr
 }
@@ -3372,9 +3346,6 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 		return nil, fmt.Errorf("LookupByUnique: unsupported matcher type %T", d.Matcher())
 	}
 
-	var aBytes Attribute
-	copy(aBytes[:], attr.String())
-
 	// This is a scan-opening path like any other, and it reports as one:
 	// resolveAVLWW walks AVET for the value, then walks the claimant's EATV
 	// history with a supersession scan per Set entry. Called in a loop — which
@@ -3404,7 +3375,7 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 			cause:    map[string]interface{}{annotations.KeyPattern: pattern},
 		}
 	}
-	owner, _, err := matcher.resolveAVLWW(aBytes, value, report)
+	owner, _, err := matcher.resolveAVLWW(attr, value, report)
 	if report != nil {
 		report.close(err == nil)
 	}
@@ -3545,24 +3516,19 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		return result, nil
 	}
 
-	eBytes := Entity(entity.Hash())
-
 	// Get what's already cached for this entity
-	cachedAttrs := d.cache.GetCachedAttrs(eBytes)
+	cachedAttrs := d.cache.GetCachedAttrs(entity)
 
 	// Partition needed attrs into cached vs missing
 	var missing []datalog.Keyword
 	for _, kw := range attrs {
-		var aBytes Attribute
-		copy(aBytes[:], kw.String())
-
-		if cachedAttrs != nil && cachedAttrs[aBytes] {
+		if cachedAttrs != nil && cachedAttrs[kw] {
 			// Already cached - GetOrResolve will do freshness check
-			key, ok := matcher.cacheKey(eBytes, aBytes)
+			key, ok := matcher.cacheKey(entity, kw)
 			if !ok {
 				continue
 			}
-			entry, err := d.cache.GetOrResolve(key, matcher.GetCardinality(kw), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+			entry, err := d.cache.GetOrResolve(key, matcher.schema.GetAttribute(kw), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 			if err != nil {
 				return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 			}
@@ -3583,13 +3549,11 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	// For now, use individual GetOrResolve for missing attrs
 	// TODO: Add threshold-based scan optimization
 	for _, kw := range missing {
-		var aBytes Attribute
-		copy(aBytes[:], kw.String())
-		key, ok := matcher.cacheKey(eBytes, aBytes)
+		key, ok := matcher.cacheKey(entity, kw)
 		if !ok {
 			continue
 		}
-		entry, err := d.cache.GetOrResolve(key, matcher.GetCardinality(kw), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+		entry, err := d.cache.GetOrResolve(key, matcher.schema.GetAttribute(kw), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 		}

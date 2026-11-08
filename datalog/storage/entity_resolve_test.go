@@ -276,8 +276,7 @@ func TestResolveEntityAttributes_UsesCachedEntries(t *testing.T) {
 			assert.Equal(t, "Alice", result1[datalog.NewKeyword(":person/name")])
 
 			// Verify entity attrs are tracked
-			eBytes := Entity(e1.Hash())
-			cachedAttrs := db.Cache().GetCachedAttrs(eBytes)
+			cachedAttrs := db.Cache().GetCachedAttrs(e1)
 			assert.NotNil(t, cachedAttrs, "should have cached attrs tracked")
 
 			// Second call should use cache

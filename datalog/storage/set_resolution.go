@@ -53,21 +53,11 @@ type SetResolutionResult struct {
 // NOTE: ReplicaID is NOT used for add-wins comparison. It's only used for
 // LWW (cardinality-one). For add-wins, "concurrent" means same Lamport,
 // and add always wins at concurrent operations regardless of ReplicaID.
-func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanReport) (resolved *SetResolutionResult, resolveErr error) {
-	// The caller holds storage projections; both constructors return the
-	// canonical interned pointer for an already-interned value.
-	var e Entity
-	copy(e[:], eBytes)
-	var a Attribute
-	copy(a[:], aBytes)
-
+func (m *PatternMatcher) resolveAddWinsSet(e datalog.Identity, a datalog.Keyword, report *scanReport) (resolved *SetResolutionResult, resolveErr error) {
 	// Values live in the index keys; nothing here needs Badger values.
 	bound := ScanBound{
-		Index: EAVT,
-		Prefix: []datalog.Value{
-			datalog.NewIdentityFromHash(e),
-			datalog.InternKeywordFromBytes(a),
-		},
+		Index:  EAVT,
+		Prefix: []datalog.Value{e, a},
 	}
 	// Names the run for an arm that delegates its whole scan here, and so has
 	// none of its own to declare. An arm that already declared one keeps it:

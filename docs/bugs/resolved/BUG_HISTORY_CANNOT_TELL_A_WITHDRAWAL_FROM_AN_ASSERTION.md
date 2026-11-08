@@ -1,6 +1,6 @@
 # History cannot tell a withdrawal from an assertion
 
-**Status**: Open.
+**Status**: Resolved. The body states the defect as filed; the Resolution at the end states the fix.
 
 A History read returns a datom that withdraws a value exactly as it returns one that asserts it. Datomic's form that tells them apart, a data pattern's fifth position, is refused. Goal 12 of `docs/proposals/NESTED_SCOPES_AS_QUERIES.md` names that position among the forms that take Datomic's meaning, so the refusal is a gap.
 
@@ -41,3 +41,29 @@ A downstream build runs fixpoints over its store, and a least fixpoint requires 
 - On `History()`, `[?e :a ?v ?tx false]` answers the withdrawals alone, and `[?e :a ?v ?tx true]` the assertions alone.
 - On the latest view and on an `AsOf` view, the fifth position binds true for every tuple.
 - A pattern of six elements is refused, naming the count.
+
+## Resolution
+
+- A data pattern holds one to five elements. `query.PatternPositions` is 5, and `DataPattern.GetAdded` reads the fifth position, whether the datom asserts.
+- `datalog.CRDTOp.Asserts` answers whether an operation asserts its value: true for `OpNone`, `OpCRDTAdd` and `OpRGAInsert`, false for `OpCRDTRemove` and `OpRGATombstone`.
+- On a History handle the position reads each datom's own operation:
+  - `PatternMatcher.matchesDatom` matches a datom whose `Op.Asserts` equals the position's bound value, and a value that is not a boolean matches none.
+  - `query.InternedTupleBuilder` and `query.DatomToTuple` bind the position's variable from `Op.Asserts`.
+  - The routes that read raw datoms, the scan, the per-binding route, the hash join and the merge join, filter through `matchesDatom` and build through the interned builder.
+- In the latest view and an as-of view every tuple is a resolved value, so `PatternMatcher.matchAsAssertions` (`datalog/storage/matcher_relations.go`) decides the position once for every route:
+  - the constant true and a blank answer the pattern's first four positions
+  - a variable is bound to true beside each of their tuples
+  - false and any other constant answer nothing
+- A change of a cardinality-one value is a supersession: the store records the new value alone and no withdrawal of the old one, and History records nothing more. So `[?e :a ?v _ false]` answers the values `Remove` withdrew, and nothing for a superseded value. `DATOMIC_COMPATIBILITY.md` states the difference from Datomic's history, which carries the old value's retraction.
+- `executor.MockPatternMatcher`, which reads datoms as written, reads the position from the datom's operation.
+- The explain rendering names a bound fifth position on its `Bound:` line (`planner.BoundMask.Added`).
+- `qb.Pat` builds a pattern of five elements, and `QUERY_BUILDER.md`, the `qb` docs and `DATOMIC_COMPATIBILITY.md` list the form.
+- The tests:
+  - `TestHistoryBindsWhetherEachDatomAssertsOrWithdraws` (`datalog/storage/assertion_position_test.go`), every backend
+  - `TestTheLatestAndAsOfViewsBindEveryTupleAsAnAssertion`, with the cache enabled and disabled
+  - `TestScanFingerprint_FifthPosition`
+  - `TestMockPatternMatcherBindsWhetherEachDatomAsserts`
+  - `TestExplainRendersABoundFifthPosition`
+  - `TestAFiveElementPatternParsesRendersAndParsesBack`
+  - `TestPatOfFiveElementsEqualsItsParsedForm`
+  - the four refusal tests, at six elements

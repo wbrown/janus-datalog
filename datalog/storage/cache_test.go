@@ -49,9 +49,7 @@ func newCacheFixture(t *testing.T, mode optimizerMode) *cacheFixture {
 
 // key is the cache key of the fixture's entity under attr.
 func (f *cacheFixture) key(attr datalog.Keyword) CacheKey {
-	var a Attribute
-	copy(a[:], attr.String())
-	return CacheKey{E: Entity(f.entity.Hash()), A: a}
+	return CacheKey{E: f.entity, A: attr}
 }
 
 // set writes value as the current value of attr on the entity.
@@ -86,7 +84,7 @@ func (f *cacheFixture) remove(t *testing.T, attr datalog.Keyword, value string) 
 // resolve resolves attr on the entity through the fixture's matcher into
 // cache, accruing the intake into report.
 func (f *cacheFixture) resolve(cache *Cache, attr datalog.Keyword, report *scanReport) (*CacheEntry, error) {
-	return cache.GetOrResolve(f.key(attr), f.matcher.GetCardinality(attr), f.matcher, cache.ReadPoint(), nil, report)
+	return cache.GetOrResolve(f.key(attr), f.matcher.schema.GetAttribute(attr), f.matcher, cache.ReadPoint(), nil, report)
 }
 
 // version is the ElementID of the datom the matcher resolves attr on the
@@ -95,7 +93,7 @@ func (f *cacheFixture) resolve(cache *Cache, attr datalog.Keyword, report *scanR
 func (f *cacheFixture) version(t *testing.T, attr datalog.Keyword) datalog.ElementID {
 	t.Helper()
 	key := f.key(attr)
-	_, maxID, present, err := f.matcher.ResolveLWW(key.E, key.A, DiscardIntake)
+	_, maxID, present, err := f.matcher.ResolveLWW(key.E, key.A, f.matcher.schema.GetAttribute(attr), DiscardIntake)
 	require.NoError(t, err)
 	require.True(t, present, "the entity carries %s", attr)
 	return maxID
@@ -182,12 +180,12 @@ func TestCacheEntryUnderAnotherCardinalityIsNotAHit(t *testing.T) {
 			key := f.key(f.tags)
 
 			cache := NewCache(f.db.clock)
-			set, err := cache.GetOrResolve(key, asSet.GetCardinality(f.tags), asSet, cache.ReadPoint(), nil, DiscardIntake)
+			set, err := cache.GetOrResolve(key, asSet.schema.GetAttribute(f.tags), asSet, cache.ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.Same(t, schema.CardinalityMany, set.Cardinality())
 			require.Len(t, set.ManySet(), 2)
 
-			one, err := cache.GetOrResolve(key, asOne.GetCardinality(f.tags), asOne, cache.ReadPoint(), nil, DiscardIntake)
+			one, err := cache.GetOrResolve(key, asOne.schema.GetAttribute(f.tags), asOne, cache.ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.Same(t, schema.CardinalityOne, one.Cardinality(), "a reader under cardinality one is served no set's view")
 			require.Equal(t, "y", one.OneValue(), "the reader resolved the pair under its own cardinality")
@@ -354,11 +352,7 @@ func TestUpdateMaxVersion(t *testing.T) {
 func TestUpdateMaxVersionConcurrency(t *testing.T) {
 	cache := NewCache(NewLamportClock(1))
 
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
+	key := CacheKey{E: datalog.NewIdentity("entity1"), A: datalog.NewKeyword(":person/name")}
 
 	// Run concurrent UpdateMaxVersion calls
 	var wg sync.WaitGroup
@@ -552,7 +546,7 @@ func TestCacheRebuildStoreError(t *testing.T) {
 				faulting.SetSchema(f.db.Schema())
 				cache := NewCache(f.db.clock)
 
-				entry, err := cache.GetOrResolve(f.key(attr), faulting.GetCardinality(attr), faulting, cache.ReadPoint(), nil, DiscardIntake)
+				entry, err := cache.GetOrResolve(f.key(attr), faulting.schema.GetAttribute(attr), faulting, cache.ReadPoint(), nil, DiscardIntake)
 				require.ErrorIs(t, err, errInjectedScanFault)
 				assert.Nil(t, entry)
 				assert.Equal(t, 1, store.scans, "the failing miss opens one scan and is not retried")

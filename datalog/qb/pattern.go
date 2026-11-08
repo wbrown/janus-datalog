@@ -17,15 +17,17 @@ type Pattern struct {
 	elements []query.PatternElement
 }
 
-// Pat creates a data pattern of one to four elements, entity, attribute,
-// value and transaction in that order; a position the pattern omits is
-// unbound:
+// Pat creates a data pattern of one to five elements, entity, attribute,
+// value, transaction, and whether the datom asserts, in that order; a
+// position the pattern omits is unbound:
 //   - Pat(e)                 - [e], every entity carrying a datom
 //   - Pat(e, a)              - [e a], every entity carrying the attribute
 //   - Pat(e, a, v)           - [e a v]
 //   - Pat(e, a, v, tx)       - [e a v tx], with the transaction
+//   - Pat(e, a, v, tx, added) - [e a v tx added], true where the datom
+//     asserts its value and false where it withdraws it
 //
-// Build refuses a pattern of no element or of more than four, as
+// Build refuses a pattern of no element or of more than five, as
 // ParseQuery refuses its rendering.
 //
 // Arguments can be:

@@ -56,6 +56,7 @@ Basic Datalog queries work as expected:
 **Pattern matching:**
 - `[?e ?a ?v]` - basic triple patterns
 - `[?e ?a ?v ?tx]` - with transaction
+- `[?e ?a ?v ?tx ?added]` - with whether the datom asserts its value (true) or withdraws it (false)
 - `_` - wildcards for ignored positions
 - Direct values - `"AAPL"`, `42`, `:status/active`
 
@@ -730,7 +731,7 @@ Partial transaction support:
 - ✅ **Hard deletion** - `Retract(e, a, v)` for explicit removal (GDPR, cleanup)
 - ❌ **No transaction functions**
 - ❌ **No tempids** for new entities
-- ✅ **Transaction entity** - each commit writes one `:db/txInstant` datom on an entity named for the commit's high-water Lamport, atomically with the batch. Its value is the time the caller gave the transaction through `NewTransactionAt` or `SetTime`, and the commit's wall-clock time when the caller gave none. So a commit is an entity a query can read. That mark is the high-water point an as-of read uses.
+- ✅ **Transaction entity** - each commit that writes a datom writes one `:db/txInstant` datom on an entity named for the commit's high-water Lamport, atomically with the batch. A commit that writes nothing writes no mark, and answers the store's highest ElementID. Its value is the time the caller gave the transaction through `NewTransactionAt` or `SetTime`, and the commit's wall-clock time when the caller gave none. So a commit is an entity a query can read. That mark is the high-water point an as-of read uses.
 - ❌ **No further transaction metadata** - no API attaches other attributes to the transaction entity at commit
 
 ### 3. Entity API ❌
@@ -788,6 +789,11 @@ history, _ := d.History().Query(
     `[:find ?name ?tx :where [?e :person/name ?name ?tx]]`)
 // Returns: [["Alice" <ElementID@1>] ["Alicia" <ElementID@2>]]
 
+// History mode, with whether each datom asserts its value
+added, _ := d.History().Query(
+    `[:find ?name ?added :where [?e :person/name ?name _ ?added]]`)
+// Returns: [["Alice" true] ["Alicia" true]]
+
 // As-of mode - CRDT-resolved state at tx1
 asOf, _ := d.AsOf(tx1).Query(
     `[:find ?name :where [?e :person/name ?name]]`)
@@ -795,6 +801,8 @@ asOf, _ := d.AsOf(tx1).Query(
 ```
 
 **Design note:** Temporal filters are applied at the database level (following Datomic's pattern), not as query predicates. Use `d.History().Query(...)` and `d.AsOf(elementID).Query(...)` to access historical data.
+
+**The fifth position:** a data pattern's fifth position is whether the datom asserts its value. In History it binds false for a datom `Remove` wrote and true for every other datom. A new value of a cardinality-one attribute supersedes the old one, and janus writes no retraction of the old value, so History holds the old value as an assertion alone. Datomic's history of the same change carries the old value's retraction. So `[?e ?a ?v _ false]` answers the values `Remove` withdrew, and nothing for a superseded value. In the latest view and an as-of view every tuple is a resolved value, so the position binds true.
 
 **Not supported:**
 - No `since` queries (use `[(tx-between ?tx start ∞)]` instead)

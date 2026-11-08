@@ -172,6 +172,32 @@ func TestScanFingerprint_DifferentSources(t *testing.T) {
 		"$src1 and $src2 should have different fingerprints")
 }
 
+// TestScanFingerprint_FifthPosition pins that two patterns differing only at
+// the fifth position, whether the datom asserts, do not share a scan: on a
+// History handle the constant true answers the assertions and false the
+// withdrawals, and a variable answers both.
+func TestScanFingerprint_FifthPosition(t *testing.T) {
+	withFifth := func(fifth query.PatternElement) *query.DataPattern {
+		return &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: datalog.NewKeyword(":attr")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+			query.Variable{Name: datalog.NewSymbol("?tx")},
+			fifth,
+		}}
+	}
+	asserted := withFifth(query.Constant{Value: true})
+	withdrawn := withFifth(query.Constant{Value: false})
+	either := withFifth(query.Variable{Name: datalog.NewSymbol("?added")})
+
+	assert.False(t, fingerprintOf(asserted).Equal(fingerprintOf(withdrawn)),
+		"the constants true and false must not share a scan")
+	assert.False(t, fingerprintOf(asserted).Equal(fingerprintOf(either)),
+		"the constant true and a variable must not share a scan")
+	assert.True(t, fingerprintOf(withdrawn).Equal(fingerprintOf(withFifth(query.Constant{Value: false}))),
+		"identical patterns of five elements share a scan")
+}
+
 // TestScanFingerprint_Deterministic verifies that the same pattern produces
 // an equal fingerprint on repeated calls.
 func TestScanFingerprint_Deterministic(t *testing.T) {

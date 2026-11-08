@@ -48,7 +48,7 @@ The design answers to these six goals, one per addition.
 - `SourceRouter` routes each pattern to exactly one `PatternMatcher`, by the pattern's source symbol. No source reads two matchers as one.
 - `Database.Fork(name)` starts a branch from a named snapshot on the memory-tree store. The branch writes as its own replica. `BadgerStore` does not implement the `forker` interface.
 - `Transaction.Remove` makes a cardinality-one attribute absent in the current view (`docs/CORE_MODEL.md` §1).
-- A commit writes one `:db/txInstant` datom on its transaction entity. `Transaction` carries no caller attributes. Only `SetTime` touches the transaction entity.
+- A commit that writes a datom writes one `:db/txInstant` datom on its transaction entity, and a commit that writes nothing writes no mark. `Transaction` carries no caller attributes. Only `SetTime` touches the transaction entity.
 - A `ReadSession` pins one snapshot for every read a query makes.
 - Every query-executing test runs under both optimizer modes, and the optimizer never changes results.
 

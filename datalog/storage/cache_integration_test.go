@@ -58,13 +58,10 @@ func TestQueryPathUsesCache(t *testing.T) {
 			assert.Equal(t, "Alice", val)
 
 			// Verify the cache was populated
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], name.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: name}
 
 			// The cache should now have an entry for this (E, A) pair
-			entry, err := db.Cache().GetOrResolve(key, bm.GetCardinality(name), bm, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, bm.schema.GetAttribute(name), bm, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -324,19 +321,13 @@ func TestCacheResolverInterface(t *testing.T) {
 			// Get matcher which implements CacheResolver
 			matcher := db.Matcher().(*PatternMatcher)
 
-			// Test that matcher can be used as a CacheResolver
-			eBytes := Entity(e.Hash())
-			var nameAttr, tagsAttr Attribute
-			copy(nameAttr[:], name.String())
-			copy(tagsAttr[:], tags.String())
-
 			// Test GetCardinality
 			assert.Equal(t, schema.CardinalityOne, matcher.GetCardinality(name))
 			assert.Equal(t, schema.CardinalityMany, matcher.GetCardinality(tags))
 
 			// Test ResolveLWW
 			lww := &scanReport{}
-			val, maxID, present, err := matcher.ResolveLWW(eBytes, nameAttr, lww)
+			val, maxID, present, err := matcher.ResolveLWW(e, name, matcher.schema.GetAttribute(name), lww)
 			require.NoError(t, err)
 			assert.True(t, present, "the (E, A) carries datoms, so it is present")
 			assert.Equal(t, "Alice", val)
@@ -345,7 +336,7 @@ func TestCacheResolverInterface(t *testing.T) {
 
 			// Test ResolveAddWins
 			addWins := &scanReport{}
-			set, maxID, present, err := matcher.ResolveAddWins(eBytes, tagsAttr, addWins)
+			set, maxID, present, err := matcher.ResolveAddWins(e, tags, addWins)
 			require.NoError(t, err)
 			assert.True(t, present, "the (E, A) carries datoms, so it is present")
 			_, hasDev := set[memberKey("dev")]
@@ -392,14 +383,11 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 			assert.Equal(t, "Alice", result[0][0])
 
 			// Verify the cache was populated by the query
-			eBytes := Entity(e.Hash())
-			var nameAttr Attribute
-			copy(nameAttr[:], name.String())
-			key := CacheKey{E: eBytes, A: nameAttr}
+			key := CacheKey{E: e, A: name}
 
 			// The cache should now have an entry from the query execution
 			matcher := db.Matcher().(*PatternMatcher)
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.schema.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after query execution")
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -456,13 +444,10 @@ func TestJoinQueryUsesCache(t *testing.T) {
 			assert.Equal(t, "LA", names["Bob"])
 
 			// Verify the cache was populated for the city attribute
-			e1Bytes := Entity(e1.Hash())
-			var cityAttr Attribute
-			copy(cityAttr[:], city.String())
-			key := CacheKey{E: e1Bytes, A: cityAttr}
+			key := CacheKey{E: e1, A: city}
 
 			matcher := db.Matcher().(*PatternMatcher)
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(city), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.schema.GetAttribute(city), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after join query")
 			assert.Equal(t, "NYC", entry.OneValue())
@@ -515,13 +500,10 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 			assert.True(t, found["golang"])
 
 			// Verify the cache was populated
-			eBytes := Entity(e.Hash())
-			var tagsAttr Attribute
-			copy(tagsAttr[:], tags.String())
-			key := CacheKey{E: eBytes, A: tagsAttr}
+			key := CacheKey{E: e, A: tags}
 
 			matcher := db.Matcher().(*PatternMatcher)
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.schema.GetAttribute(tags), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
 			_, hasDeveloper := entry.ManySet()[memberKey("developer")]
@@ -578,10 +560,8 @@ func TestCardinalityManyUnboundScanUsesCache(t *testing.T) {
 				bob:   {"designer": true},
 			}, sets(), "the scan answers every entity's current set")
 
-			var tagsAttr Attribute
-			copy(tagsAttr[:], tags.String())
 			for _, e := range []datalog.Identity{alice, bob} {
-				assert.True(t, db.Cache().GetCachedAttrs(Entity(e.Hash()))[tagsAttr],
+				assert.True(t, db.Cache().GetCachedAttrs(e)[tags],
 					"the scan resolves %s's set through the cache, so the set is cached after it", e)
 			}
 
@@ -626,13 +606,10 @@ func TestCacheConcurrency(t *testing.T) {
 			matcher := db.Matcher().(*PatternMatcher)
 			cache := db.Cache()
 
-			eBytes := Entity(e.Hash())
-			var nameAttr Attribute
-			copy(nameAttr[:], name.String())
-			key := CacheKey{E: eBytes, A: nameAttr}
+			key := CacheKey{E: e, A: name}
 
 			// Populate initial entry
-			_, err = cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
+			_, err = cache.GetOrResolve(key, matcher.schema.GetAttribute(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 
 			var wg sync.WaitGroup
@@ -642,7 +619,7 @@ func TestCacheConcurrency(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					entry, err := cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
+					entry, err := cache.GetOrResolve(key, matcher.schema.GetAttribute(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
 					assert.NoError(t, err)
 					assert.NotNil(t, entry)
 					assert.Equal(t, "Alice", entry.OneValue(), "every reader is served the value the store holds")

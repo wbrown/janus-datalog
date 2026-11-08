@@ -460,7 +460,7 @@ func (d *Database) invalidateChangedDefinitions(before, after schema.SchemaProvi
 		if definitionResolvesAlike(was, now) {
 			continue
 		}
-		d.cache.InvalidateAttribute(ToStorageDatom(datalog.Datom{A: ident}).A)
+		d.cache.InvalidateAttribute(ident)
 	}
 }
 

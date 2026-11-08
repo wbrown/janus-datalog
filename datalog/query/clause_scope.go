@@ -316,10 +316,11 @@ func ValidateStaticClauseShapes(clauses []Clause) error {
 	return validateErr
 }
 
-// Validate reads a data pattern's count, one to four elements, entity,
-// attribute, value and transaction in that order, a position the text omits
-// being unbound, and refuses a constant attribute keyword wider than storage
-// holds, which no write could have stored.
+// Validate reads a data pattern's count, one to five elements, entity,
+// attribute, value, transaction, and whether the datom asserts, in that
+// order, a position the text omits being unbound, and refuses a constant
+// attribute keyword wider than storage holds, which no write could have
+// stored.
 func (p *DataPattern) Validate() error {
 	if n := len(p.Elements); n < 1 || n > PatternPositions {
 		return fmt.Errorf("data pattern must have 1 to %d elements, got %d", PatternPositions, n)

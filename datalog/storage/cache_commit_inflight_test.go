@@ -50,12 +50,10 @@ func setAndCommit(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyw
 // reader below treats nil as "not written yet, try again" — so collapsing them
 // would leave it spinning on an error it could not see.
 func resolveOne(db *Database, e datalog.Identity, a datalog.Keyword) (any, error) {
-	var aBytes Attribute
-	copy(aBytes[:], a.String())
-	key := CacheKey{E: Entity(e.Hash()), A: aBytes}
+	key := CacheKey{E: e, A: a}
 	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(db.Schema())
-	entry, err := db.cache.GetOrResolve(key, matcher.GetCardinality(a), matcher, db.cache.ReadPoint(), nil, DiscardIntake)
+	entry, err := db.cache.GetOrResolve(key, matcher.schema.GetAttribute(a), matcher, db.cache.ReadPoint(), nil, DiscardIntake)
 	if err != nil {
 		return nil, err
 	}
@@ -184,9 +182,7 @@ func TestCommit_RollbackPathDoesNotPoisonCache(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, int64(7), warmed, "cache warmed at v7")
 
-			var aBytes Attribute
-			copy(aBytes[:], k.String())
-			key := CacheKey{E: Entity(e.Hash()), A: aBytes}
+			key := CacheKey{E: e, A: k}
 
 			// Mimic Commit's failure path: mark in-flight, then (commit fails, storage
 			// unchanged) Invalidate — no UpdateMaxVersion.

@@ -50,20 +50,15 @@ func TestWarmCacheSingleAttribute(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify entries are cached
-			e1Bytes := Entity(e1.Hash())
-			var a Attribute
-			copy(a[:], name.String())
-			key1 := CacheKey{E: e1Bytes, A: a}
-
-			e2Bytes := Entity(e2.Hash())
-			key2 := CacheKey{E: e2Bytes, A: a}
+			key1 := CacheKey{E: e1, A: name}
+			key2 := CacheKey{E: e2, A: name}
 
 			// The entries should be populated
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
-			entry1, err1 := db.Cache().GetOrResolve(key1, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry1, err1 := db.Cache().GetOrResolve(key1, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err1)
-			entry2, err2 := db.Cache().GetOrResolve(key2, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry2, err2 := db.Cache().GetOrResolve(key2, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err2)
 
 			require.NotNil(t, entry1)
@@ -106,19 +101,12 @@ func TestWarmCacheMultipleAttributes(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify both are cached
-			eBytes := Entity(e1.Hash())
-
-			var nameAttr Attribute
-			copy(nameAttr[:], name.String())
-			var ageAttr Attribute
-			copy(ageAttr[:], age.String())
-
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
-			nameEntry, nameErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: nameAttr}, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			nameEntry, nameErr := db.Cache().GetOrResolve(CacheKey{E: e1, A: name}, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, nameErr)
-			ageEntry, ageErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: ageAttr}, matcher.GetCardinality(age), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			ageEntry, ageErr := db.Cache().GetOrResolve(CacheKey{E: e1, A: age}, s.GetAttribute(age), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, ageErr)
 
 			require.NotNil(t, nameEntry)
@@ -149,12 +137,10 @@ func TestWarmCacheEmptyAttribute(t *testing.T) {
 
 			// The entries warming resolved for the attribute: none while no
 			// entity holds it, and one once an entity does.
-			var nameAttr Attribute
-			copy(nameAttr[:], name.String())
 			warmed := func() int {
 				n := 0
 				db.Cache().slots.Range(func(key CacheKey, slot cacheSlot) bool {
-					if key.A == nameAttr && slot.entry != nil {
+					if key.A == name && slot.entry != nil {
 						n++
 					}
 					return true
@@ -237,14 +223,10 @@ func TestWarmCacheIdempotent(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify data is still correct
-			eBytes := Entity(e1.Hash())
-			var a Attribute
-			copy(a[:], name.String())
-
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
-			entry, err := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: a}, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(CacheKey{E: e1, A: name}, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Alice", entry.OneValue())

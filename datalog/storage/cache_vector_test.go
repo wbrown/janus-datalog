@@ -415,13 +415,8 @@ func TestVectorIndexContainsRealElementIDs(t *testing.T) {
 			matcher := NewPatternMatcher(db.store)
 			matcher.SetSchema(s)
 
-			var eBytes Entity
-			eBytes = e.Hash()
-			var aBytes Attribute
-			copy(aBytes[:], a.String())
-
 			report := &scanReport{}
-			values, positions, maxID, present, err := matcher.ResolveRGA(eBytes, aBytes, report)
+			values, positions, maxID, present, err := matcher.ResolveRGA(e, a, report)
 			require.NoError(t, err)
 			require.True(t, present, "the (E, A) carries RGA datoms, so it is present")
 			require.Positive(t, report.scanned, "RGA reconstruction read the index and must report it")
@@ -488,13 +483,8 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 			matcher := NewPatternMatcher(db.store)
 			matcher.SetSchema(s)
 
-			var eBytes Entity
-			eBytes = e.Hash()
-			var aBytes Attribute
-			copy(aBytes[:], a.String())
-
 			report := &scanReport{}
-			_, positions, _, present, err := matcher.ResolveRGA(eBytes, aBytes, report)
+			_, positions, _, present, err := matcher.ResolveRGA(e, a, report)
 			require.NoError(t, err)
 			require.True(t, present, "the (E, A) carries RGA datoms, so it is present")
 			require.Positive(t, report.scanned, "RGA reconstruction read the index and must report it")

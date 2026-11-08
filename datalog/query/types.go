@@ -156,14 +156,18 @@ type Pattern interface {
 }
 
 // PatternPositions is how many positions a data pattern has: entity,
-// attribute, value and transaction. A pattern holds one to that many
-// elements, which DataPattern.Validate checks and a scan fingerprint sizes
-// its elements by.
-const PatternPositions = 4
+// attribute, value, transaction, and whether the datom asserts. A pattern
+// holds one to that many elements, which DataPattern.Validate checks and a
+// scan fingerprint sizes its elements by.
+const PatternPositions = 5
 
-// DataPattern represents a data pattern of one to four elements, entity,
-// attribute, value and transaction in that order, a position the text omits
-// being unbound: [e], [e a], [e a v] or [e a v t].
+// DataPattern represents a data pattern of one to five elements, entity,
+// attribute, value, transaction, and whether the datom asserts, in that
+// order, a position the text omits being unbound: [e], [e a], [e a v],
+// [e a v t] or [e a v t added]. The fifth position is true for a datom that
+// asserts its value and false for one that withdraws it. A History read binds
+// each datom's answer, and every tuple of a view that resolves, the latest or
+// one as of a target, is an assertion.
 // For multi-source queries, Source identifies which data source to query
 // (e.g., Symbol("$users")). Empty Source means the default source ($).
 type DataPattern struct {
@@ -346,6 +350,15 @@ func (p DataPattern) GetT() PatternElement {
 	return Blank{}
 }
 
+// GetAdded returns the element at the fifth position, whether the datom
+// asserts; a position the pattern omits is unbound, so it reads as a blank.
+func (p DataPattern) GetAdded() PatternElement {
+	if len(p.Elements) > 4 {
+		return p.Elements[4]
+	}
+	return Blank{}
+}
+
 // Symbols returns the symbols (variables) bound by this pattern
 // In relational theory, these become the attributes of the resulting relation
 func (p *DataPattern) Symbols() []Symbol {
@@ -371,6 +384,10 @@ func (p *DataPattern) Symbols() []Symbol {
 		if v, ok := p.GetT().(Variable); ok && !ContainsSymbol(symbols, v.Name) {
 			symbols = append(symbols, v.Name)
 		}
+	}
+
+	if v, ok := p.GetAdded().(Variable); ok && !ContainsSymbol(symbols, v.Name) {
+		symbols = append(symbols, v.Name)
 	}
 
 	return symbols
@@ -740,6 +757,10 @@ func DatomToTuple(datom datalog.Datom, pattern *DataPattern, symbols []Symbol) T
 		if v, ok := pattern.GetT().(Variable); ok {
 			values[v.Name] = datom.Tx
 		}
+	}
+
+	if v, ok := pattern.GetAdded().(Variable); ok {
+		values[v.Name] = datom.Op.Asserts()
 	}
 
 	// Build tuple in symbol order

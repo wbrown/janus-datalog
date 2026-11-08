@@ -24,7 +24,7 @@ An as-of read is the database as it stood at its target: the facts up to the tar
 
 - An as-of read of a point before a declaration that changed a word resolution reads:
   - the cardinality, which decides how an attribute's datoms combine
-  - a unique constraint, which decides whether the unique rule's walk resolves the value (`PatternMatcher.ResolvesUnique`)
+  - a unique constraint, which decides whether the unique rule's walk resolves the value (`PatternMatcher.ResolveLWW`, from the definition its caller passes)
 - An attribute no declaration covers resolves under the definition inferred at the last install, from the ops of every datom in the store then, and not from the datoms up to the target.
 - A transaction open across an install writes under the schema it opened with (`Transaction.schema`, read once in `Database.NewTransaction`). Each write draws its ElementID when it is made: `Transaction.Add`, `Set` and `Remove` call `t.db.clock.Next()`. So the writes it makes after the install lie after the declaration, and no point in the store's order resolves them under the definitions they were written under.
 

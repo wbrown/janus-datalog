@@ -86,6 +86,7 @@ func analyzePatternForExplain(pattern *query.DataPattern, resolved map[query.Sym
 		plan.BoundMask.V = isElementBound(elem, resolved)
 	}
 	plan.BoundMask.T = isElementBound(pattern.GetT(), resolved)
+	plan.BoundMask.Added = isElementBound(pattern.GetAdded(), resolved)
 
 	// Select index based on bound mask
 	plan.Index = selectIndexForMask(plan.BoundMask)

@@ -1,6 +1,6 @@
 # An empty commit writes a commit mark
 
-**Status**: Open.
+**Status**: Resolved. The body states the defect as filed; the Resolution at the end states the fix.
 
 ## What the commit does
 
@@ -29,3 +29,22 @@
 - That commit returns the point `Store.MaxElementID` answers, and `AsOf` at it answers what the latest view answers.
 - On an empty store that commit returns the zero ElementID, and `AsOf` at it answers nothing.
 - A commit holding one datom writes its mark, as `TestCommitWritesTxInstantOnSuccess` (`datalog/storage/commit_atomicity_test.go`) pins. That test's doc says every successful `Commit` writes a mark, and it narrows to every commit that writes a datom.
+
+## Resolution
+
+- `Transaction.Commit` (`datalog/storage/database.go`): after its `closed` and `doomed` checks, a transaction holding no datom and no retraction reads `Store.MaxElementID`, closes its read session, marks itself closed, leaves the database's active transactions, and returns that ElementID. It opens no storage transaction and writes no mark.
+- `Transaction.deregister` holds the drain protocol that `Commit`'s success path and `Rollback` share: it removes the transaction from the active transactions and wakes a draining rewind.
+- `Commit`'s doc states the mark, the point it returns, and the empty case.
+- `TestCommitWritesTxInstantOnSuccess`'s doc names every commit that writes a datom.
+- The docs that said every commit writes a mark say every commit that writes a datom does:
+  - `ARCHITECTURE.md`, the transaction lifecycle
+  - `DATOMIC_COMPATIBILITY.md`, the transaction entity
+  - `docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md`, its premise
+  - `docs/proposals/DATOM_VALUE_PROOF.md`, P6
+  - `docs/proposals/A_SINCE_VIEW_READS_THE_DATOMS_AFTER_A_POINT.md`, §5
+- `TRANSACTION_ENVELOPES.md` already states that a transaction with no operations writes no envelope.
+- The tests, in `datalog/storage/empty_commit_test.go`, on every backend:
+  - `TestAnEmptyCommitWritesNoMarkAndAnswersTheStoresHighestElementID`
+  - `TestAnEmptyCommitOnAnEmptyStoreAnswersTheZeroElementID`
+  - `TestCommittingAStructTheViewAlreadyHoldsWritesNothing`
+  - `TestAnEmptyCommitClosesItsTransactionAndReleasesItFromARewind`

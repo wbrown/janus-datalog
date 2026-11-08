@@ -925,6 +925,12 @@ Generate random valid queries and verify no panics or crashes.
 
 ---
 
+### Testing Cache Changes
+
+**A change to how the EA cache is used is tested with the cache disabled as well.** Which reads consult the cache, which views it serves, and what it keys on are each a change to its use. Every test of such a change runs with `DatabaseOptions.DisableCache` unset and set, and both answer alike. The tell: a test of a cache route that opens its database only with the cache on.
+
+---
+
 ### Testing Query Optimizations
 
 **CRITICAL**: Query optimizations are NOT tested the same way as regular features.

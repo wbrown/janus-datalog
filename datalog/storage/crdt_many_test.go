@@ -188,12 +188,7 @@ func TestResolveAddWinsSetDirect(t *testing.T) {
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
-			var eBytes [20]byte
-			var aBytes [32]byte
-			copy(eBytes[:], entityID.Bytes())
-			copy(aBytes[:], attr.String())
-
-			result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
+			result, err := matcher.resolveAddWinsSet(entityID, attr, DiscardIntake)
 			if err != nil {
 				t.Fatalf("resolveAddWinsSet failed: %v", err)
 			}
@@ -243,12 +238,7 @@ func TestResolveAddWinsSameLamport(t *testing.T) {
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
-			var eBytes [20]byte
-			var aBytes [32]byte
-			copy(eBytes[:], entityID.Bytes())
-			copy(aBytes[:], attr.String())
-
-			result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
+			result, err := matcher.resolveAddWinsSet(entityID, attr, DiscardIntake)
 			if err != nil {
 				t.Fatalf("resolveAddWinsSet failed: %v", err)
 			}
@@ -1120,12 +1110,8 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 
 			// Verify initial state
 			matcher := NewPatternMatcher(db.Store())
-			var eBytes [20]byte
-			var aBytes [32]byte
-			copy(eBytes[:], entityID.Bytes())
-			copy(aBytes[:], attr.String())
 
-			result1, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
+			result1, err := matcher.resolveAddWinsSet(entityID, attr, DiscardIntake)
 			if err != nil {
 				t.Fatalf("resolveAddWinsSet failed: %v", err)
 			}
@@ -1150,7 +1136,7 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 			}
 
 			// Step 3: Verify the set now contains only the new values
-			result2, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
+			result2, err := matcher.resolveAddWinsSet(entityID, attr, DiscardIntake)
 			if err != nil {
 				t.Fatalf("resolveAddWinsSet failed: %v", err)
 			}

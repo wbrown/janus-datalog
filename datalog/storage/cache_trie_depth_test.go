@@ -6,17 +6,23 @@ import (
 	"math/rand"
 	"sync"
 	"testing"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// routedKey crafts a key with an exact routing value: A is zero, so the fold
-// reduces to E's first word. tag keeps keys with equal routing distinct.
-// Routing is public and deterministic (owner ruling), so trie-shape tests
-// construct the exact towers and chains they mean to exercise.
+// routedAttr is the one attribute routedKey's keys carry.
+var routedAttr = datalog.NewKeyword(":routed/attr")
+
+// routedKey crafts a key with an exact routing value: its attribute is
+// routedAttr, and E's first word is r folded with that keyword's hash, so the
+// fold reduces to r. tag keeps keys with equal routing distinct. Routing is
+// public and deterministic (owner ruling), so trie-shape tests construct the
+// exact towers and chains they mean to exercise.
 func routedKey(r uint64, tag byte) CacheKey {
-	var key CacheKey
-	binary.BigEndian.PutUint64(key.E[0:8], r)
-	key.E[19] = tag
-	return key
+	var hash [20]byte
+	binary.BigEndian.PutUint64(hash[0:8], r^routedAttr.Hash64())
+	hash[19] = tag
+	return CacheKey{E: datalog.NewIdentityFromHash(hash), A: routedAttr}
 }
 
 // towerKeys returns 16 keys whose routing values share the top 60 bits and

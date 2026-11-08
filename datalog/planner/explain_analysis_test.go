@@ -31,3 +31,18 @@ func TestExplainReadsABlankPositionAsUnbound(t *testing.T) {
 		})
 	}
 }
+
+// The rendered phase names every position a pattern binds, the fifth,
+// whether the datom asserts, among them: a pattern whose only bound position
+// is the fifth renders a Bound line naming it.
+func TestExplainRendersABoundFifthPosition(t *testing.T) {
+	e, a, v, tx := datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v"), datalog.NewSymbol("?tx")
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: e}, query.Variable{Name: a}, query.Variable{Name: v}, query.Variable{Name: tx}, query.Constant{Value: false},
+	}}
+	phase := RealizedPhase{
+		Query:    &query.Query{Find: []query.FindElement{query.FindVariable{Symbol: e}}, Where: []query.Clause{pattern}},
+		Patterns: []PatternPlan{analyzePatternForExplain(pattern, map[query.Symbol]bool{}, nil)},
+	}
+	assert.Contains(t, phase.String(), "Bound: E=false A=false V=false T=false Added=true")
+}

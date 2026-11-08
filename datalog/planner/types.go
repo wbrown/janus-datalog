@@ -106,10 +106,11 @@ type InvocationPlan struct {
 
 // BoundMask indicates which elements of a pattern are bound
 type BoundMask struct {
-	E bool // Entity bound
-	A bool // Attribute bound
-	V bool // Value bound
-	T bool // Transaction/time bound
+	E     bool // Entity bound
+	A     bool // Attribute bound
+	V     bool // Value bound
+	T     bool // Transaction/time bound
+	Added bool // The fifth position, whether the datom asserts, bound
 }
 
 // Statistics tracks query statistics for optimization
@@ -242,18 +243,17 @@ type RealizedPlan struct {
 
 // String returns a human-readable representation of a RealizedPhase
 func (rp *RealizedPhase) String() string {
+	return rp.render(nil)
+}
+
+// render renders the phase, each invocation followed by what it evaluates as
+// evaluations, the plan's (RealizedPlan.Evaluations), holds it. An
+// invocation that evaluates nothing at its clause has no entry.
+func (rp *RealizedPhase) render(evaluations map[*query.RuleInvocation]*InvocationEvaluation) string {
 	var sb strings.Builder
 
 	sb.WriteString("Query:\n")
-	// Use the Query's built-in String() which formats Datalog nicely
-	// Indent each line of the query output
-	queryStr := rp.Query.String()
-	lines := strings.Split(queryStr, "\n")
-	for _, line := range lines {
-		if line != "" {
-			sb.WriteString("  " + line + "\n")
-		}
-	}
+	writeIndented(&sb, rp.Query.String(), "  ")
 
 	if len(rp.Available) > 0 {
 		sb.WriteString(fmt.Sprintf("Available: %v\n", rp.Available))
@@ -269,9 +269,9 @@ func (rp *RealizedPhase) String() string {
 		for _, pat := range rp.Patterns {
 			sb.WriteString(fmt.Sprintf("  %s [%s index, selectivity=%d]\n",
 				pat.Pattern.String(), indexName(pat.Index), pat.Selectivity))
-			if pat.BoundMask.E || pat.BoundMask.A || pat.BoundMask.V || pat.BoundMask.T {
-				sb.WriteString(fmt.Sprintf("    Bound: E=%v A=%v V=%v T=%v\n",
-					pat.BoundMask.E, pat.BoundMask.A, pat.BoundMask.V, pat.BoundMask.T))
+			if pat.BoundMask.E || pat.BoundMask.A || pat.BoundMask.V || pat.BoundMask.T || pat.BoundMask.Added {
+				sb.WriteString(fmt.Sprintf("    Bound: E=%v A=%v V=%v T=%v Added=%v\n",
+					pat.BoundMask.E, pat.BoundMask.A, pat.BoundMask.V, pat.BoundMask.T, pat.BoundMask.Added))
 			}
 			if len(pat.Bindings) > 0 {
 				sb.WriteString(fmt.Sprintf("    Binds: %v\n", pat.Bindings))
@@ -317,6 +317,9 @@ func (rp *RealizedPhase) String() string {
 			if len(inv.Bound) > 0 {
 				sb.WriteString(fmt.Sprintf("    Bound: %v\n", inv.Bound))
 			}
+			if evaluation, ok := evaluations[inv.Invocation]; ok {
+				writeIndented(&sb, evaluation.String(), "    ")
+			}
 		}
 	}
 
@@ -331,25 +334,57 @@ func (rpl *RealizedPlan) String() string {
 
 	// Show original user query
 	sb.WriteString("Original Query:\n")
-	queryStr := rpl.Query.String()
-	lines := strings.Split(queryStr, "\n")
-	for _, line := range lines {
-		if line != "" {
-			sb.WriteString("  " + line + "\n")
-		}
-	}
+	writeIndented(&sb, rpl.Query.String(), "  ")
 
-	for i, phase := range rpl.Phases {
+	for i := range rpl.Phases {
 		sb.WriteString(fmt.Sprintf("\nPhase %d:\n", i+1))
-		// Indent the phase string
-		phaseStr := phase.String()
-		lines := strings.Split(phaseStr, "\n")
-		for _, line := range lines {
-			if line != "" {
-				sb.WriteString("  " + line + "\n")
-			}
-		}
+		writeIndented(&sb, rpl.Phases[i].render(rpl.Evaluations), "  ")
 	}
 
 	return sb.String()
+}
+
+// String renders what an invocation evaluates: a magic-sets rewrite deriving
+// the adorned predicate, or the predicate under the rule set as given, then
+// each stratum's predicates and every body the stratum runs, by kind (plain,
+// delta, lower), with the predicate a copy is marked on and the body's plan,
+// whose own invocations render their evaluations the same way.
+func (e *InvocationEvaluation) String() string {
+	var sb strings.Builder
+	if e.Rewritten {
+		sb.WriteString(fmt.Sprintf("Evaluates: magic-sets rewrite deriving %s\n", e.Magic.Predicate))
+	} else {
+		sb.WriteString(fmt.Sprintf("Evaluates: %s, under the rule set as given\n", e.Magic.Predicate))
+	}
+	for _, stratum := range e.Strata {
+		sb.WriteString(fmt.Sprintf("Stratum %v:\n", stratum.Stratum.Predicates))
+		for _, kind := range []struct {
+			name   string
+			bodies []PlannedBody
+		}{
+			{"plain", stratum.Bodies.Plain},
+			{"delta", stratum.Bodies.Delta},
+			{"lower", stratum.Bodies.Lower},
+		} {
+			for _, body := range kind.bodies {
+				header := kind.name + " body"
+				if body.Marked != nil {
+					header += ", marked " + body.Marked.String()
+				}
+				sb.WriteString(fmt.Sprintf("  %s: %s\n", header, body.Rule.String()))
+				writeIndented(&sb, body.Plan.String(), "    ")
+			}
+		}
+	}
+	return sb.String()
+}
+
+// writeIndented writes each non-empty line of text to sb under prefix, the
+// form in which one rendering nests another.
+func writeIndented(sb *strings.Builder, text, prefix string) {
+	for _, line := range strings.Split(text, "\n") {
+		if line != "" {
+			sb.WriteString(prefix + line + "\n")
+		}
+	}
 }

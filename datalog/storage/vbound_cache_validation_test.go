@@ -422,13 +422,12 @@ func TestVBoundCache_NeverExisted(t *testing.T) {
 	}
 }
 
-// Latest-only gate: an AsOf (concrete snapshot) query must NOT use the cache
-// fast path (txID != nil). We prove the gate holds (zero cache-resolved events
-// under AsOf) and that AsOf cache-on == AsOf cache-off. As-of snapshot
-// correctness of the scan path itself is covered by
-// TestVBoundValidation_AsOfRespectsSnapshot; here we additionally confirm the
-// gated-off path returns the correct snapshot value.
-func TestVBoundCache_AsOfGateOff(t *testing.T) {
+// An AsOf (concrete snapshot) value-bound query validates its candidates
+// through the as-of view's own cache (Cache.ForView) and answers the value as
+// of the snapshot, and AsOf cache-on answers what AsOf cache-off answers. As-of
+// snapshot correctness of the scan path itself is covered by
+// TestVBoundValidation_AsOfRespectsSnapshot.
+func TestVBoundCache_AsOfValidatesThroughItsViewsCache(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
@@ -456,14 +455,14 @@ func TestVBoundCache_AsOfGateOff(t *testing.T) {
 			assert.Positive(t, capOn.get("v-validation/cache-resolved"),
 				"latest mode must use the cache fast path")
 
-			// AsOf: gate must be OFF — no cache-resolved events — and the snapshot value
-			// (e1 was "room" at txAtRoom) must be returned by the scan path.
+			// AsOf: the view's own cache resolves the candidate, and the snapshot
+			// value (e1 was "room" at txAtRoom) is returned.
 			capOn.reset()
 			asOfRoom := queryEntitySet(t, dbOn.AsOf(txAtRoom), vboundQueryFor("room"))
-			assert.Zero(t, capOn.get("v-validation/cache-resolved"),
-				"as-of must NOT use the latest-only cache fast path")
+			assert.Positive(t, capOn.get("v-validation/cache-resolved"),
+				"as-of validates its candidates through its view's cache")
 			assert.Equal(t, expectedSet(e1), asOfRoom,
-				"as-of (gated to the scan path) must return the snapshot value")
+				"as-of must return the snapshot value")
 
 			// No-op: the same AsOf query against a DisableCache database is identical.
 			dbOff, _, txOffAtRoom := build(true)

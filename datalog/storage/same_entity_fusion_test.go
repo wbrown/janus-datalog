@@ -32,10 +32,10 @@ import (
 // CardinalityMany one — so we know the ON arm actually took the fused path.
 //
 // Pillar 3 — GATE: TestFusionGate_ModeAndCardinality proves CanFuseAttributeFetch
-// (the matcher decision the executor consults) is true only in latest mode for
-// an attribute the matcher resolves cardinality-one, declared so or with no
-// definition, and false for CardinalityMany, CardinalityVector, history and
-// as-of mode. The executor fuses iff that returns true, so this bounds where
+// (the matcher decision the executor consults) is true in the latest and as-of
+// views for an attribute the matcher resolves cardinality-one, declared so or
+// with no definition, and false for CardinalityMany, CardinalityVector and
+// History. The executor fuses iff that returns true, so this bounds where
 // fusion can run.
 // =============================================================================
 
@@ -62,18 +62,18 @@ func fusionSchema() *schema.Schema {
 }
 
 // openFusionDB opens the fusion fixture on the mode's backend, with the fusion
-// flag applied on top of the mode's planner options.
-func openFusionDB(t *testing.T, mode optimizerMode, fusion bool, handler annotations.Handler) *Database {
+// flag applied on top of the mode's planner options. The caller sets the
+// annotation handler and the cache on opts; the schema, the ReplicaID and the
+// planner options come from the fixture.
+func openFusionDB(t *testing.T, mode optimizerMode, fusion bool, opts DatabaseOptions) *Database {
 	t.Helper()
-	opts := mode.plannerOptions()
-	opts.EnableAttributeFetchFusion = fusion
+	plannerOpts := mode.plannerOptions()
+	plannerOpts.EnableAttributeFetchFusion = fusion
 
-	return openBackendDB(t, mode.backend, DatabaseOptions{
-		Schema:            fusionSchema(),
-		ReplicaID:         1,
-		PlannerOptions:    &opts,
-		AnnotationHandler: handler,
-	})
+	opts.Schema = fusionSchema()
+	opts.ReplicaID = 1
+	opts.PlannerOptions = &plannerOpts
+	return openBackendDB(t, mode.backend, opts)
 }
 
 func fusionTuples(t *testing.T, db *Database, query string, args ...interface{}) []string {
@@ -96,9 +96,9 @@ func fusionTuples(t *testing.T, db *Database, query string, args ...interface{})
 // identical tuples. Both open on the mode's backend.
 func assertFusionEquivalent(t *testing.T, mode optimizerMode, apply func(*Database), query string, args ...interface{}) {
 	t.Helper()
-	off := openFusionDB(t, mode, false, nil)
+	off := openFusionDB(t, mode, false, DatabaseOptions{})
 	apply(off)
-	on := openFusionDB(t, mode, true, nil)
+	on := openFusionDB(t, mode, true, DatabaseOptions{})
 	apply(on)
 	want := fusionTuples(t, off, query, args...)
 	got := fusionTuples(t, on, query, args...)
@@ -294,7 +294,7 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 
 			t.Run("cardinality one constraint fires", func(t *testing.T) {
 				cap := &fusionCapture{n: map[string]int{}}
-				db := openFusionDB(t, mode, true, cap.handler())
+				db := openFusionDB(t, mode, true, DatabaseOptions{AnnotationHandler: cap.handler()})
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(e1, code, "R1"))
 				require.NoError(t, tx.Set(e1, typ, "room"))
@@ -310,7 +310,7 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 
 			t.Run("cardinality many constraint does not fire", func(t *testing.T) {
 				cap := &fusionCapture{n: map[string]int{}}
-				db := openFusionDB(t, mode, true, cap.handler())
+				db := openFusionDB(t, mode, true, DatabaseOptions{AnnotationHandler: cap.handler()})
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(e1, code, "R1"))
 				require.NoError(t, tx.Add(e1, tags, "selected"))
@@ -360,7 +360,7 @@ func TestFusion_CoverageFires(t *testing.T) {
 
 			t.Run("card-one fetch fires fusion", func(t *testing.T) {
 				cap := &fusionCapture{n: map[string]int{}}
-				db := openFusionDB(t, mode, true, cap.handler())
+				db := openFusionDB(t, mode, true, DatabaseOptions{AnnotationHandler: cap.handler()})
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(e1, typ, "room"))
 				require.NoError(t, tx.Set(e1, code, "R1"))
@@ -372,9 +372,26 @@ func TestFusion_CoverageFires(t *testing.T) {
 					"CardinalityOne fetch must take the fused path")
 			})
 
+			for _, disableCache := range []bool{false, true} {
+				t.Run(fmt.Sprintf("card-one fetch on an as-of handle fires fusion/cache_disabled_%t", disableCache), func(t *testing.T) {
+					cap := &fusionCapture{n: map[string]int{}}
+					db := openFusionDB(t, mode, true, DatabaseOptions{AnnotationHandler: cap.handler(), DisableCache: disableCache})
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Set(e1, typ, "room"))
+					require.NoError(t, tx.Set(e1, code, "R1"))
+					position, err := tx.Commit()
+					require.NoError(t, err)
+
+					tuples := fusionTuples(t, db.AsOf(position), fusionCodeQuery)
+					require.Len(t, tuples, 1)
+					assert.Positive(t, cap.get(annotations.PatternFusedFetch),
+						"a CardinalityOne fetch on an as-of handle must take the fused path")
+				})
+			}
+
 			t.Run("card-many fetch does not fire fusion", func(t *testing.T) {
 				cap := &fusionCapture{n: map[string]int{}}
-				db := openFusionDB(t, mode, true, cap.handler())
+				db := openFusionDB(t, mode, true, DatabaseOptions{AnnotationHandler: cap.handler()})
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(e1, typ, "room"))
 				require.NoError(t, tx.Add(e1, tags, "a"))
@@ -413,7 +430,7 @@ func TestFusion_AnAttributeTheSchemaDoesNotDefineFusesAndAnswersAlike(t *testing
 			assertFusionEquivalent(t, mode, apply, query)
 
 			cap := &fusionCapture{n: map[string]int{}}
-			db := openFusionDB(t, mode, true, cap.handler())
+			db := openFusionDB(t, mode, true, DatabaseOptions{AnnotationHandler: cap.handler()})
 			apply(db)
 			_ = fusionTuples(t, db, query)
 			assert.Positive(t, cap.get(annotations.PatternFusedFetch),
@@ -423,8 +440,9 @@ func TestFusion_AnAttributeTheSchemaDoesNotDefineFusesAndAnswersAlike(t *testing
 }
 
 // TestFusionGate_ModeAndCardinality proves the matcher gate the executor
-// consults: fusion is permitted only in latest mode, for an attribute the
-// matcher resolves cardinality-one, declared so or with no definition.
+// consults: fusion is permitted in the latest and as-of views, for an
+// attribute the matcher resolves cardinality-one, declared so or with no
+// definition, and never under History.
 func TestFusionGate_ModeAndCardinality(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -434,7 +452,7 @@ func TestFusionGate_ModeAndCardinality(t *testing.T) {
 }
 
 func testFusionGateModeAndCardinality(t *testing.T, mode optimizerMode) {
-	db := openFusionDB(t, mode, true, nil)
+	db := openFusionDB(t, mode, true, DatabaseOptions{})
 
 	latest, ok := db.Matcher().(*PatternMatcher)
 	require.True(t, ok)
@@ -454,16 +472,21 @@ func testFusionGateModeAndCardinality(t *testing.T, mode optimizerMode) {
 
 	asOf, ok := db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1}).Matcher().(*PatternMatcher)
 	require.True(t, ok)
-	assert.False(t, asOf.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/code")),
-		"as-of mode must use snapshot CRDT resolution, not latest-value fusion")
+	assert.True(t, asOf.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/code")),
+		"an as-of CardinalityOne fetch is fusable: the lookup answers the value as of the target")
 }
 
+// TestFusionDifferentialAsOfUpdatesAndTombstones runs the as-of query at each
+// of three commits under fusion on and off, each with the cache on and off,
+// and asserts every configuration answers what the unfused, uncached one
+// answers.
 func TestFusionDifferentialAsOfUpdatesAndTombstones(t *testing.T) {
 	typ := datalog.NewKeyword(":place/type")
 	code := datalog.NewKeyword(":place/code")
 	entity := datalog.NewIdentity("asof-fusion")
 
 	type fixture struct {
+		name     string
 		db       *Database
 		firstTx  datalog.ElementID
 		secondTx datalog.ElementID
@@ -472,8 +495,8 @@ func TestFusionDifferentialAsOfUpdatesAndTombstones(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			open := func(fusion bool) fixture {
-				db := openFusionDB(t, mode, fusion, nil)
+			open := func(fusion, disableCache bool) fixture {
+				db := openFusionDB(t, mode, fusion, DatabaseOptions{DisableCache: disableCache})
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(entity, typ, "room"))
 				require.NoError(t, tx.Set(entity, code, "R1"))
@@ -489,24 +512,31 @@ func TestFusionDifferentialAsOfUpdatesAndTombstones(t *testing.T) {
 				require.NoError(t, tx.Remove(entity, code, "R2"))
 				removed, err := tx.Commit()
 				require.NoError(t, err)
-				return fixture{db: db, firstTx: first, secondTx: second, removeTx: removed}
+				return fixture{
+					name:     fmt.Sprintf("fusion_%t/cache_disabled_%t", fusion, disableCache),
+					db:       db,
+					firstTx:  first,
+					secondTx: second,
+					removeTx: removed,
+				}
 			}
 
-			off := open(false)
-			on := open(true)
+			reference := open(false, true)
+			configurations := []fixture{open(false, false), open(true, false), open(true, true)}
 			for _, snapshot := range []struct {
 				name string
-				off  datalog.ElementID
-				on   datalog.ElementID
+				at   func(fixture) datalog.ElementID
 			}{
-				{name: "before update", off: off.firstTx, on: on.firstTx},
-				{name: "at update", off: off.secondTx, on: on.secondTx},
-				{name: "after tombstone", off: off.removeTx, on: on.removeTx},
+				{name: "before update", at: func(f fixture) datalog.ElementID { return f.firstTx }},
+				{name: "at update", at: func(f fixture) datalog.ElementID { return f.secondTx }},
+				{name: "after tombstone", at: func(f fixture) datalog.ElementID { return f.removeTx }},
 			} {
 				t.Run(snapshot.name, func(t *testing.T) {
-					want := fusionTuples(t, off.db.AsOf(snapshot.off), fusionCodeQuery)
-					got := fusionTuples(t, on.db.AsOf(snapshot.on), fusionCodeQuery)
-					require.Equal(t, want, got)
+					want := fusionTuples(t, reference.db.AsOf(snapshot.at(reference)), fusionCodeQuery)
+					for _, configuration := range configurations {
+						got := fusionTuples(t, configuration.db.AsOf(snapshot.at(configuration)), fusionCodeQuery)
+						require.Equal(t, want, got, "%s answers otherwise than %s", configuration.name, reference.name)
+					}
 				})
 			}
 		})
@@ -522,7 +552,7 @@ func TestFusionLookupFailureIsNotAttributeAbsence(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, fusion := range []bool{false, true} {
 				t.Run(fmt.Sprintf("fusion_%t", fusion), func(t *testing.T) {
-					db := openFusionDB(t, mode, fusion, nil)
+					db := openFusionDB(t, mode, fusion, DatabaseOptions{})
 					tx := db.NewTransaction()
 					require.NoError(t, tx.Set(entity, code, "R1"))
 					_, err := tx.Commit()

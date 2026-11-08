@@ -11,10 +11,11 @@ type InternedTupleBuilder struct {
 	symbols []Symbol
 
 	// Pre-computed indexes for each position (-1 means not captured)
-	eIndex int
-	aIndex int
-	vIndex int
-	tIndex int
+	eIndex     int
+	aIndex     int
+	vIndex     int
+	tIndex     int
+	addedIndex int
 
 	// Number of variables actually captured
 	numVars int
@@ -33,14 +34,15 @@ func NewInternedTupleBuilder(pattern *DataPattern, symbols []Symbol) *InternedTu
 	indexer := NewTupleIndexer(pattern, symbols)
 
 	return &InternedTupleBuilder{
-		symbols:   symbols,
-		eIndex:    indexer.EIndex,
-		aIndex:    indexer.AIndex,
-		vIndex:    indexer.VIndex,
-		tIndex:    indexer.TIndex,
-		numVars:   indexer.NumVars,
-		workspace: make(Tuple, len(symbols)),
-		txCache:   make(map[datalog.ElementID]*datalog.ElementID),
+		symbols:    symbols,
+		eIndex:     indexer.EIndex,
+		aIndex:     indexer.AIndex,
+		vIndex:     indexer.VIndex,
+		tIndex:     indexer.TIndex,
+		addedIndex: indexer.AddedIndex,
+		numVars:    indexer.NumVars,
+		workspace:  make(Tuple, len(symbols)),
+		txCache:    make(map[datalog.ElementID]*datalog.ElementID),
 	}
 }
 
@@ -82,6 +84,9 @@ func (tb *InternedTupleBuilder) BuildTupleInterned(datom *datalog.Datom) Tuple {
 		// Use cached pointer for common transaction IDs
 		result[tb.tIndex] = tb.getTxPtr(datom.Tx)
 	}
+	if tb.addedIndex >= 0 {
+		result[tb.addedIndex] = datom.Op.Asserts()
+	}
 
 	return result
 }
@@ -106,5 +111,8 @@ func (tb *InternedTupleBuilder) BuildTupleInternedInto(datom *datalog.Datom, tup
 	if tb.tIndex >= 0 {
 		// Use cached pointer for common transaction IDs
 		tuple[tb.tIndex] = tb.getTxPtr(datom.Tx)
+	}
+	if tb.addedIndex >= 0 {
+		tuple[tb.addedIndex] = datom.Op.Asserts()
 	}
 }

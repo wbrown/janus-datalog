@@ -51,16 +51,13 @@ type cacheSlot struct {
 }
 
 // routing returns the trie routing bits for a key: the entity hash's first
-// word folded with all four attribute words. E is a SHA1 content address, so
-// its bits are uniform by construction; folding every attribute word in
-// separates same-entity attributes even when keyword names share long
+// word folded with the keyword's hash. E is a SHA1 content address, so its
+// bits are uniform by construction; the keyword's hash covers its whole text,
+// so same-entity attributes route apart even when keyword names share long
 // prefixes (":person/name" vs ":person/age" agree through byte 7).
 func (k CacheKey) routing() uint64 {
-	return binary.BigEndian.Uint64(k.E[0:8]) ^
-		binary.BigEndian.Uint64(k.A[0:8]) ^
-		binary.BigEndian.Uint64(k.A[8:16]) ^
-		binary.BigEndian.Uint64(k.A[16:24]) ^
-		binary.BigEndian.Uint64(k.A[24:32])
+	e := k.E.Hash()
+	return binary.BigEndian.Uint64(e[0:8]) ^ k.A.Hash64()
 }
 
 // cacheTrie is a concurrent hash-trie from CacheKey to cacheSlot, designed

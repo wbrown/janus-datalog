@@ -40,9 +40,9 @@ type VectorResolutionResult struct {
 // The Tx (ElementID) is the element's ID.
 //
 // After loading all elements, RGA reconstruction builds the final ordered list.
-func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte, report *scanReport) (*VectorResolutionResult, error) {
+func (m *PatternMatcher) resolveVector(e datalog.Identity, a datalog.Keyword, report *scanReport) (*VectorResolutionResult, error) {
 	// Use loadRGAElements which handles deduplication
-	elements, bound, err := m.loadRGAElements(eBytes, aBytes, report)
+	elements, bound, err := m.loadRGAElements(e, a, report)
 	if err != nil {
 		return nil, err
 	}
@@ -76,21 +76,11 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte, report *scanReport
 // what it produces, and the pattern above it has no other way to learn the
 // difference. The bound travels back rather than being rebuilt by the caller
 // that announces it, so the announced run and the walked run are the same value.
-func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte, report *scanReport) (loaded []RGAElement, walked ScanBound, loadErr error) {
-	// The caller holds storage projections; both constructors return the
-	// canonical interned pointer for an already-interned value.
-	var e Entity
-	copy(e[:], eBytes)
-	var a Attribute
-	copy(a[:], aBytes)
-
+func (m *PatternMatcher) loadRGAElements(e datalog.Identity, a datalog.Keyword, report *scanReport) (loaded []RGAElement, walked ScanBound, loadErr error) {
 	// Scan EATV for all entries with this E+A
 	bound := ScanBound{
-		Index: EATV,
-		Prefix: []datalog.Value{
-			datalog.NewIdentityFromHash(e),
-			datalog.InternKeywordFromBytes(a),
-		},
+		Index:  EATV,
+		Prefix: []datalog.Value{e, a},
 	}
 	// The scan accrues into the report as it closes, so a decode failure keeps the
 	// intake it spent instead of losing it with the result it never returns.

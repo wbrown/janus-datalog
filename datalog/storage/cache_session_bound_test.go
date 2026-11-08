@@ -58,12 +58,8 @@ func TestSessionBoundedCacheRead(t *testing.T) {
 			require.Equal(t, int64(1), v,
 				"a sessioned read must not be served cache content newer than its snapshot")
 
-			var eBytes Entity
-			copy(eBytes[:], e.Bytes())
-			var aBytes Attribute
-			copy(aBytes[:], attr.String())
 			report := &scanReport{}
-			raw, _, present, err := sessioned.ResolveLWW(eBytes, aBytes, report)
+			raw, _, present, err := sessioned.ResolveLWW(e, attr, sessioned.schema.GetAttribute(attr), report)
 			require.NoError(t, err)
 			require.True(t, present, "a datom exists within the session's bound")
 			require.Equal(t, int64(1), raw, "storage path defines the snapshot answer")
@@ -89,8 +85,7 @@ func TestStoreGateKeepsFresherEntry(t *testing.T) {
 	clock.Restore(datalog.ElementID{Lamport: 3, ReplicaID: 1})
 	c := NewCache(clock)
 	floor := c.ReadPoint()
-	key := CacheKey{}
-	copy(key.A[:], ":gate/value")
+	key := CacheKey{E: datalog.NewIdentity("gate"), A: datalog.NewKeyword(":gate/value")}
 
 	fresh := &CacheEntry{version: datalog.ElementID{Lamport: 2, ReplicaID: 1}}
 	require.True(t, c.storeIfNotInFlight(key, fresh, c.ReadPoint()))
@@ -118,8 +113,7 @@ func TestStoreGateKeepsFresherEntry(t *testing.T) {
 // taken before the drop is not stored for the key, and one whose read point was
 // taken after it is.
 func TestCacheDropRefusesAResolutionReadBeforeIt(t *testing.T) {
-	var key CacheKey
-	copy(key.A[:], ":floor/value")
+	key := CacheKey{E: datalog.NewIdentity("floor"), A: datalog.NewKeyword(":floor/value")}
 
 	drops := []struct {
 		name string

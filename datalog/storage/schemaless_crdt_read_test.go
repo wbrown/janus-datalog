@@ -318,14 +318,9 @@ func testSchemalessPrefetchVectorNotCollapsed(t *testing.T, c reopenBackendCase)
 	// the entry's version to the group's max ElementID, so GetOrResolve returns
 	// the prefetched entry without rebuilding — i.e. this asserts what prefetch
 	// itself cached.
-	var eEnt Entity
-	copy(eEnt[:], e.Bytes())
-	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
-	var aAttr Attribute
-	copy(aAttr[:], aStorage[:])
-	key, ok := m.cacheKey(eEnt, aAttr)
+	key, ok := m.cacheKey(e, attr)
 	require.True(t, ok)
-	entry, err := db.cache.GetOrResolve(key, m.GetCardinality(attr), m, db.cache.ReadPoint(), nil, DiscardIntake)
+	entry, err := db.cache.GetOrResolve(key, m.schema.GetAttribute(attr), m, db.cache.ReadPoint(), nil, DiscardIntake)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	require.Equal(t, schema.CardinalityVector, entry.Cardinality(),

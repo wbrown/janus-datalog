@@ -122,5 +122,14 @@ func matchesBoundPattern(d datalog.Datom, pattern *query.DataPattern, boundValue
 		}
 	}
 
+	// Check the fifth position, whether the datom asserts
+	if v, ok := pattern.GetAdded().(query.Variable); ok {
+		if boundVal, hasBound := boundValues[v.Name]; hasBound {
+			if !matchesConstant(d.Op.Asserts(), boundVal) {
+				return false
+			}
+		}
+	}
+
 	return true
 }

@@ -472,16 +472,12 @@ func (it *CRDTResolvingIterator) Error() error {
 // emission — correct by construction without having to materialize
 // the full group.
 func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool, error) {
-	var aBytes Attribute
-	copy(aBytes[:], datom.A.String())
-	eBytes := Entity(datom.E.Hash())
-
 	// Accrues whether or not the check fails: a failed supersession check
 	// still read the index to fail.
 	//
 	// What the decision read goes unused: no cache entry is built from a
 	// streamed datom.
-	decision, _, err := it.matcher.walkApplyEntry(it.uniqueWalk, datom, eBytes, aBytes, it.report)
+	decision, _, err := it.matcher.walkApplyEntry(it.uniqueWalk, datom, datom.E, datom.A, it.report)
 	if err != nil {
 		return false, err
 	}

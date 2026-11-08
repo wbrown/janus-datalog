@@ -146,8 +146,7 @@ func touchedCacheKeys(datoms []datalog.Datom) []CacheKey {
 	seen := make(map[CacheKey]struct{}, len(datoms))
 	keys := make([]CacheKey, 0, len(datoms))
 	for i := range datoms {
-		sd := ToStorageDatom(datoms[i])
-		k := CacheKey{E: sd.E, A: sd.A}
+		k := CacheKey{E: datoms[i].E, A: datoms[i].A}
 		if _, ok := seen[k]; ok {
 			continue
 		}

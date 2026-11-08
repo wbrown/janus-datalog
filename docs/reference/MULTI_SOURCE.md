@@ -66,7 +66,7 @@ A database function's first argument is the source it reads, as a pattern's pref
 ```
 
 `get-else`, `get-some` and `missing?` look the attribute up in the source they name. A source that cannot look an attribute up is an error naming the source.
-With the algebra optimizer on, a `get-else` is rewritten into a scan of its source, joined to the query, only where the source answers that its match of the attribute gives, for every entity, the one value its lookup gives (`CanFuseAttributeFetch`). A database answers true for an attribute it resolves cardinality-one in its latest view, declared so or with no definition. On a cardinality-many attribute, a history or as-of handle, or a source without the capability, the `get-else` runs as a lookup per tuple. Both answer alike ([GET_ELSE_SCAN_REWRITE_PROOF.md](../proposals/GET_ELSE_SCAN_REWRITE_PROOF.md)).
+With the algebra optimizer on, a `get-else` is rewritten into a scan of its source, joined to the query, only where the source answers that its match of the attribute gives, for every entity, the one value its lookup gives (`CanFuseAttributeFetch`). A database answers true for an attribute it resolves cardinality-one in its latest view or as of a target, declared so or with no definition. On a cardinality-many attribute, a history handle, or a source without the capability, the `get-else` runs as a lookup per tuple. Both answer alike ([GET_ELSE_SCAN_REWRITE_PROOF.md](../proposals/GET_ELSE_SCAN_REWRITE_PROOF.md)).
 
 ### Combining Sources with Scalar/Collection Inputs
 
