@@ -13,7 +13,7 @@ func TestCLI_AVectorGivenToAScalarInputAnswersNoTuple(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createEdgeDatabase(t)
 	query := `[:find ?s :in $ ?n :where [?s :node/name ?n]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			out, err := exec.Command(binPath, "-db", dbPath, mode.cliFlag(), "-query", query, "-in", `["n1" "n2"]`).CombinedOutput()
 			if strings.Contains(string(out), "panic") {

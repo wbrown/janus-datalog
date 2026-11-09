@@ -84,14 +84,13 @@ var optionLegs = []optionLeg{
 	{name: "algebra+sharing+symmetric+streaming", algebra: true, sharing: true, symmetric: true, streaming: true},
 }
 
-// optimizerModes is the engine axis: the tree store crossed with the two
-// optimizer paths.
+// optimizerModes is the engine axis: the tree store crossed with the legs.
 var optimizerModes = buildOptimizerModes(engineBackends())
 
 // backendModes is the store axis: every backend this build has crossed with
-// the two optimizer paths, for a test of persistence and reopen, dumps,
-// snapshots, truncation, forks, read sessions, scan intake, index order, the
-// key layout or the blob tier.
+// the legs, for a test of persistence and reopen, dumps, snapshots,
+// truncation, forks, read sessions, scan intake, index order, the key layout
+// or the blob tier.
 var backendModes = buildOptimizerModes(AvailableBackends())
 
 // referenceMode is the reference leg: the engine backend with every option

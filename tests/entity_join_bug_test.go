@@ -12,12 +12,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// TestEntityJoinBug reproduces the bug where joining two patterns on the same entity
-// loses one result
+// TestEntityJoinBug reproduces the bug where joining two patterns on the same
+// entity loses one result. It runs on the legs without attribute-fetch fusion:
+// its subject is the hash join of the two patterns, which fusion replaces with
+// a per-tuple fetch.
 func TestEntityJoinBug(t *testing.T) {
 	for _, backend := range storage.AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsWhere(func(m optimizerMode) bool { return !m.fusion }) {
 				t.Run(mode.name, func(t *testing.T) {
 					testEntityJoinBug(t, backend, mode)
 				})
@@ -130,7 +132,6 @@ func testEntityJoinBug(t *testing.T, backend storage.Backend, mode optimizerMode
 
 	var joinEvents []annotations.Event
 	annotatedPopts := popts
-	annotatedPopts.EnableAttributeFetchFusion = false
 	annotatedPopts.Handler = func(event annotations.Event) {
 		if event.Name == annotations.JoinStrategy {
 			joinEvents = append(joinEvents, event)

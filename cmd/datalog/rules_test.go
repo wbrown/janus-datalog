@@ -51,7 +51,7 @@ func TestCLI_RulesInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createEdgeDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
 				"-query", reachQuery,
@@ -83,7 +83,7 @@ func TestCLI_PlanOnlyRendersInvocation(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createEdgeDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(), "-plan-only",
 				"-query", reachQuery,

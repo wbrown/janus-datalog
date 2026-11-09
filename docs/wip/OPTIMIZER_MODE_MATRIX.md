@@ -111,13 +111,14 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
    - `legsWhere(modes, keep)` — the legs of the given axis a predicate admits, for a test pinning one option's mechanism: it runs on the legs that carry the option in place of setting the option, still a leg per backend and per setting of the other options, because pinning one option pins neither a store nor another option.
    - `byteKeyBackends(t)` — badger and badger-emulator out of the store axis, not memory-trees. The tree store hands out the datom it already holds, so a property of the encoded index key, or of anything downstream of it such as the Tier-3 blob tier, is not a property it has. The switch has no silent default: a new backend fails there until someone says which side of the line it falls on.
 
-   Packages that cannot import storage's test files carry their own copy — the Go-testing reality for cross-package test code:
+   Packages that cannot import storage's test files carry their own copy of the eight legs, each pinned to the design by its own copies of the pair-coverage, reference-and-default-profile and options-carry tests — the Go-testing reality for cross-package test code:
 
    - `executor` carries the eight legs and a ninth, fusion with streaming aggregation, the profile `NewExecutor` constructs with, in `datalog/executor/optimizer_modes_test.go`, with `optimizerModesWhere` as its narrowing.
-   - `tests/` has `createBackendModeDB`, with `eachMode`, `eachModeOpts` and `eachModeWith` on the engine axis and `eachStoreBackendAndModeOpts` on the store axis, over the two optimizer paths alone.
-   - `db` carries both axes, over the two optimizer paths alone.
-   - `qb` carries the engine axis alone over the two optimizer paths, threading `mode.backend` into its own constructor.
-   - `reflect` carries the engine axis alone over the two optimizer paths, threading `mode.backend` into its own constructor.
+   - `db` carries both axes, with `referenceMode` and `legsWhere`.
+   - `qb` and `reflect` carry the engine axis alone, threading `mode.backend` into their own constructors.
+   - `tests/` has `createBackendModeDB`, with `eachMode`, `eachModeOpts` and `eachModeWith` on the engine axis and `eachStoreBackendAndModeOpts` on the store axis, and `legsWhere` for a mechanism test. Its mode carries no backend; the selectors cross it with one.
+   - `wasmtest` carries the legs with no backend.
+   - `cmd/datalog` carries the legs with no backend for its in-process tests. A test that runs a query through the built binary loops `cliOptimizeFlags`, the two values of `-optimize`, the one planner option the CLI exposes: a leg of the eight would name options the binary never set.
 
 2. Query-executing tests wrap their query-and-assert body in `for _, mode := range optimizerModes { t.Run(mode.name, ...) }`, **with the database built inside the loop**. A mode loop around a database constructed outside it — or constructed from `Path:`, which is `DefaultBackend()` — runs one backend under N mode names and reads as coverage it does not have. Schema values and other backend-independent fixtures can still be built once above. A loop that builds its planner options from one field of the mode runs every leg under the other options' zero values, the same coverage it does not have; the options a leg runs under are `mode.plannerOptions()`.
 

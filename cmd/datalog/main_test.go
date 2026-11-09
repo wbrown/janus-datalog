@@ -504,7 +504,7 @@ func TestCLI_QueryWithScalarInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Query with scalar input: find person with age 30
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
@@ -530,7 +530,7 @@ func TestCLI_QueryWithCollectionInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Query with collection input: find people with age 25 or 30
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
@@ -556,7 +556,7 @@ func TestCLI_QueryWithStringInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Query with string scalar input
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
@@ -579,7 +579,7 @@ func TestCLI_QueryWithMultipleInputs(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Query with two scalar inputs
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
@@ -609,7 +609,7 @@ func TestCLI_QueryWithIDLiteralInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
 				"-query", `[:find ?name :in $ ?e :where [?e :person/name ?name]]`,
@@ -639,7 +639,7 @@ func TestCLI_QueryWithRelationInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Alice's tuple matches her stored age; Bob's carries a wrong
 			// age, so the relation join keeps Alice only.
