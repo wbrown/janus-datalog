@@ -86,35 +86,25 @@ func TestAlgebraBridgeOptimizedOffExactTupleDifferential(t *testing.T) {
 		},
 	}
 
+	// Every leg answers each shape as the reference leg does: the same tuples,
+	// in the same order where the query orders.
+	referenceDB := setupAlgebraTestDB(t, referenceMode)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 			for _, testCase := range testCases {
 				t.Run(testCase.name, func(t *testing.T) {
-					baseline := executeAlgebraMode(t, db, testCase.query, testCase.inputs, false)
-					optimized := executeAlgebraMode(t, db, testCase.query, testCase.inputs, true)
+					want := executePlannerOptions(t, referenceDB, testCase.query, testCase.inputs, referenceMode.plannerOptions())
+					got := executePlannerOptions(t, db, testCase.query, testCase.inputs, mode.plannerOptions())
 					if testCase.ordered {
-						require.Equal(t, baseline, optimized)
+						require.Equal(t, want, got)
 					} else {
-						require.ElementsMatch(t, baseline, optimized)
+						require.ElementsMatch(t, want, got)
 					}
 				})
 			}
 		})
 	}
-}
-
-func executeAlgebraMode(
-	t *testing.T,
-	db *Database,
-	source string,
-	inputs []interface{},
-	enabled bool,
-) [][]interface{} {
-	t.Helper()
-	options := DefaultPlannerOptions()
-	options.EnableAlgebraOptimizer = enabled
-	return executePlannerOptions(t, db, source, inputs, options)
 }
 
 func executePlannerOptions(

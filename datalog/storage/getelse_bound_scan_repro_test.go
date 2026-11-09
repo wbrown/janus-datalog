@@ -228,10 +228,10 @@ func setupGetElseNarrowingDB(t *testing.T, mode optimizerMode, handler annotatio
 }
 
 // TestGetElseMultiEntityStoredOrDefault pins get-else tuple semantics over
-// several pattern-bound entities in both optimizer modes: one tuple per
-// kind-bearing entity, carrying its stored note or the default, with the
-// filler extent excluded. The scan-narrowing structure of the same query is
-// pinned separately in TestGetElseMultiEntityScanNarrowed (algebra path only).
+// several pattern-bound entities on every leg: one tuple per kind-bearing
+// entity, carrying its stored note or the default, with the filler extent
+// excluded. The scan-narrowing structure of the same query is pinned
+// separately in TestGetElseMultiEntityScanNarrowed, on the algebra legs.
 func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -275,10 +275,10 @@ func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 // :repro/note access to the bound entities instead of scanning the whole
 // attribute extent. It pins the algebra path's plan structure — the
 // or-fallback branch lowering that emits or-fallback/branch.narrowed exists
-// only there — so per docs/wip/OPTIMIZER_MODE_MATRIX.md it declares its mode
-// explicitly. Tuple semantics for the same query run on both modes in
-// TestGetElseMultiEntityStoredOrDefault, and cross-mode tuple equivalence in
-// TestGetElseScanNarrowing_SemanticPreservation.
+// only there — so per docs/wip/OPTIMIZER_MODE_MATRIX.md it selects the
+// algebra legs. Tuple semantics for the same query run on every leg in
+// TestGetElseMultiEntityStoredOrDefault, and every leg's agreement with the
+// reference leg in TestGetElseScanNarrowing_SemanticPreservation.
 func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
@@ -378,54 +378,43 @@ func narrowingEvents(events []annotations.Event) []annotations.Event {
 	return narrowings
 }
 
-// TestGetElseScanNarrowing_SemanticPreservation is the differential / structural
-// test the project's optimization-testing guidance calls for: the rewrite +
-// narrowing (algebra optimizer ON) must return exactly the same (?e, ?note)
-// tuples — defaults included — as the un-rewritten, per-tuple get-else (algebra
-// optimizer OFF).
+// TestGetElseScanNarrowing_SemanticPreservation is the differential test the
+// project's optimization-testing guidance calls for: every leg answers the
+// get-else over the kind-bearing entities, defaults included, as the reference
+// leg does. On the algebra legs the rewrite and its narrowing run, so their
+// (?e, ?note) tuples are the un-rewritten, per-tuple get-else's.
 func TestGetElseScanNarrowing_SemanticPreservation(t *testing.T) {
+	const q = `[:find ?e ?note
+	       :where [?e :repro/kind _]
+	              [(get-else $ ?e :repro/note "MISSING") ?note]]`
+	norm := func(tuples [][]interface{}) map[datalog.Identity]string {
+		m := make(map[datalog.Identity]string, len(tuples))
+		for _, r := range tuples {
+			m[r[0].(datalog.Identity)] = r[1].(string)
+		}
+		return m
+	}
+	referenceDB, _ := setupGetElseNarrowingDB(t, referenceMode, nil)
+	referenceTuples, err := executor.CollectTuples(referenceDB.Query(q))
+	if err != nil {
+		t.Fatalf("reference leg failed: %v", err)
+	}
+	want := norm(referenceTuples)
+
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db, _ := setupGetElseNarrowingDB(t, mode, nil)
-
-			q := `[:find ?e ?note
-	       :where [?e :repro/kind _]
-	              [(get-else $ ?e :repro/note "MISSING") ?note]]`
-
-			db.ClearPlanCache()
-			baseRel, err := queryWithoutAlgebra(db, q)
+			tuples, err := executor.CollectTuples(db.Query(q))
 			if err != nil {
-				t.Fatalf("baseline (optimizer off) failed: %v", err)
+				t.Fatalf("query failed: %v", err)
 			}
-			baseline, err := executor.CollectTuples(baseRel, nil)
-			if err != nil {
-				t.Fatal(err)
+			got := norm(tuples)
+			if len(got) != len(want) {
+				t.Fatalf("tuple count differs: reference=%d %s=%d", len(want), mode.name, len(got))
 			}
-
-			db.ClearPlanCache()
-			optRel, err := queryWithAlgebra(db, q)
-			if err != nil {
-				t.Fatalf("optimized (optimizer on + narrowing) failed: %v", err)
-			}
-			optimized, err := executor.CollectTuples(optRel, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			norm := func(tuples [][]interface{}) map[datalog.Identity]string {
-				m := make(map[datalog.Identity]string, len(tuples))
-				for _, r := range tuples {
-					m[r[0].(datalog.Identity)] = r[1].(string)
-				}
-				return m
-			}
-			baseMap, optMap := norm(baseline), norm(optimized)
-			if len(baseMap) != len(optMap) {
-				t.Fatalf("tuple count differs: optimizer-off=%d optimizer-on=%d", len(baseMap), len(optMap))
-			}
-			for e, bv := range baseMap {
-				if ov, ok := optMap[e]; !ok || ov != bv {
-					t.Errorf("entity %v: optimizer-off=%q optimizer-on=%q (present=%v)", e, bv, ov, ok)
+			for e, wv := range want {
+				if gv, ok := got[e]; !ok || gv != wv {
+					t.Errorf("entity %v: reference=%q %s=%q (present=%v)", e, wv, mode.name, gv, ok)
 				}
 			}
 		})

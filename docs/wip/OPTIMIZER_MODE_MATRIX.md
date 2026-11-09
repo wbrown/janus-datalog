@@ -80,22 +80,28 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
 
 ## Design
 
-1. `optimizerMode` in `datalog/storage`, defined next to `cacheTestModes`, is one leg of the matrix — a storage backend crossed with a setting of every planner option a test can turn on:
+1. `optimizerMode` in `datalog/storage`, defined next to `cacheTestModes`, is one leg of the matrix — a storage backend crossed with an option leg, a setting of every planner option a test can turn on:
 
    ```go
+   type optionLeg struct {
+       name        string
+       algebra     bool
+       sharing     bool
+       prefetch    bool
+       symmetric   bool
+       streaming   bool
+       fusion      bool
+       aggregation bool
+   }
+
    type optimizerMode struct {
-       name      string
-       algebra   bool
-       sharing   bool
-       prefetch  bool
-       symmetric bool
-       streaming bool
-       fusion    bool
-       backend   Backend
+       name string
+       optionLeg
+       backend Backend
    }
    ```
 
-   The settings are the pairwise covering design `optionLegs` states: the strength-2 orthogonal array on three bits, eight legs, on which every pair of the six options takes all four settings. The first leg is the reference, every option off, and one leg is `DefaultPlannerOptions`' profile. `optimizerModes` is the engine axis, the tree store crossed with the legs, and `backendModes` is the store axis, `AvailableBackends()` crossed with them. A test of the engine loops the first; a test of the store, what it persists or how it reads, loops the second. Two constructors sit on them:
+   The legs are the pairwise covering design `optionLegs` states: the strength-2 orthogonal array on three bits (a, b, c), with the algebra optimizer at a, scan sharing at c, prefetch at a⊕c, the symmetric hash join at a⊕b⊕c, streaming joins at b, attribute-fetch fusion at b⊕c and streaming aggregation at a⊕b: eight legs, on which every pair of the seven options takes all four settings. The first leg is the reference, every option off, and one leg is `DefaultPlannerOptions`' profile. A leg's `plannerOptions` is the default options with its settings applied, and a mode carries its leg's fields and that method by promotion. `referenceMode` is the reference leg on the engine backend: a test comparing the legs' answers computes the reference's once and compares each leg's with it inside that leg, so a leg run alone compares against the reference. `optimizerModes` is the engine axis, the tree store crossed with the legs, and `backendModes` is the store axis, `AvailableBackends()` crossed with them. A test of the engine loops the first; a test of the store, what it persists or how it reads, loops the second; a test that fixes its own store loops `optionLegs`. Two constructors sit on them:
 
    - `createOptimizerModeDB(t, mode, opts)` — the mode's backend and the mode's planner options, threaded through `DatabaseOptions`. This is what a test on either axis uses.
    - `openBackendDB(t, backend, opts)` — a named backend with the caller's `PlannerOptions` left intact, for a test whose own options are the subject of its assertion. The option half of the mode has nothing left to vary there, so it takes a `Backend` rather than a mode; reaching for it drops that half of the axis.
@@ -107,7 +113,7 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
 
    Packages that cannot import storage's test files carry their own copy — the Go-testing reality for cross-package test code:
 
-   - `executor` carries the eight legs and a ninth, fusion alone, the profile `NewExecutor` constructs with, in `datalog/executor/optimizer_modes_test.go`, with `optimizerModesWhere` as its narrowing.
+   - `executor` carries the eight legs and a ninth, fusion with streaming aggregation, the profile `NewExecutor` constructs with, in `datalog/executor/optimizer_modes_test.go`, with `optimizerModesWhere` as its narrowing.
    - `tests/` has `createBackendModeDB`, with `eachMode`, `eachModeOpts` and `eachModeWith` on the engine axis and `eachStoreBackendAndModeOpts` on the store axis, over the two optimizer paths alone.
    - `db` carries both axes, over the two optimizer paths alone.
    - `qb` carries the engine axis alone over the two optimizer paths, threading `mode.backend` into its own constructor.

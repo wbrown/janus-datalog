@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 func TestCorrelatedNotJoinPredicateInputMatchesUnoptimizedExecution(t *testing.T) {
@@ -21,16 +22,9 @@ func TestCorrelatedNotJoinPredicateInputMatchesUnoptimizedExecution(t *testing.T
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db, retained := openCorrelatedNotJoinDatabase(t, mode)
-
-			baselineOptions := DefaultPlannerOptions()
-			baselineOptions.EnableAlgebraOptimizer = false
-			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-			require.Equal(t, [][]interface{}{{retained}}, baseline)
-
-			optimizedOptions := DefaultPlannerOptions()
-			optimizedOptions.EnableAlgebraOptimizer = true
-			optimized := executePlannerOptions(t, db, source, nil, optimizedOptions)
-			require.Equal(t, baseline, optimized)
+			got, err := executor.CollectTuples(db.Query(source))
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{retained}}, got)
 		})
 	}
 }
@@ -49,11 +43,9 @@ func TestCorrelatedNotPredicateInputExecutesWithAlgebra(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db, retained := openCorrelatedNotJoinDatabase(t, mode)
-
-			optimizedOptions := DefaultPlannerOptions()
-			optimizedOptions.EnableAlgebraOptimizer = true
-			optimized := executePlannerOptions(t, db, source, nil, optimizedOptions)
-			require.Equal(t, [][]interface{}{{retained}}, optimized)
+			got, err := executor.CollectTuples(db.Query(source))
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{retained}}, got)
 		})
 	}
 }
@@ -63,8 +55,7 @@ func TestCorrelatedNotPredicateInputExecutesWithAlgebra(t *testing.T) {
 // is bound by the enclosing query, and the union of (tagged without flag)
 // and (flagged) covers every entity. or-join is union semantics; the NOT
 // branch sends the clause down the algebra compiler's correlated route,
-// which must preserve that union — the optimized path must agree with the
-// baseline.
+// which must preserve that union on every leg.
 func TestCorrelatedOrJoinAllBranchesBindHeaderMatchesUnoptimizedExecution(t *testing.T) {
 	source := `[:find ?e
 		:where
@@ -92,15 +83,9 @@ func TestCorrelatedOrJoinAllBranchesBindHeaderMatchesUnoptimizedExecution(t *tes
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			baselineOptions := DefaultPlannerOptions()
-			baselineOptions.EnableAlgebraOptimizer = false
-			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-			require.Len(t, baseline, 3, "every entity matches one branch")
-
-			optimizedOptions := DefaultPlannerOptions()
-			optimizedOptions.EnableAlgebraOptimizer = true
-			optimized := executePlannerOptions(t, db, source, nil, optimizedOptions)
-			require.ElementsMatch(t, baseline, optimized)
+			got, err := executor.CollectTuples(db.Query(source))
+			require.NoError(t, err)
+			require.ElementsMatch(t, [][]interface{}{{e1}, {e2}, {e3}}, got, "every entity matches one branch")
 		})
 	}
 }
@@ -136,12 +121,20 @@ func openCorrelatedOrOutputsDatabase(t *testing.T, mode optimizerMode) *Database
 	return db
 }
 
+// correlatedOrOutputs is what the outputs fixture answers under union
+// semantics: e1 contributes a tuple per branch, e2 one, e3 none.
+func correlatedOrOutputs() [][]interface{} {
+	e1 := datalog.NewIdentity("x:1")
+	e2 := datalog.NewIdentity("x:2")
+	return [][]interface{}{{e1, int64(1)}, {e1, int64(2)}, {e2, int64(3)}}
+}
+
 // TestCorrelatedOrJoinWithOutputsMatchesUnoptimizedExecution pins the
 // correlated or-join shape that produces values: branches bind ?v from
 // different attributes, and an entity matching both branches contributes a
 // tuple from each — union semantics, not first-match-wins. The NOT branch
 // sends the clause down the algebra compiler's correlated route, which must
-// preserve the union.
+// preserve the union on every leg.
 func TestCorrelatedOrJoinWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
 	source := `[:find ?e ?v
 		:where
@@ -154,16 +147,9 @@ func TestCorrelatedOrJoinWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openCorrelatedOrOutputsDatabase(t, mode)
-
-			baselineOptions := DefaultPlannerOptions()
-			baselineOptions.EnableAlgebraOptimizer = false
-			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-			require.Len(t, baseline, 3, "e1 contributes a tuple per branch, e2 one, e3 none")
-
-			optimizedOptions := DefaultPlannerOptions()
-			optimizedOptions.EnableAlgebraOptimizer = true
-			optimized := executePlannerOptions(t, db, source, nil, optimizedOptions)
-			require.ElementsMatch(t, baseline, optimized)
+			got, err := executor.CollectTuples(db.Query(source))
+			require.NoError(t, err)
+			require.ElementsMatch(t, correlatedOrOutputs(), got)
 		})
 	}
 }
@@ -183,26 +169,19 @@ func TestCorrelatedOrWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openCorrelatedOrOutputsDatabase(t, mode)
-
-			baselineOptions := DefaultPlannerOptions()
-			baselineOptions.EnableAlgebraOptimizer = false
-			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-			require.Len(t, baseline, 3, "e1 contributes a tuple per branch, e2 one, e3 none")
-
-			optimizedOptions := DefaultPlannerOptions()
-			optimizedOptions.EnableAlgebraOptimizer = true
-			optimized := executePlannerOptions(t, db, source, nil, optimizedOptions)
-			require.ElementsMatch(t, baseline, optimized)
+			got, err := executor.CollectTuples(db.Query(source))
+			require.NoError(t, err)
+			require.ElementsMatch(t, correlatedOrOutputs(), got)
 		})
 	}
 }
 
 // TestFullyDisjointNotRejectedAtQueryOutset pins the disjoint-NOT ruling
 // end-to-end: a NOT body sharing no variable with its enclosing scope is
-// rejected at planning — before any execution, on both optimizer paths —
-// with a message naming the clause and the sharing rule. Previously this
-// shape planned and then failed deep in the executor with "NOT clause
-// variables not found in input relation".
+// rejected at planning, before any execution, on every leg, with a message
+// naming the clause and the sharing rule. Without the ruling this shape
+// planned and then failed deep in the executor with "NOT clause variables not
+// found in input relation".
 func TestFullyDisjointNotRejectedAtQueryOutset(t *testing.T) {
 	source := `[:find ?goal
 		:where
@@ -212,15 +191,10 @@ func TestFullyDisjointNotRejectedAtQueryOutset(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db, _ := openCorrelatedNotJoinDatabase(t, mode)
-
-			for _, algebra := range []bool{false, true} {
-				options := DefaultPlannerOptions()
-				options.EnableAlgebraOptimizer = algebra
-				_, err := runPlannerOptions(db, source, nil, options)
-				require.Error(t, err, "algebra=%v", algebra)
-				require.Contains(t, err.Error(), "(not ", "algebra=%v: must name the clause", algebra)
-				require.Contains(t, err.Error(), "shares no variable", "algebra=%v: must state the sharing rule", algebra)
-			}
+			_, err := db.Query(source)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "(not ", "the refusal names the clause")
+			require.Contains(t, err.Error(), "shares no variable", "the refusal states the sharing rule")
 		})
 	}
 }
@@ -251,9 +225,8 @@ func TestCorrelatedNotJoinRequiresOuterInputsInHeader(t *testing.T) {
 }
 
 // openCorrelatedNotJoinDatabase seeds the goal/event fixture on the mode's
-// backend. The differential tests below route planner options per execution
-// and so ignore the database's own defaults; the mode still decides which
-// store the fixture is written to and read back from.
+// backend, under the mode's planner options, which every query of it runs
+// under.
 func openCorrelatedNotJoinDatabase(t *testing.T, mode optimizerMode) (*Database, datalog.Identity) {
 	t.Helper()
 	db := createOptimizerModeDB(t, mode, DatabaseOptions{})

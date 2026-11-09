@@ -862,7 +862,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		// Planner / algebra optimization
 		EnableAlgebraOptimizer: true,  // Relational algebra optimization with nested Datalog lowering
 		EnableScanSharing:      true,  // Share unbound scan results across subqueries via LazySeq
-		EnableEntityPrefetch:   false, // Prefetch entities into the EA cache after the first DataPattern and before a fallback's window above the threshold; one option, every trigger (benchmarked: performance-neutral)
+		EnableEntityPrefetch:   false, // Prefetch a fallback window's entities into the EA cache before its branches are built, above the threshold (benchmarked: performance-neutral)
 
 		// Executor streaming options
 		EnableTrueStreaming:     true,  // No auto-materialization

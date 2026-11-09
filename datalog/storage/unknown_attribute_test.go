@@ -800,20 +800,13 @@ func queryExecutionAllocs(t *testing.T, d *Database, text string, inputs ...inte
 // them on a named source, one naming them in a subquery body, and one holding
 // a headerless form, whose preparation rewrites it on every execution.
 func TestQueryWithRefusalOptionCollectsRostersOnce(t *testing.T) {
-	for _, algebra := range []struct {
-		name string
-		on   bool
-	}{{"algebra_on", true}, {"algebra_off", false}} {
-		t.Run(algebra.name, func(t *testing.T) {
-			popts := DefaultPlannerOptions()
-			popts.EnableAlgebraOptimizer = algebra.on
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
 			open := func(refuse bool) *Database {
-				d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", PlannerOptions: &popts, Schema: schemaFactsFixture(t), RefuseUnknownAttributes: refuse})
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, d.Close()) })
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t), RefuseUnknownAttributes: refuse})
 				tx := d.NewTransaction()
 				require.NoError(t, tx.Add(datalog.NewIdentity("holder"), kw(":t/string"), "held"))
-				_, err = tx.Commit()
+				_, err := tx.Commit()
 				require.NoError(t, err)
 				return d
 			}

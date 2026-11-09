@@ -127,7 +127,7 @@ type PlannerOptions struct {
 	// Subquery / algebra optimization
 	EnableAlgebraOptimizer     bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)
 	EnableScanSharing          bool // Share unbound scan results across subqueries via LazySeq (default: true)
-	EnableEntityPrefetch       bool // Warm EA cache after first DataPattern via PrefetchEntities (default: false)
+	EnableEntityPrefetch       bool // Prefetch a fallback window's entities into the EA cache before its branches are built (default: false)
 	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple binding instead of match+join (default: true)
 
 	// CollectRosters holds with each plan the rosters of what its query names

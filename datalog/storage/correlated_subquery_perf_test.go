@@ -269,24 +269,25 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 	}
 }
 
-// TestCorrelatedSubqueryAlgebraOptimizer compares baseline (no algebra optimizer)
-// against optimized (algebra optimizer with decorrelation) on the same data
-// and query as TestCorrelatedSubqueryPerformance.
+// TestCorrelatedSubqueryAlgebraOptimizer runs the scenario listing query of
+// TestCorrelatedSubqueryPerformance on every leg: one tuple per scenario,
+// each carrying its task count and complete. Each leg logs the algebra
+// optimizer's rewrite of the query.
 func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
-	for _, backend := range AvailableBackends() {
-		t.Run(backend.Name, func(t *testing.T) {
-			testCorrelatedSubqueryAlgebraOptimizer(t, backend)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testCorrelatedSubqueryAlgebraOptimizer(t, mode)
 		})
 	}
 }
 
-func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
+func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, mode optimizerMode) {
 	const (
 		numScenarios     = 75
 		tasksPerScenario = 100
 	)
 
-	db := openBackendDB(t, backend, DatabaseOptions{
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		AnnotationHandler: func(e annotations.Event) {
 			if e.Name == "subquery/correlation-check" || e.Name == "subquery/uncorrelated-cached" || e.Name == "subquery/uncorrelated-cache-hit" || e.Name == "subquery/inner-clause-dispatch" {
 				t.Logf("[%s] %v", e.Name, e.Data)
@@ -362,72 +363,35 @@ func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
 	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`
 
-	t.Run("baseline", func(t *testing.T) {
-		opts := DefaultPlannerOptions()
-		opts.EnableAlgebraOptimizer = false
-		db.ClearPlanCache()
+	q, err := db.resolveQuery(queryStr)
+	require.NoError(t, err)
+	prepared, err := query.Prepare(q, nil)
+	require.NoError(t, err)
+	root, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
+	require.NoError(t, err)
+	optimizer := algebra.NewOptimizer(algebra.DefaultPasses(nil, db.CanFuseAttributeFetch)...)
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+	rewritten, err := algebra.Decompile(optimized)
+	require.NoError(t, err)
+	t.Logf("Rewritten %d clauses:", len(rewritten))
+	for i, c := range rewritten {
+		t.Logf("  [%d] %T: %s", i, c, c.String())
+	}
 
-		start := time.Now()
-		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-		require.NoError(t, err)
-		results, err := executor.CollectTuples(rel, nil)
-		elapsed := time.Since(start)
-		require.NoError(t, err)
-		require.Len(t, results, numScenarios)
-		t.Logf("Baseline: %d results in %s", len(results), elapsed)
+	start := time.Now()
+	results, err := executor.CollectTuples(db.Query(queryStr))
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.Len(t, results, numScenarios)
+	t.Logf("%d results in %s", len(results), elapsed)
 
-		for i, tuple := range results {
-			if tc, ok := tuple[3].(int); ok {
-				require.Equal(t, tasksPerScenario, tc, "scenario %d task count", i)
-			}
-			require.Equal(t, true, tuple[6], "scenario %d complete", i)
+	for i, tuple := range results {
+		if tc, ok := tuple[3].(int); ok {
+			require.Equal(t, tasksPerScenario, tc, "scenario %d task count", i)
 		}
-	})
-
-	t.Run("algebra_optimizer", func(t *testing.T) {
-		t.Logf("annotation handler nil: %v", db.plannerOptions.Handler == nil)
-		opts := DefaultPlannerOptions()
-		opts.EnableAlgebraOptimizer = true
-		db.ClearPlanCache()
-
-		// Log the rewritten clauses
-		q, err := db.resolveQuery(queryStr)
-		require.NoError(t, err)
-		prepared, err := query.Prepare(q, nil)
-		require.NoError(t, err)
-		root, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
-		require.NoError(t, err)
-		optimizer := algebra.NewOptimizer(algebra.DefaultPasses(nil, db.CanFuseAttributeFetch)...)
-		optimized, err := optimizer.Optimize(root)
-		require.NoError(t, err)
-		rewritten, err := algebra.Decompile(optimized)
-		require.NoError(t, err)
-		t.Logf("Rewritten %d clauses:", len(rewritten))
-		for i, c := range rewritten {
-			t.Logf("  [%d] %T: %s", i, c, c.String())
-		}
-
-		db.ClearPlanCache()
-		start := time.Now()
-		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-		if err != nil {
-			t.Fatalf("query error: %v", err)
-		}
-		t.Logf("Relation: %v, symbols: %v, size: %d", rel != nil, rel.Symbols(), rel.Size())
-		results, err := executor.CollectTuples(rel, nil)
-		elapsed := time.Since(start)
-		if err != nil {
-			t.Fatalf("collect error: %v", err)
-		}
-		t.Logf("Optimized: %d results in %s", len(results), elapsed)
-
-		for i, tuple := range results {
-			if tc, ok := tuple[3].(int); ok {
-				require.Equal(t, tasksPerScenario, tc, "scenario %d task count", i)
-			}
-			require.Equal(t, true, tuple[6], "scenario %d complete", i)
-		}
-	})
+		require.Equal(t, true, tuple[6], "scenario %d complete", i)
+	}
 }
 
 // TestCorrelatedSubqueryAlgebraOptimizerWithDefaults tests the algebra optimizer
@@ -528,81 +492,34 @@ func testCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T, mode optim
 	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`
 
-	t.Run("baseline", func(t *testing.T) {
-		opts := DefaultPlannerOptions()
-		opts.EnableAlgebraOptimizer = false
-		db.ClearPlanCache()
+	start := time.Now()
+	results, err := executor.CollectTuples(db.Query(queryStr))
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	// Every scenario is answered: one without task data takes the
+	// or-default's defaults.
+	require.Len(t, results, totalScenarios, "every scenario is answered, those without task data with the or-default's defaults")
+	t.Logf("%d results in %s", len(results), elapsed)
 
-		start := time.Now()
-		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-		require.NoError(t, err)
-		results, err := executor.CollectTuples(rel, nil)
-		elapsed := time.Since(start)
-		require.NoError(t, err)
-		require.Len(t, results, totalScenarios, "baseline must return ALL scenarios")
-		t.Logf("Baseline: %d results in %s", len(results), elapsed)
-
-		// Verify: scenarios with tasks have counts > 0, those without have 0
-		withTasks := 0
-		withoutTasks := 0
-		for _, tuple := range results {
-			tc := int64(0)
-			switch v := tuple[3].(type) {
-			case int64:
-				tc = v
-			case int:
-				tc = int64(v)
-			}
-			if tc > 0 {
-				withTasks++
-			} else {
-				withoutTasks++
-			}
+	withTasks := 0
+	withoutTasks := 0
+	for _, tuple := range results {
+		tc := int64(0)
+		switch v := tuple[3].(type) {
+		case int64:
+			tc = v
+		case int:
+			tc = int64(v)
 		}
-		t.Logf("  With tasks: %d, Without tasks: %d", withTasks, withoutTasks)
-		assert.Equal(t, scenariosWithTasks, withTasks, "scenarios with tasks")
-		assert.Equal(t, totalScenarios-scenariosWithTasks, withoutTasks, "scenarios without tasks")
-	})
-
-	t.Run("algebra_optimizer", func(t *testing.T) {
-		opts := DefaultPlannerOptions()
-		opts.EnableAlgebraOptimizer = true
-		db.ClearPlanCache()
-
-		start := time.Now()
-		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-		require.NoError(t, err)
-		results, err := executor.CollectTuples(rel, nil)
-		elapsed := time.Since(start)
-		require.NoError(t, err)
-
-		// THIS IS THE KEY ASSERTION: the optimizer must return ALL scenarios,
-		// including those without tasks (which get default values from OR-fallback).
-		require.Len(t, results, totalScenarios,
-			"algebra optimizer must return ALL scenarios — entities without task data need OR-fallback defaults")
-		t.Logf("Optimized: %d results in %s", len(results), elapsed)
-
-		// Same verification as baseline
-		withTasks := 0
-		withoutTasks := 0
-		for _, tuple := range results {
-			tc := int64(0)
-			switch v := tuple[3].(type) {
-			case int64:
-				tc = v
-			case int:
-				tc = int64(v)
-			}
-			if tc > 0 {
-				withTasks++
-			} else {
-				withoutTasks++
-			}
+		if tc > 0 {
+			withTasks++
+		} else {
+			withoutTasks++
 		}
-		t.Logf("  With tasks: %d, Without tasks: %d", withTasks, withoutTasks)
-		assert.Equal(t, scenariosWithTasks, withTasks, "scenarios with tasks")
-		assert.Equal(t, totalScenarios-scenariosWithTasks, withoutTasks, "scenarios without tasks")
-	})
+	}
+	t.Logf("  With tasks: %d, Without tasks: %d", withTasks, withoutTasks)
+	assert.Equal(t, scenariosWithTasks, withTasks, "scenarios with tasks")
+	assert.Equal(t, totalScenarios-scenariosWithTasks, withoutTasks, "scenarios without tasks")
 }
 
 // TestCorrelatedSubqueryAlgebraOptimizerProductionStructure tests the algebra
@@ -729,56 +646,21 @@ func testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T, mod
 	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`
 
-	t.Run("baseline", func(t *testing.T) {
-		opts := DefaultPlannerOptions()
-		opts.EnableAlgebraOptimizer = false
-		db.ClearPlanCache()
+	start := time.Now()
+	results, err := executor.CollectTuples(db.Query(queryStr))
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.Len(t, results, numProjects, "every project is answered")
+	t.Logf("%d results in %s", len(results), elapsed)
 
-		start := time.Now()
-		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-		require.NoError(t, err)
-		results, err := executor.CollectTuples(rel, nil)
-		elapsed := time.Since(start)
-		require.NoError(t, err)
-		require.Len(t, results, numProjects, "baseline must return ALL projects")
-		t.Logf("Baseline: %d results in %s", len(results), elapsed)
-
-		for _, tuple := range results {
-			ic := int64(0)
-			switch v := tuple[8].(type) {
-			case int64:
-				ic = v
-			case int:
-				ic = int64(v)
-			}
-			assert.Equal(t, int64(itemsPerProject), ic, "each project has %d items", itemsPerProject)
+	for _, tuple := range results {
+		ic := int64(0)
+		switch v := tuple[8].(type) {
+		case int64:
+			ic = v
+		case int:
+			ic = int64(v)
 		}
-	})
-
-	t.Run("algebra_optimizer", func(t *testing.T) {
-		opts := DefaultPlannerOptions()
-		opts.EnableAlgebraOptimizer = true
-		db.ClearPlanCache()
-
-		start := time.Now()
-		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-		require.NoError(t, err, "algebra optimizer must not crash on production-structure query")
-		results, err := executor.CollectTuples(rel, nil)
-		elapsed := time.Since(start)
-		require.NoError(t, err)
-		require.Len(t, results, numProjects,
-			"algebra optimizer must return ALL projects with production-structure query")
-		t.Logf("Optimized: %d results in %s", len(results), elapsed)
-
-		for _, tuple := range results {
-			ic := int64(0)
-			switch v := tuple[8].(type) {
-			case int64:
-				ic = v
-			case int:
-				ic = int64(v)
-			}
-			assert.Equal(t, int64(itemsPerProject), ic, "each project has %d items", itemsPerProject)
-		}
-	})
+		assert.Equal(t, int64(itemsPerProject), ic, "each project has %d items", itemsPerProject)
+	}
 }

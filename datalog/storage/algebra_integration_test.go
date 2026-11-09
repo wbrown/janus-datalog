@@ -63,141 +63,82 @@ func setupAlgebraTestDB(t testing.TB, mode optimizerMode) *Database {
 	return db
 }
 
-// queryWithAlgebra runs a query with the algebra optimizer enabled.
-//
-// Derived from the database's own options so the algebra flag is the only thing
-// that differs; building from DefaultPlannerOptions would discard whatever the
-// database was opened with, its handler included.
-func queryWithAlgebra(db *Database, queryStr string) (executor.Relation, error) {
-	opts := db.effectivePlannerOptions()
-	opts.EnableAlgebraOptimizer = true
-	_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-	return rel, err
+// algebraReferenceAnswer is what queryText answers over setupAlgebraTestDB's
+// data on the reference leg. A test computes it before its legs and compares
+// each leg's answer with it inside that leg.
+func algebraReferenceAnswer(t *testing.T, queryText string) [][]interface{} {
+	t.Helper()
+	db := setupAlgebraTestDB(t, referenceMode)
+	tuples, err := executor.CollectTuples(db.Query(queryText))
+	require.NoError(t, err)
+	return tuples
 }
 
-// queryWithoutAlgebra runs a query with the algebra optimizer disabled.
-func queryWithoutAlgebra(db *Database, queryStr string) (executor.Relation, error) {
-	opts := db.effectivePlannerOptions()
-	opts.EnableAlgebraOptimizer = false
-	_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-	return rel, err
-}
-
-// TestAlgebraIntegration_SimplePatterns tests that simple data patterns
-// produce identical results with and without the algebra optimizer.
+// Simple data patterns answer the same tuples on every leg.
 func TestAlgebraIntegration_SimplePatterns(t *testing.T) {
+	q := `[:find ?e ?title :where [?e :entity/type :entity.type/scenario] [?e :scenario/title ?title]]`
+	want := algebraReferenceAnswer(t, q)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
-
-			q := `[:find ?e ?title :where [?e :entity/type :entity.type/scenario] [?e :scenario/title ?title]]`
-
-			db.ClearPlanCache()
-			baselineRel, err := queryWithoutAlgebra(db, q)
+			got, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
-			baseline, err := executor.CollectTuples(baselineRel, nil)
-			require.NoError(t, err)
-
-			db.ClearPlanCache()
-			optimizedRel, err := queryWithAlgebra(db, q)
-			require.NoError(t, err)
-			optimized, err := executor.CollectTuples(optimizedRel, nil)
-			require.NoError(t, err)
-
-			assert.Equal(t, len(baseline), len(optimized), "same result count")
-			t.Logf("Baseline: %v", baseline)
-			t.Logf("Optimized: %v", optimized)
+			require.ElementsMatch(t, want, got)
 		})
 	}
 }
 
-// TestAlgebraIntegration_NotClause tests NOT clauses through the full pipeline.
-// This reproduces the production crash on the tags query.
+// A NOT clause answers the same tuples on every leg: the tags query that once
+// crashed the algebra path.
 func TestAlgebraIntegration_NotClause(t *testing.T) {
+	q := `[:find ?e ?tag
+	       :where [?e :entity/type :entity.type/scenario]
+	              [?e :entity/tag ?tag]
+	              (not [?e :entity/deleted true])]`
+	want := algebraReferenceAnswer(t, q)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
-
-			q := `[:find ?e ?tag
-			       :where [?e :entity/type :entity.type/scenario]
-			              [?e :entity/tag ?tag]
-			              (not [?e :entity/deleted true])]`
-
-			db.ClearPlanCache()
-			baselineRel, err := queryWithoutAlgebra(db, q)
+			got, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
-			baseline, err := executor.CollectTuples(baselineRel, nil)
-			require.NoError(t, err)
-			t.Logf("Baseline: %d results: %v", len(baseline), baseline)
-
-			db.ClearPlanCache()
-			optimizedRel, err := queryWithAlgebra(db, q)
-			require.NoError(t, err, "algebra optimizer should not crash on NOT clause")
-			optimized, err := executor.CollectTuples(optimizedRel, nil)
-			require.NoError(t, err)
-			t.Logf("Optimized: %d results: %v", len(optimized), optimized)
-
-			assert.Equal(t, len(baseline), len(optimized), "same result count")
+			require.ElementsMatch(t, want, got)
 		})
 	}
 }
 
-// TestAlgebraIntegration_GetElse tests get-else through the full pipeline.
+// A get-else answers the same tuples on every leg.
 func TestAlgebraIntegration_GetElse(t *testing.T) {
+	q := `[:find ?e ?title
+	       :where [?e :entity/type :entity.type/scenario]
+	              (not [?e :entity/deleted true])
+	              [(get-else $ ?e :scenario/title "") ?title]]`
+	want := algebraReferenceAnswer(t, q)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
-
-			q := `[:find ?e ?title
-			       :where [?e :entity/type :entity.type/scenario]
-			              (not [?e :entity/deleted true])
-			              [(get-else $ ?e :scenario/title "") ?title]]`
-
-			db.ClearPlanCache()
-			baselineRel, err := queryWithoutAlgebra(db, q)
+			got, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
-			baseline, err := executor.CollectTuples(baselineRel, nil)
-			require.NoError(t, err)
-			t.Logf("Baseline: %d results: %v", len(baseline), baseline)
-
-			db.ClearPlanCache()
-			optimizedRel, err := queryWithAlgebra(db, q)
-			require.NoError(t, err, "algebra optimizer should not crash on get-else")
-			optimized, err := executor.CollectTuples(optimizedRel, nil)
-			require.NoError(t, err)
-			t.Logf("Optimized: %d results: %v", len(optimized), optimized)
-
-			assert.Equal(t, len(baseline), len(optimized), "same result count")
+			require.ElementsMatch(t, want, got)
 		})
 	}
 }
 
-// TestAlgebraIntegration_OrFallbackWithSubquery tests OR-fallback with
-// correlated subquery through the full pipeline.
+// An or-default over a correlated subquery answers the same tuples on every
+// leg. Each leg logs the algebra optimizer's rewrite of the query.
 func TestAlgebraIntegration_OrFallbackWithSubquery(t *testing.T) {
+	q := `[:find ?e ?count
+	       :where [?e :entity/type :entity.type/scenario]
+	              (not [?e :entity/deleted true])
+	              (or-default [(q [:find (count ?t)
+	                       :in $ ?s
+	                       :where [?t :task/root ?s]
+	                              [?t :task/status :status/complete]]
+	                      $ ?e) [[?count]]]
+	                  [(ground 0) ?count])]`
+	want := algebraReferenceAnswer(t, q)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
-
-			q := `[:find ?e ?count
-			       :where [?e :entity/type :entity.type/scenario]
-			              (not [?e :entity/deleted true])
-			              (or-default [(q [:find (count ?t)
-			                       :in $ ?s
-			                       :where [?t :task/root ?s]
-			                              [?t :task/status :status/complete]]
-			                      $ ?e) [[?count]]]
-			                  [(ground 0) ?count])]`
-
-			db.ClearPlanCache()
-			baselineRel, err := queryWithoutAlgebra(db, q)
-			require.NoError(t, err)
-			baseline, err := executor.CollectTuples(baselineRel, nil)
-			require.NoError(t, err)
-			t.Logf("Baseline: %d results: %v", len(baseline), baseline)
-
-			db.ClearPlanCache()
-			// Debug: show rewritten clauses
 			{
 				parsed, err := db.resolveQuery(q)
 				require.NoError(t, err)
@@ -215,50 +156,33 @@ func TestAlgebraIntegration_OrFallbackWithSubquery(t *testing.T) {
 					t.Logf("  [%d] %T: %s", i, c, c.String())
 				}
 			}
-			optimizedRel, err := queryWithAlgebra(db, q)
-			require.NoError(t, err, "algebra optimizer should handle OR-fallback with subquery")
-			optimized, err := executor.CollectTuples(optimizedRel, nil)
+			got, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
-			t.Logf("Optimized: %d results: %v", len(optimized), optimized)
-
-			assert.Equal(t, len(baseline), len(optimized), "same result count")
+			require.ElementsMatch(t, want, got)
 		})
 	}
 }
 
-// TestAlgebraIntegration_SubqueryWithNot tests subqueries that internally
-// contain NOT clauses (like the production pattern with entity/deleted).
+// An or-default over a subquery holding a NOT clause answers the same tuples
+// on every leg.
 func TestAlgebraIntegration_SubqueryWithNot(t *testing.T) {
+	q := `[:find ?e ?count
+	       :where [?e :entity/type :entity.type/scenario]
+	              (not [?e :entity/deleted true])
+	              (or-default [(q [:find (count ?t)
+	                       :in $ ?s
+	                       :where [?t :task/root ?s]
+	                              [?t :task/status :status/complete]
+	                              (not [?t :entity/deleted true])]
+	                      $ ?e) [[?count]]]
+	                  [(ground 0) ?count])]`
+	want := algebraReferenceAnswer(t, q)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
-
-			q := `[:find ?e ?count
-			       :where [?e :entity/type :entity.type/scenario]
-			              (not [?e :entity/deleted true])
-			              (or-default [(q [:find (count ?t)
-			                       :in $ ?s
-			                       :where [?t :task/root ?s]
-			                              [?t :task/status :status/complete]
-			                              (not [?t :entity/deleted true])]
-			                      $ ?e) [[?count]]]
-			                  [(ground 0) ?count])]`
-
-			db.ClearPlanCache()
-			baselineRel, err := queryWithoutAlgebra(db, q)
+			got, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
-			baseline, err := executor.CollectTuples(baselineRel, nil)
-			require.NoError(t, err)
-			t.Logf("Baseline: %d results: %v", len(baseline), baseline)
-
-			db.ClearPlanCache()
-			optimizedRel, err := queryWithAlgebra(db, q)
-			require.NoError(t, err, "subquery with NOT should survive algebra optimizer")
-			optimized, err := executor.CollectTuples(optimizedRel, nil)
-			require.NoError(t, err)
-			t.Logf("Optimized: %d results: %v", len(optimized), optimized)
-
-			assert.Equal(t, len(baseline), len(optimized), "same result count")
+			require.ElementsMatch(t, want, got)
 		})
 	}
 }
@@ -381,33 +305,24 @@ func TestAlgebraIntegration_PrefetchInDecorrelatedSubquery(t *testing.T) {
 	}
 }
 
-// TestAlgebraIntegration_MultipleOrFallbacks tests multiple OR-fallback
-// clauses in one query (the production pattern).
+// An or-default over a subquery aggregating two values, one through a
+// get-else, answers the same tuples on every leg. Each leg logs the algebra
+// optimizer's rewrite of the query.
 func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
+	q := `[:find ?e ?count ?total
+	       :where [?e :entity/type :entity.type/scenario]
+	              (not [?e :entity/deleted true])
+	              (or-default [(q [:find (count ?t) (sum ?tok)
+	                       :in $ ?s
+	                       :where [?t :task/root ?s]
+	                              [?t :task/status :status/complete]
+	                              [(get-else $ ?t :task/token-count 0) ?tok]]
+	                      $ ?e) [[?count ?total]]]
+	                  [(ground [0 0]) [?count ?total]])]`
+	want := algebraReferenceAnswer(t, q)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
-
-			q := `[:find ?e ?count ?total
-			       :where [?e :entity/type :entity.type/scenario]
-			              (not [?e :entity/deleted true])
-			              (or-default [(q [:find (count ?t) (sum ?tok)
-			                       :in $ ?s
-			                       :where [?t :task/root ?s]
-			                              [?t :task/status :status/complete]
-			                              [(get-else $ ?t :task/token-count 0) ?tok]]
-			                      $ ?e) [[?count ?total]]]
-			                  [(ground [0 0]) [?count ?total]])]`
-
-			db.ClearPlanCache()
-			baselineRel, err := queryWithoutAlgebra(db, q)
-			require.NoError(t, err)
-			baseline, err := executor.CollectTuples(baselineRel, nil)
-			require.NoError(t, err)
-			t.Logf("Baseline: %d results: %v", len(baseline), baseline)
-
-			db.ClearPlanCache()
-			// Log rewritten clauses for debugging
 			{
 				parsed, err := db.resolveQuery(q)
 				require.NoError(t, err)
@@ -425,13 +340,9 @@ func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
 					t.Logf("  [%d] %T: %s", i, c, c.String())
 				}
 			}
-			optimizedRel, err := queryWithAlgebra(db, q)
-			require.NoError(t, err, "algebra optimizer should handle multiple OR-fallbacks")
-			optimized, err := executor.CollectTuples(optimizedRel, nil)
+			got, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
-			t.Logf("Optimized: %d results: %v", len(optimized), optimized)
-
-			assert.Equal(t, len(baseline), len(optimized), "same result count")
+			require.ElementsMatch(t, want, got)
 		})
 	}
 }

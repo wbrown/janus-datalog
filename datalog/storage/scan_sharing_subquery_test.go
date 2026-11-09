@@ -13,15 +13,14 @@ import (
 )
 
 // optimizationMatrixReferenceAnswer is what queryText answers over the
-// optimization matrix's scenarios on the reference leg: the engine backend
-// with the algebra optimizer, scan sharing and the cache off. A test of the
-// matrix computes it before its legs and compares each leg's answer with it
-// inside that leg, so a leg run alone compares against the reference.
+// optimization matrix's scenarios on the reference leg with the cache off. A
+// test of the matrix computes it before its legs and compares each leg's
+// answer with it inside that leg, so a leg run alone compares against the
+// reference.
 func optimizationMatrixReferenceAnswer(t *testing.T, queryText string, scenarios, tasksPerScenario int) [][]interface{} {
 	t.Helper()
-	reference := optimizerMode{name: "reference", backend: engineBackends()[0]}
-	options := reference.plannerOptions()
-	db := openBackendDB(t, reference.backend, DatabaseOptions{
+	options := referenceMode.plannerOptions()
+	db := openBackendDB(t, referenceMode.backend, DatabaseOptions{
 		Schema:         optimizationMatrixSchema(),
 		DisableCache:   true,
 		PlannerOptions: &options,

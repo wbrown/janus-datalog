@@ -56,10 +56,10 @@ func refuteGateLastAsOf(h gateReviewHistory) func(d *Database) *Database {
 	return func(d *Database) *Database { return d.AsOf(h.txIDs[len(h.txIDs)-1]) }
 }
 
-// Over generated histories, each entry point's second run answers on the
-// optimizer-on path, through a plan cache holding the text's plan from a run
-// on the latest view, what the optimizer-off path answers; a fresh
-// optimizer-on database that ran nothing answers alike too (the control).
+// Over generated histories, each entry point's second run answers on every
+// leg, through a plan cache holding the text's plan from a run on the latest
+// view, what the reference leg answers; a fresh database on the leg that ran
+// nothing answers alike too (the control).
 func TestRefuteGate_ACacheServedRuleBodyAnswersAsTheUnoptimizedPathOnEveryEntryPoint(t *testing.T) {
 	bound := `[[(ga ?e ?v) [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]]`
 	boundText := `[:find ?e ?v :in $ % :where [?e :t/name _] (ga ?e ?v)]`
@@ -78,50 +78,54 @@ func TestRefuteGate_ACacheServedRuleBodyAnswersAsTheUnoptimizedPathOnEveryEntryP
 			{"free invocation, History().Query after Query", freeText, free, true, refuteGateQueryOn(refuteGateHistory)},
 		}
 		for _, e := range entries {
-			off := buildGateReviewHistory(t, c, false)
-			want, wantErr := e.second(off.db, e.text, e.rules)
-			on := buildGateReviewHistory(t, c, true)
-			if e.first {
-				rs, err := parser.ParseRules(e.rules)
-				require.NoError(t, err)
-				latest, err := gateReviewAnswer(on.db.Query(e.text, rs))
-				require.NoError(t, err, e.name)
-				require.NotEmpty(t, latest, e.name)
-			}
-			got, gotErr := e.second(on.db, e.text, e.rules)
-			if (wantErr == nil) != (gotErr == nil) || !reflect.DeepEqual(want, got) {
-				cached[e.name]++
-				if _, seen := firstCached[e.name]; !seen {
-					firstCached[e.name] = fmt.Sprintf("case %d %v: off %v %v, on %v %v", i, c, want, wantErr, got, gotErr)
+			reference := buildGateReviewHistory(t, c, referenceMode)
+			want, wantErr := e.second(reference.db, e.text, e.rules)
+			for _, mode := range optimizerModes {
+				key := mode.name + " / " + e.name
+				leg := buildGateReviewHistory(t, c, mode)
+				if e.first {
+					rs, err := parser.ParseRules(e.rules)
+					require.NoError(t, err)
+					latest, err := gateReviewAnswer(leg.db.Query(e.text, rs))
+					require.NoError(t, err, key)
+					require.NotEmpty(t, latest, key)
+				}
+				got, gotErr := e.second(leg.db, e.text, e.rules)
+				if (wantErr == nil) != (gotErr == nil) || !reflect.DeepEqual(want, got) {
+					cached[key]++
+					if _, seen := firstCached[key]; !seen {
+						firstCached[key] = fmt.Sprintf("case %d %v: reference %v %v, leg %v %v", i, c, want, wantErr, got, gotErr)
+					}
+				}
+				control := buildGateReviewHistory(t, c, mode)
+				controlGot, controlErr := e.second(control.db, e.text, e.rules)
+				if (wantErr == nil) != (controlErr == nil) || !reflect.DeepEqual(want, controlGot) {
+					fresh[key]++
 				}
 			}
-			control := buildGateReviewHistory(t, c, true)
-			controlGot, controlErr := e.second(control.db, e.text, e.rules)
-			if (wantErr == nil) != (controlErr == nil) || !reflect.DeepEqual(want, controlGot) {
-				fresh[e.name]++
+		}
+		asOfReference := buildGateReviewHistory(t, c, referenceMode)
+		want, wantErr := refuteGateQueryOn(refuteGateLastAsOf(asOfReference))(asOfReference.db, boundText, bound)
+		for _, mode := range optimizerModes {
+			asOf := buildGateReviewHistory(t, c, mode)
+			rs, err := parser.ParseRules(bound)
+			require.NoError(t, err)
+			latest, err := gateReviewAnswer(asOf.db.Query(boundText, rs))
+			require.NoError(t, err)
+			require.NotEmpty(t, latest)
+			got, gotErr := refuteGateQueryOn(refuteGateLastAsOf(asOf))(asOf.db, boundText, bound)
+			if (wantErr == nil) != (gotErr == nil) || !reflect.DeepEqual(want, got) {
+				cached[mode.name+" / control: bound invocation, AsOf(last).Query after Query"]++
 			}
 		}
-		asOf := buildGateReviewHistory(t, c, true)
-		asOfOff := buildGateReviewHistory(t, c, false)
-		rs, err := parser.ParseRules(bound)
-		require.NoError(t, err)
-		latest, err := gateReviewAnswer(asOf.db.Query(boundText, rs))
-		require.NoError(t, err)
-		require.NotEmpty(t, latest)
-		got, gotErr := refuteGateQueryOn(refuteGateLastAsOf(asOf))(asOf.db, boundText, bound)
-		want, wantErr := refuteGateQueryOn(refuteGateLastAsOf(asOfOff))(asOfOff.db, boundText, bound)
-		if (wantErr == nil) != (gotErr == nil) || !reflect.DeepEqual(want, got) {
-			cached["control: bound invocation, AsOf(last).Query after Query"]++
-		}
 	}
-	require.Empty(t, fresh, "entry points where a fresh optimizer-on database answers otherwise than the optimizer-off path")
-	require.Empty(t, cached, "entry points where the cache-served optimizer-on run answers otherwise than the optimizer-off path, first instance of each: %v", firstCached)
+	require.Empty(t, fresh, "legs and entry points where a fresh database answers otherwise than the reference leg")
+	require.Empty(t, cached, "legs and entry points where the cache-served run answers otherwise than the reference leg, first instance of each: %v", firstCached)
 }
 
 // After SetSchema declares :t/a cardinality-many and a value is asserted, a
-// bound invocation's get-else answers on the optimizer-on path what it
-// answers on the optimizer-off path, whether or not the database ran the
-// text before the declaration.
+// bound invocation's get-else answers on every leg what the reference leg
+// answers, whether or not the database ran the text before the declaration.
 func TestRefuteGate_ABoundRuleBodyAnswersAlikeAfterSetSchemaWithAndWithoutAnEarlierRun(t *testing.T) {
 	one := datalog.NewIdentity("refute-gate-schema:one")
 	text := `[:find ?e ?v :in $ % :where [?e :t/name _] (ga ?e ?v)]`
@@ -135,9 +139,11 @@ func TestRefuteGate_ABoundRuleBodyAnswersAlikeAfterSetSchemaWithAndWithoutAnEarl
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var answers [2][][]interface{}
-			for i, algebra := range []bool{false, true} {
-				d := gateReviewRuleBodyDatabase(t, algebra, one)
+			// answer runs the case on a database on the leg: the first run where
+			// the case has one, the declaration, the asserted value, and the
+			// query after them.
+			answer := func(mode optimizerMode) [][]interface{} {
+				d := gateReviewRuleBodyDatabase(t, mode, one)
 				rs, err := parser.ParseRules(rules)
 				require.NoError(t, err)
 				if c.ranFirst {
@@ -150,16 +156,21 @@ func TestRefuteGate_ABoundRuleBodyAnswersAlikeAfterSetSchemaWithAndWithoutAnEarl
 				require.NoError(t, tx.Add(one, datalog.NewKeyword(":t/a"), "blue"))
 				_, err = tx.Commit()
 				require.NoError(t, err)
-				answers[i], err = gateReviewAnswer(d.Query(text, rs))
+				got, err := gateReviewAnswer(d.Query(text, rs))
 				require.NoError(t, err)
+				return got
 			}
-			require.Equal(t, answers[0], answers[1], "optimizer-off answer first, optimizer-on second")
+			want := answer(referenceMode)
+			for _, mode := range optimizerModes {
+				require.Equal(t, want, answer(mode), "%s answers otherwise than the reference leg", mode.name)
+			}
 		})
 	}
 }
 
-// On the latest view the get-else scan rewrite applies to the rule body of
-// each invocation shape the differential above runs.
+// On the algebra legs, with $src the latest view, the get-else scan rewrite
+// applies to the rule body of each invocation shape the differential above
+// runs.
 func TestRefuteGate_TheRewriteAppliesToEachInvocationShapesBody(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -170,41 +181,45 @@ func TestRefuteGate_TheRewriteAppliesToEachInvocationShapesBody(t *testing.T) {
 		{"required head from a free invocation", `[:find ?e ?v :in $ % :where (top ?e ?v)]`, `[[(top ?e ?v) [?e :t/name _] (gb ?e ?v)] [(gb [?e] ?v) [(get-else $ ?e :t/a "none") ?v]]]`},
 		{"free invocation", `[:find ?e ?v :in $ % :where (ga ?e ?v)]`, `[[(ga ?e ?v) [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]]`},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			applied := 0
-			opts := DefaultPlannerOptions()
-			opts.Handler = func(e annotations.Event) {
-				if e.Name == annotations.AlgebraGetElseScanApply {
-					applied++
-				}
-			}
-			d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", Schema: gateReviewSchema(schema.CardinalityOne, nil), PlannerOptions: &opts})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, d.Close()) })
-			rs, err := parser.ParseRules(c.rules)
-			require.NoError(t, err)
-			got, err := gateReviewAnswer(d.Query(c.text, rs))
-			require.NoError(t, err)
-			require.Empty(t, got)
-			require.Positive(t, applied)
-		})
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
+		for _, c := range cases {
+			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
+				applied := 0
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{
+					Schema: gateReviewSchema(schema.CardinalityOne, nil),
+					AnnotationHandler: func(e annotations.Event) {
+						if e.Name == annotations.AlgebraGetElseScanApply {
+							applied++
+						}
+					},
+				})
+				rs, err := parser.ParseRules(c.rules)
+				require.NoError(t, err)
+				got, err := gateReviewAnswer(d.Query(c.text, rs))
+				require.NoError(t, err)
+				require.Empty(t, got)
+				require.Positive(t, applied)
+			})
+		}
 	}
 }
 
 // Each rule-body route's text runs twice on one database with $src the
 // database, SetSchema declaring :t/a cardinality-many and a value asserted
-// between the runs; the second run answers alike on both optimizer paths.
+// between the runs; the second run answers on every leg what it answers on
+// the reference leg.
 func TestRefuteGate_EachRuleBodyRouteAnswersAlikeAfterSetSchemaBetweenRuns(t *testing.T) {
+	c := gateReviewCase{cardinality: schema.CardinalityOne, txs: 1, installAfter: -1, ops: []gateReviewOp{{tx: 0, entity: 0, value: "x"}, {tx: 0, entity: 1, value: "y"}}}
 	for _, route := range gateReviewRoutes {
 		if route.rules == "" {
 			continue
 		}
 		t.Run(route.name, func(t *testing.T) {
-			var answers [2][][]interface{}
-			for i, algebra := range []bool{false, true} {
-				c := gateReviewCase{cardinality: schema.CardinalityOne, txs: 1, installAfter: -1, ops: []gateReviewOp{{tx: 0, entity: 0, value: "x"}, {tx: 0, entity: 1, value: "y"}}}
-				h := buildGateReviewHistory(t, c, algebra)
+			// secondRun builds the history on the leg, runs the route's text,
+			// installs the cardinality-many declaration, asserts a second value
+			// and answers the text's second run.
+			secondRun := func(mode optimizerMode) [][]interface{} {
+				h := buildGateReviewHistory(t, c, mode)
 				rs, err := parser.ParseRules(route.rules)
 				require.NoError(t, err)
 				run := func() ([][]interface{}, error) {
@@ -218,16 +233,20 @@ func TestRefuteGate_EachRuleBodyRouteAnswersAlikeAfterSetSchemaBetweenRuns(t *te
 				require.NoError(t, tx.Add(h.entities[0], datalog.NewKeyword(":t/a"), "z"))
 				_, err = tx.Commit()
 				require.NoError(t, err)
-				answers[i], err = run()
+				second, err := run()
 				require.NoError(t, err)
+				return second
 			}
-			require.Equal(t, answers[0], answers[1], "optimizer-off answer first, optimizer-on second")
+			want := secondRun(referenceMode)
+			for _, mode := range optimizerModes {
+				require.Equal(t, want, secondRun(mode), "%s answers the second run otherwise than the reference leg", mode.name)
+			}
 		})
 	}
 }
 
 // QueryInto on the history handle, after the database's Query ran the text,
-// answers a bound invocation's get-else alike on both optimizer paths.
+// answers a bound invocation's get-else on every leg as on the reference leg.
 func TestRefuteGate_QueryIntoOnTheHistoryHandleAnswersAlikeAfterAQueryRanTheText(t *testing.T) {
 	one := datalog.NewIdentity("refute-gate-into:one")
 	text := `[:find ?e ?v :in $ % :where [?e :t/name _] (ga ?e ?v)]`
@@ -245,9 +264,11 @@ func TestRefuteGate_QueryIntoOnTheHistoryHandleAnswersAlikeAfterAQueryRanTheText
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var answers [2][]string
-			for i, algebra := range []bool{false, true} {
-				d := gateReviewRuleBodyDatabase(t, algebra, one)
+			// values answers the case on a database on the leg: the first run
+			// where the case has one, then QueryInto on the history handle,
+			// each tuple's value, sorted.
+			values := func(mode optimizerMode) []string {
+				d := gateReviewRuleBodyDatabase(t, mode, one)
 				rs, err := parser.ParseRules(rules)
 				require.NoError(t, err)
 				if c.ranFirst {
@@ -257,13 +278,18 @@ func TestRefuteGate_QueryIntoOnTheHistoryHandleAnswersAlikeAfterAQueryRanTheText
 				}
 				var got []answer
 				require.NoError(t, d.History().QueryInto(&got, text, rs))
+				var vs []string
 				for _, a := range got {
 					require.Equal(t, one, a.E)
-					answers[i] = append(answers[i], a.V)
+					vs = append(vs, a.V)
 				}
-				slices.Sort(answers[i])
+				slices.Sort(vs)
+				return vs
 			}
-			require.Equal(t, answers[0], answers[1], "optimizer-off answer first, optimizer-on second")
+			want := values(referenceMode)
+			for _, mode := range optimizerModes {
+				require.Equal(t, want, values(mode), "%s answers otherwise than the reference leg", mode.name)
+			}
 		})
 	}
 }

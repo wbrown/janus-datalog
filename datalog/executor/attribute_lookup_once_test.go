@@ -57,16 +57,17 @@ func (m *lookupCountingMatcher) CanFuseAttributeFetch(source query.Symbol, attr 
 	return m.fuses && m.Database.CanFuseAttributeFetch(source, attr)
 }
 
-// lookupItems is the item fixture: every item has an id and a label, every
-// second item a kind, every third a nick, and every fifth is retired.
+// lookupItems is the item fixture: count items, every one with an id and a
+// label, every second with a kind, every third with a nick, and every fifth
+// retired.
 type lookupItems struct {
 	count                        int
 	id, kind, nick, label, retired datalog.Keyword
 }
 
-func newLookupItems() lookupItems {
+func newLookupItems(count int) lookupItems {
 	return lookupItems{
-		count:   20,
+		count:   count,
 		id:      datalog.NewKeyword(":item/id"),
 		kind:    datalog.NewKeyword(":item/kind"),
 		nick:    datalog.NewKeyword(":item/nick"),
@@ -99,38 +100,49 @@ func (f lookupItems) facts() []datalog.Datom {
 	return facts
 }
 
-// runCountingLookups runs text over the item fixture under every optimizer
-// mode, with the EA cache on and off, through a lookupCountingMatcher, and
-// hands check the matcher, the answer's tuples and the attributes the fused
-// fetch read.
-func runCountingLookups(t *testing.T, f lookupItems, fuses bool, text string, check func(t *testing.T, m *lookupCountingMatcher, tuples [][]interface{}, fused map[datalog.Keyword]bool)) {
+// countedRun is one run of a query on one leg: the leg, the counting matcher
+// the query ran through, the answer's tuples, the attributes the fused fetch
+// read, and whether a fallback window's prefetch was triggered.
+type countedRun struct {
+	mode       OptimizerMode
+	matcher    *lookupCountingMatcher
+	tuples     [][]interface{}
+	fused      map[datalog.Keyword]bool
+	prefetched bool
+}
+
+// runCountingLookups runs text over the item fixture on every leg of the
+// optimizer matrix, under the leg's options, with the EA cache on and off,
+// through a lookupCountingMatcher, and hands check each run.
+func runCountingLookups(t *testing.T, f lookupItems, fuses bool, text string, check func(t *testing.T, run countedRun)) {
 	for _, mode := range OptimizerModes {
 		for _, disableCache := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/cache-off=%v", mode.Name(), disableCache), func(t *testing.T) {
 				d, err := storage.OpenFacts(f.facts(), storage.DatabaseOptions{DisableCache: disableCache})
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, d.Close()) })
-				m := newLookupCountingMatcher(d, fuses)
-				fused := make(map[datalog.Keyword]bool)
+				run := countedRun{mode: mode, matcher: newLookupCountingMatcher(d, fuses), fused: make(map[datalog.Keyword]bool)}
 				opts := mode.PlannerOptions()
-				opts.EnableAttributeFetchFusion = fuses
 				opts.Handler = func(e annotations.Event) {
-					if e.Name == annotations.PatternFusedFetch || e.Name == annotations.PatternFusedConstraint {
-						fused[e.Data["attr"].(datalog.Keyword)] = true
+					switch e.Name {
+					case annotations.PatternFusedFetch, annotations.PatternFusedConstraint:
+						run.fused[e.Data["attr"].(datalog.Keyword)] = true
+					case annotations.PrefetchTrigger:
+						run.prefetched = true
 					}
 				}
-				rel, err := NewExecutorWithOptions(m, nil, opts).Execute(MustParse(t, text))
+				rel, err := NewExecutorWithOptions(run.matcher, nil, opts).Execute(MustParse(t, text))
 				require.NoError(t, err)
-				tuples, err := CollectTuples(rel, nil)
+				run.tuples, err = CollectTuples(rel, nil)
 				require.NoError(t, err)
-				check(t, m, tuples, fused)
+				check(t, run)
 			})
 		}
 	}
 }
 
 func TestADatabaseFunctionReadsEachAttributeThroughOneLookupPerClause(t *testing.T) {
-	f := newLookupItems()
+	f := newLookupItems(20)
 	text := `[:find ?id ?kind ?named ?name
 	          :where [?e :item/id ?id]
 	                 [(get-else $ ?e :item/kind "none") ?kind]
@@ -151,17 +163,17 @@ func TestADatabaseFunctionReadsEachAttributeThroughOneLookupPerClause(t *testing
 		}
 		want = append(want, []interface{}{int64(i), kind, named, name})
 	}
-	runCountingLookups(t, f, false, text, func(t *testing.T, m *lookupCountingMatcher, tuples [][]interface{}, _ map[datalog.Keyword]bool) {
-		require.ElementsMatch(t, want, tuples, "the database functions answer each item's kind, its nick or its label, and every item not retired")
+	runCountingLookups(t, f, false, text, func(t *testing.T, run countedRun) {
+		require.ElementsMatch(t, want, run.tuples, "the database functions answer each item's kind, its nick or its label, and every item not retired")
 		for _, attr := range []datalog.Keyword{f.kind, f.nick, f.label, f.retired} {
-			require.Equal(t, 1, m.attributeLookups[attr], "the clause reading %s makes one lookup of it", attr)
-			require.Zero(t, m.entityLookups[attr], "no entity's %s is looked up one entity at a time", attr)
+			require.Equal(t, 1, run.matcher.attributeLookups[attr], "the clause reading %s makes one lookup of it", attr)
+			require.Zero(t, run.matcher.entityLookups[attr], "no entity's %s is looked up one entity at a time", attr)
 		}
 	})
 }
 
 func TestAFusedFetchReadsEachAttributeThroughOneLookup(t *testing.T) {
-	f := newLookupItems()
+	f := newLookupItems(20)
 	text := `[:find ?id ?kind ?label
 	          :where [?e :item/id ?id]
 	                 [?e :item/kind ?kind]
@@ -170,18 +182,26 @@ func TestAFusedFetchReadsEachAttributeThroughOneLookup(t *testing.T) {
 	for i := 0; i < f.count; i += 2 {
 		want = append(want, []interface{}{int64(i), "widget", fmt.Sprintf("label-%d", i)})
 	}
-	runCountingLookups(t, f, true, text, func(t *testing.T, m *lookupCountingMatcher, tuples [][]interface{}, fused map[datalog.Keyword]bool) {
-		require.ElementsMatch(t, want, tuples, "every item with a kind answers its id, kind and label")
-		require.NotEmpty(t, fused, "the query's same-entity patterns are fetched by the fused fetch")
-		for attr := range fused {
-			require.Equal(t, 1, m.attributeLookups[attr], "the fused fetch of %s makes one lookup of it", attr)
-			require.Zero(t, m.entityLookups[attr], "no entity's %s is looked up one entity at a time", attr)
+	runCountingLookups(t, f, true, text, func(t *testing.T, run countedRun) {
+		require.ElementsMatch(t, want, run.tuples, "every item with a kind answers its id, kind and label")
+		if !run.mode.Fusion() {
+			require.Empty(t, run.fused, "nothing is fused with the option off")
+			return
+		}
+		require.NotEmpty(t, run.fused, "the query's same-entity patterns are fetched by the fused fetch")
+		for attr := range run.fused {
+			require.Equal(t, 1, run.matcher.attributeLookups[attr], "the fused fetch of %s makes one lookup of it", attr)
+			require.Zero(t, run.matcher.entityLookups[attr], "no entity's %s is looked up one entity at a time", attr)
 		}
 	})
 }
 
 func TestAnOrDefaultBranchBuiltFromTheCacheReadsItsAttributeThroughALookup(t *testing.T) {
-	f := newLookupItems()
+	// The fallback's windows double from one tuple, and a window's entities
+	// are prefetched past prefetchEntityThreshold, 50: the seventh window of
+	// 120 items holds 57, so the branch is built from the cache on the
+	// prefetch legs.
+	f := newLookupItems(120)
 	text := `[:find ?id ?kind
 	          :where [?e :item/id ?id]
 	                 (or-default [?e :item/kind ?kind]
@@ -194,9 +214,19 @@ func TestAnOrDefaultBranchBuiltFromTheCacheReadsItsAttributeThroughALookup(t *te
 		}
 		want = append(want, []interface{}{int64(i), kind})
 	}
-	runCountingLookups(t, f, true, text, func(t *testing.T, m *lookupCountingMatcher, tuples [][]interface{}, _ map[datalog.Keyword]bool) {
-		require.ElementsMatch(t, want, tuples, "every item answers its kind, or none")
-		require.Positive(t, m.attributeLookups[f.kind], "the branch over %s is built through a lookup of it", f.kind)
-		require.Zero(t, m.entityLookups[f.kind], "no entity's %s is looked up one entity at a time", f.kind)
+	runCountingLookups(t, f, true, text, func(t *testing.T, run countedRun) {
+		require.ElementsMatch(t, want, run.tuples, "every item answers its kind, or none")
+		require.Zero(t, run.matcher.entityLookups[f.kind], "no entity's %s is looked up one entity at a time", f.kind)
+		switch {
+		case run.mode.Prefetch():
+			require.True(t, run.prefetched, "a window past the prefetch threshold is prefetched")
+			require.Positive(t, run.matcher.attributeLookups[f.kind], "the branch over %s is built from the cache through a lookup of it", f.kind)
+		case run.mode.Fusion():
+			require.False(t, run.prefetched, "nothing is prefetched with the option off")
+			require.Positive(t, run.matcher.attributeLookups[f.kind], "the branch's fetch of %s is fused through a lookup of it", f.kind)
+		default:
+			require.False(t, run.prefetched, "nothing is prefetched with the option off")
+			require.Zero(t, run.matcher.attributeLookups[f.kind], "the branch over %s is matched through the pattern, with no lookup of it", f.kind)
+		}
 	})
 }

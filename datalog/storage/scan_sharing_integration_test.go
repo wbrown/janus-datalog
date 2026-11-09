@@ -38,14 +38,12 @@ func setupScanSharingTestDB(t testing.TB, mode optimizerMode) *Database {
 }
 
 // scanSharingReferenceAnswer is what text answers over the scan-sharing
-// fixture on the reference leg: the engine backend with every option off. A
-// test of the matrix computes it before its legs and compares each leg's
-// answer with it inside that leg, so a leg run alone compares against the
-// reference.
+// fixture on the reference leg. A test of the matrix computes it before its
+// legs and compares each leg's answer with it inside that leg, so a leg run
+// alone compares against the reference.
 func scanSharingReferenceAnswer(t *testing.T, text string) [][]interface{} {
 	t.Helper()
-	reference := optimizerMode{name: "reference", backend: engineBackends()[0]}
-	db := setupScanSharingTestDB(t, reference)
+	db := setupScanSharingTestDB(t, referenceMode)
 	rel, err := db.Query(text)
 	require.NoError(t, err)
 	tuples, err := executor.CollectTuples(rel, nil)

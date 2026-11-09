@@ -66,15 +66,15 @@ func (s scanFaultingIterator) Close() error {
 }
 
 // A pure aggregate over a store whose scan fails at its first entry and whose
-// close fails answers the same error whether streaming aggregation is on or
-// off.
-func TestAPureAggregateAnswersAStoreScansFailuresAlikeUnderEitherAggregationOption(t *testing.T) {
+// close fails answers the scan failure on every leg of the optimizer matrix,
+// and answers the close failure on each leg exactly when the reference leg
+// does.
+func TestAPureAggregateAnswersAStoreScansFailuresAlikeOnEveryLeg(t *testing.T) {
 	score := datalog.NewKeyword(":item/score")
-	answers := map[bool]error{}
-	for _, streaming := range []bool{true, false} {
+	answers := map[string]error{}
+	for _, mode := range optimizerModes {
 		var faulting atomic.Bool
-		options := DefaultPlannerOptions()
-		options.EnableStreamingAggregation = streaming
+		options := mode.plannerOptions()
 		db, err := NewDatabaseWithOptions(DatabaseOptions{
 			Store:          scanFaultingStore{Store: NewBadgerEmulatorStore(nil), faulting: &faulting},
 			PlannerOptions: &options,
@@ -89,10 +89,13 @@ func TestAPureAggregateAnswersAStoreScansFailuresAlikeUnderEitherAggregationOpti
 		_, err = executor.CollectTuples(db.Query(`[:find (count ?v) :where [?e :item/score ?v]]`))
 		faulting.Store(false)
 		require.NoError(t, db.Close())
-		t.Logf("streaming aggregation %v: %v", streaming, err)
-		require.ErrorIs(t, err, errStoreScan, "streaming aggregation %v: the scan failure reaches the caller", streaming)
-		answers[streaming] = err
+		t.Logf("%s: %v", mode.name, err)
+		require.ErrorIs(t, err, errStoreScan, "%s: the scan failure reaches the caller", mode.name)
+		answers[mode.name] = err
 	}
-	require.Equal(t, errors.Is(answers[true], errStoreClose), errors.Is(answers[false], errStoreClose),
-		"the close failure reaches the caller under one option exactly when it does under the other: on %v, off %v", answers[true], answers[false])
+	reference := optimizerModes[0].name
+	for _, mode := range optimizerModes {
+		require.Equal(t, errors.Is(answers[reference], errStoreClose), errors.Is(answers[mode.name], errStoreClose),
+			"the close failure reaches the caller on %s exactly when it does on %s: %v against %v", mode.name, reference, answers[mode.name], answers[reference])
+	}
 }

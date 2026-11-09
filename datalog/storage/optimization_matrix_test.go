@@ -118,84 +118,15 @@ func populateOptimizationMatrix(tb testing.TB, db *Database, numScenarios, tasks
 	}
 }
 
-// TestOptimizationMatrix runs the production-structure query with all
-// combinations of optimizer flags to measure their individual and combined
-// impact. Uses 30 scenarios × 100 tasks (3,000 tasks total).
-func TestOptimizationMatrix(t *testing.T) {
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			testOptimizationMatrix(t, mode)
-		})
-	}
-}
-
-func testOptimizationMatrix(t *testing.T, mode optimizerMode) {
-	const (
-		numScenarios     = 30
-		tasksPerScenario = 100
-	)
-
-	db := createOptimizerModeDB(t, mode, DatabaseOptions{
-		Schema: optimizationMatrixSchema(),
-	})
-
-	populateOptimizationMatrix(t, db, numScenarios, tasksPerScenario)
-	t.Logf("Populated %d scenarios × %d tasks = %d tasks", numScenarios, tasksPerScenario, numScenarios*tasksPerScenario)
-
-	queryStr := optimizationMatrixQuery(0)
-
-	type config struct {
-		name        string
-		algebra     bool
-		scanSharing bool
-		prefetch    bool
-		decorrelate bool // Selinger decorrelation (only when algebra=false)
-	}
-
-	configs := []config{
-		{"baseline (no opts)", false, false, false, false},
-		{"decorrelation only (Selinger)", false, false, false, true},
-		{"algebra only", true, false, false, false},
-		{"algebra + sharing", true, true, false, false},
-		{"algebra + prefetch", true, false, true, false},
-		{"algebra + sharing + prefetch", true, true, true, false},
-		{"all on", true, true, true, true},
-	}
-
-	// Run each config, collecting timing
-	t.Logf("\n%-40s %10s %10s", "Configuration", "Run 1", "Run 2")
-	t.Logf("%-40s %10s %10s", "-------------", "-----", "-----")
-
-	for _, cfg := range configs {
-		var times [2]time.Duration
-		for run := 0; run < 2; run++ {
-			db.ClearPlanCache()
-			opts := DefaultPlannerOptions()
-			opts.EnableAlgebraOptimizer = cfg.algebra
-			opts.EnableScanSharing = cfg.scanSharing
-			opts.EnableEntityPrefetch = cfg.prefetch
-
-			start := time.Now()
-			_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-			require.NoError(t, err, "config %s failed", cfg.name)
-			results, err := executor.CollectTuples(rel, nil)
-			require.NoError(t, err)
-			times[run] = time.Since(start)
-
-			require.Equal(t, numScenarios, len(results), "config %s: wrong result count", cfg.name)
-		}
-		t.Logf("%-40s %10s %10s", cfg.name, times[0].Round(time.Millisecond), times[1].Round(time.Millisecond))
-	}
-}
-
 // TestComplexQueryRetainsScenarioKeyThroughFallbacks pins the algebra
 // path's plan structure: the relation keys asserted below come from the
 // optimizer's or-fallback property derivation (or/properties.derived).
 // The baseline path derives no such keys and compensates with conservative
 // deduplication — correct tuples, no key metadata — so the assertions cannot
-// hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its
-// mode explicitly. Cross-mode result equivalence for the same query body
-// is covered by TestOptimizationMatrix.
+// hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test selects the
+// algebra legs. Every leg's answer to the same query body is compared with
+// the reference leg's by
+// TestSubqueryBodiesScanningOnePatternReadItOnceUnderScanSharing.
 func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
 	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
@@ -482,8 +413,8 @@ func benchmarkComplexQueryCheckpointAccount(b *testing.B, options *planner.Plann
 // and created-at patterns are read through the window and build branches of
 // their own. They need prefetch off: under prefetch the fallback builds a
 // window above the threshold from the EA cache and fuses nothing for it.
-// Cross-mode result equivalence for the same query body is covered by
-// TestOptimizationMatrix.
+// Every leg's answer to the same query body is compared with the reference
+// leg's by TestSubqueryBodiesScanningOnePatternReadItOnceUnderScanSharing.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra && m.fusion && !m.prefetch }) {
 		t.Run(mode.name, func(t *testing.T) {

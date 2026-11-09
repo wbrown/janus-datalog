@@ -11,21 +11,16 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// gateReviewRuleBodyDatabase opens a memory database under the optimizer
-// path given, declaring :t/name and :t/a cardinality-one, holding :t/name
-// "one" and :t/a "old" at one entity in a first transaction and :t/a "new"
-// in a second.
-func gateReviewRuleBodyDatabase(t *testing.T, algebra bool, one datalog.Identity) *Database {
+// gateReviewRuleBodyDatabase opens a database on the leg given, declaring
+// :t/name and :t/a cardinality-one, holding :t/name "one" and :t/a "old" at
+// one entity in a first transaction and :t/a "new" in a second.
+func gateReviewRuleBodyDatabase(t *testing.T, mode optimizerMode, one datalog.Identity) *Database {
 	t.Helper()
-	opts := DefaultPlannerOptions()
-	opts.EnableAlgebraOptimizer = algebra
-	d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", Schema: gateReviewSchema(schema.CardinalityOne, nil), PlannerOptions: &opts})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, d.Close()) })
+	d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: gateReviewSchema(schema.CardinalityOne, nil)})
 	tx := d.NewTransaction()
 	require.NoError(t, tx.Add(one, datalog.NewKeyword(":t/name"), "one"))
 	require.NoError(t, tx.Add(one, datalog.NewKeyword(":t/a"), "old"))
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 	tx = d.NewTransaction()
 	require.NoError(t, tx.Add(one, datalog.NewKeyword(":t/a"), "new"))
@@ -34,12 +29,12 @@ func gateReviewRuleBodyDatabase(t *testing.T, algebra bool, one datalog.Identity
 	return d
 }
 
-// A bound rule invocation whose body holds a get-else answers, on the
-// optimizer-on path, what the optimizer-off path answers, the get-else's
-// lookup, when one database runs its text a second time on a source whose
-// match no longer answers the lookup's one value per entity. Each case runs
-// the text once on the database's latest view, then once on the route named;
-// the control runs the second route alone.
+// A bound rule invocation whose body holds a get-else answers, on every leg,
+// what the reference leg answers, the get-else's lookup, when one database
+// runs its text a second time on a source whose match no longer answers the
+// lookup's one value per entity. Each case runs the text once on the
+// database's latest view, then once on the route named; the control runs the
+// second route alone.
 func TestGateReview_ABoundRuleBodysGetElseAnswersAlikeOnASecondRunOfItsText(t *testing.T) {
 	one := datalog.NewIdentity("gate-review-rule:one")
 	src := datalog.NewSymbol("$src")
@@ -89,20 +84,25 @@ func TestGateReview_ABoundRuleBodysGetElseAnswersAlikeOnASecondRunOfItsText(t *t
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var answers [2][][]interface{}
-			for i, algebra := range []bool{false, true} {
-				d := gateReviewRuleBodyDatabase(t, algebra, one)
+			// secondRun answers the case's second run on a database on the leg,
+			// after the first run where the case has one.
+			secondRun := func(mode optimizerMode) [][]interface{} {
+				d := gateReviewRuleBodyDatabase(t, mode, one)
 				rs, err := parser.ParseRules(c.rules)
 				require.NoError(t, err)
 				if c.first != nil {
 					first, err := gateReviewAnswer(c.first(d, rs))
 					require.NoError(t, err)
-					require.Equal(t, [][]interface{}{{one, "new"}}, first, "the first run, algebra %v", algebra)
+					require.Equal(t, [][]interface{}{{one, "new"}}, first, "the first run, %s", mode.name)
 				}
-				answers[i], err = gateReviewAnswer(c.second(t, d, rs))
+				second, err := gateReviewAnswer(c.second(t, d, rs))
 				require.NoError(t, err)
+				return second
 			}
-			require.Equal(t, answers[0], answers[1], "the optimizer-on path answers the second run otherwise than the optimizer-off path")
+			want := secondRun(referenceMode)
+			for _, mode := range optimizerModes {
+				require.Equal(t, want, secondRun(mode), "%s answers the second run otherwise than the reference leg", mode.name)
+			}
 		})
 	}
 }

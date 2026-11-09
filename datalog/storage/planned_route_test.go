@@ -49,13 +49,11 @@ func windowedForms(t *testing.T, backend Backend, plannerOpts planner.PlannerOpt
 	return tuples, forms
 }
 
-// plannedRouteReference answers queryText with inputs on the reference leg:
-// the engine backend with the algebra optimizer, scan sharing and the cache
-// off.
+// plannedRouteReference answers queryText with inputs on the reference leg
+// with the cache off.
 func plannedRouteReference(t *testing.T, queryText string, inputs ...interface{}) [][]interface{} {
 	t.Helper()
-	reference := optimizerMode{name: "reference", backend: engineBackends()[0]}
-	want, _ := windowedForms(t, reference.backend, reference.plannerOptions(), true, queryText, inputs...)
+	want, _ := windowedForms(t, referenceMode.backend, referenceMode.plannerOptions(), true, queryText, inputs...)
 	return want
 }
 

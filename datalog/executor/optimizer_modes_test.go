@@ -21,33 +21,36 @@ import (
 // The legs are the pairwise covering design datalog/storage's
 // optimizer_modes_test.go states: the strength-2 orthogonal array on three
 // bits (a, b, c), with the algebra optimizer at a, scan sharing at c,
-// prefetch at a⊕c, the symmetric hash join at a⊕b⊕c, streaming joins at b
-// and fusion at b⊕c. A ninth leg, fusion alone, is the profile NewExecutor
-// constructs with (defaultPlannerOptions). This package cannot import storage
-// (import cycle), so it states the design itself. Two base-option profiles
-// are in live use here, each varying only the options from its base:
-// NewExecutor's default profile via plannerOptions(), and the bare
-// planner.PlannerOptions{} zero-value profile via zeroPlannerOptions().
+// prefetch at a⊕c, the symmetric hash join at a⊕b⊕c, streaming joins at b,
+// fusion at b⊕c and streaming aggregation at a⊕b. A ninth leg, fusion with
+// streaming aggregation, is the profile NewExecutor constructs with
+// (defaultPlannerOptions). Each leg names the options it turns on and sets
+// those alone. This package cannot import storage (import cycle), so it
+// states the design itself. Two base-option profiles are in live use here,
+// each varying only the options from its base: NewExecutor's default profile
+// via plannerOptions(), and the bare planner.PlannerOptions{} zero-value
+// profile via zeroPlannerOptions().
 type optimizerMode struct {
-	name      string
-	algebra   bool
-	sharing   bool
-	prefetch  bool
-	symmetric bool
-	streaming bool
-	fusion    bool
+	name        string
+	algebra     bool
+	sharing     bool
+	prefetch    bool
+	symmetric   bool
+	streaming   bool
+	fusion      bool
+	aggregation bool
 }
 
 var optimizerModes = []optimizerMode{
-	{"none", false, false, false, false, false, false},
-	{"sharing+prefetch+symmetric+fusion", false, true, true, true, false, true},
-	{"symmetric+streaming+fusion", false, false, false, true, true, true},
-	{"sharing+prefetch+streaming", false, true, true, false, true, false},
-	{"algebra+prefetch+symmetric", true, false, true, true, false, false},
-	{"algebra+sharing+fusion", true, true, false, false, false, true},
-	{"algebra+prefetch+streaming+fusion", true, false, true, false, true, true},
-	{"algebra+sharing+symmetric+streaming", true, true, false, true, true, false},
-	{"fusion", false, false, false, false, false, true},
+	{name: "none"},
+	{name: "sharing+prefetch+symmetric+fusion", sharing: true, prefetch: true, symmetric: true, fusion: true},
+	{name: "symmetric+streaming+fusion+aggregation", symmetric: true, streaming: true, fusion: true, aggregation: true},
+	{name: "sharing+prefetch+streaming+aggregation", sharing: true, prefetch: true, streaming: true, aggregation: true},
+	{name: "algebra+prefetch+symmetric+aggregation", algebra: true, prefetch: true, symmetric: true, aggregation: true},
+	{name: "algebra+sharing+fusion+aggregation", algebra: true, sharing: true, fusion: true, aggregation: true},
+	{name: "algebra+prefetch+streaming+fusion", algebra: true, prefetch: true, streaming: true, fusion: true},
+	{name: "algebra+sharing+symmetric+streaming", algebra: true, sharing: true, symmetric: true, streaming: true},
+	{name: "fusion+aggregation", fusion: true, aggregation: true},
 }
 
 // optimizerModesWhere is the modes keep admits, in the table's order: the legs
@@ -70,6 +73,7 @@ func (m optimizerMode) apply(opts planner.PlannerOptions) planner.PlannerOptions
 	opts.EnableSymmetricHashJoin = m.symmetric
 	opts.EnableStreamingJoins = m.streaming
 	opts.EnableAttributeFetchFusion = m.fusion
+	opts.EnableStreamingAggregation = m.aggregation
 	return opts
 }
 
@@ -90,13 +94,14 @@ func (m optimizerMode) zeroPlannerOptions() planner.PlannerOptions {
 // as opts is.
 func settingsOf(name string, opts planner.PlannerOptions) optimizerMode {
 	return optimizerMode{
-		name:      name,
-		algebra:   opts.EnableAlgebraOptimizer,
-		sharing:   opts.EnableScanSharing,
-		prefetch:  opts.EnableEntityPrefetch,
-		symmetric: opts.EnableSymmetricHashJoin,
-		streaming: opts.EnableStreamingJoins,
-		fusion:    opts.EnableAttributeFetchFusion,
+		name:        name,
+		algebra:     opts.EnableAlgebraOptimizer,
+		sharing:     opts.EnableScanSharing,
+		prefetch:    opts.EnableEntityPrefetch,
+		symmetric:   opts.EnableSymmetricHashJoin,
+		streaming:   opts.EnableStreamingJoins,
+		fusion:      opts.EnableAttributeFetchFusion,
+		aggregation: opts.EnableStreamingAggregation,
 	}
 }
 
@@ -148,10 +153,11 @@ func legOptions(mode optimizerMode) []legOption {
 		{"symmetric", mode.symmetric},
 		{"streaming", mode.streaming},
 		{"fusion", mode.fusion},
+		{"aggregation", mode.aggregation},
 	}
 }
 
-// The modes are a pairwise covering design: every pair of the six options
+// The modes are a pairwise covering design: every pair of the seven options
 // takes all four settings on some mode.
 func TestTheOptimizerModesCoverEveryPairOfOptions(t *testing.T) {
 	options := legOptions(optimizerMode{})

@@ -10,11 +10,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// prefetchEntityThreshold is the entity count a relation must exceed before
-// its entities are prefetched into the EA cache under EnableEntityPrefetch:
-// the one threshold every trigger reads, the executor's after the first data
-// pattern and a fallback's per window (Rule 6 in docs/ALGEBRA.md,
-// docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.10).
+// prefetchEntityThreshold is the entity count a fallback's window must exceed
+// before its entities are prefetched into the EA cache under
+// EnableEntityPrefetch, read by the fallback's window step, the one trigger
+// (Rule 6 in docs/ALGEBRA.md, docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
+// §4.10).
 const prefetchEntityThreshold = 50
 
 // QueryExecutor executes a single Datalog query with input relations

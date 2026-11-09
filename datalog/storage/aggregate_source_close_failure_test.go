@@ -34,10 +34,10 @@ func (failingStreamSource) Match(q *query.Query, _ executor.Relations) (executor
 }
 
 // An aggregate over a source passed through WithSources, whose scan fails
-// before its first tuple and whose close fails, answers both failures: a pure
-// aggregate and a grouped one, with streaming aggregation on and off, over a
-// database and over a source answering a stream.
-func TestAnAggregateOverASourceAnswersItsScanFailureAndCloseFailureUnderEitherAggregationOption(t *testing.T) {
+// before its first tuple and whose close fails, answers both failures on
+// every leg of the optimizer matrix: a pure aggregate and a grouped one, over
+// a database and over a source answering a stream.
+func TestAnAggregateOverASourceAnswersItsScanFailureAndCloseFailureOnEveryLeg(t *testing.T) {
 	score := datalog.NewKeyword(":item/score")
 	queries := []struct {
 		name string
@@ -73,17 +73,13 @@ func TestAnAggregateOverASourceAnswersItsScanFailureAndCloseFailureUnderEitherAg
 	}
 	for _, s := range sources {
 		for _, q := range queries {
-			for _, streaming := range []bool{true, false} {
-				t.Run(fmt.Sprintf("%s/%s/streaming aggregation %v", s.name, q.name, streaming), func(t *testing.T) {
+			for _, mode := range optimizerModes {
+				t.Run(fmt.Sprintf("%s/%s/%s", s.name, q.name, mode.name), func(t *testing.T) {
 					source, fail := s.open(t)
-					options := DefaultPlannerOptions()
-					options.EnableStreamingAggregation = streaming
-					db, err := NewDatabaseWithOptions(DatabaseOptions{Store: NewBadgerEmulatorStore(nil), PlannerOptions: &options})
-					require.NoError(t, err)
-					defer func() { require.NoError(t, db.Close()) }()
+					db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 					fail()
-					_, err = executor.CollectTuples(db.Query(q.text, WithSources(map[query.Symbol]executor.PatternMatcher{
+					_, err := executor.CollectTuples(db.Query(q.text, WithSources(map[query.Symbol]executor.PatternMatcher{
 						datalog.NewSymbol("$src"): source,
 					})))
 					require.ErrorIs(t, err, errStoreScan, "the source's scan failure reaches the caller")

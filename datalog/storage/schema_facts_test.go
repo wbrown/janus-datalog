@@ -117,19 +117,15 @@ func requireDefinitionFacts(t *testing.T, d *Database, def *schema.AttributeDefi
 	}
 }
 
-// reopenLegs is the reopen cases crossed with both optimizer paths, fresh cases
+// reopenLegs is the reopen cases crossed with every option leg, fresh cases
 // per leg so no store is shared across legs.
 func reopenLegs(t *testing.T, run func(t *testing.T, open func(DatabaseOptions) *Database)) {
 	t.Helper()
-	for _, algebra := range []struct {
-		name string
-		on   bool
-	}{{"algebra_on", true}, {"algebra_off", false}} {
+	for _, leg := range optionLegs {
 		for _, rc := range reopenBackendCases() {
-			t.Run(rc.name+"/"+algebra.name, func(t *testing.T) {
+			t.Run(rc.name+"/"+leg.name, func(t *testing.T) {
 				open := func(opts DatabaseOptions) *Database {
-					popts := DefaultPlannerOptions()
-					popts.EnableAlgebraOptimizer = algebra.on
+					popts := leg.plannerOptions()
 					opts.PlannerOptions = &popts
 					return rc.open(t, opts)
 				}
@@ -682,11 +678,8 @@ func TestSchemaFacts_ChangedCardinalityHoldsAgainstAMatcherMintedBefore(t *testi
 // A pull in flight across SetSchema leaves the next pull reading under the
 // installed schema.
 func TestSchemaFacts_ChangedCardinalityHoldsAgainstAPullInFlight(t *testing.T) {
-	for _, algebra := range []struct {
-		name string
-		on   bool
-	}{{"algebra_on", true}, {"algebra_off", false}} {
-		t.Run(algebra.name, func(t *testing.T) {
+	for _, leg := range optionLegs {
+		t.Run(leg.name, func(t *testing.T) {
 			asSet, err := schema.NewBuilder().
 				Attribute(":t/tags").Type(schema.TypeString).Many().Add().
 				Build()
@@ -696,8 +689,7 @@ func TestSchemaFacts_ChangedCardinalityHoldsAgainstAPullInFlight(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			opts := DefaultPlannerOptions()
-			opts.EnableAlgebraOptimizer = algebra.on
+			opts := leg.plannerOptions()
 			store := &scanSignalStore{Store: NewBadgerEmulatorStore(&BinaryKeyEncoder{})}
 			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, Schema: asSet, PlannerOptions: &opts})
 			require.NoError(t, err)
@@ -746,13 +738,9 @@ func TestSchemaFacts_OverlappingSetSchemaCallsAgree(t *testing.T) {
 	require.NoError(t, err)
 	widened, err := schema.NewBuilder().Attribute(":t/n").Type(schema.TypeLong).Many().Doc("one").Add().Build()
 	require.NoError(t, err)
-	for _, algebra := range []struct {
-		name string
-		on   bool
-	}{{"algebra_on", true}, {"algebra_off", false}} {
-		t.Run(algebra.name, func(t *testing.T) {
-			opts := DefaultPlannerOptions()
-			opts.EnableAlgebraOptimizer = algebra.on
+	for _, leg := range optionLegs {
+		t.Run(leg.name, func(t *testing.T) {
+			opts := leg.plannerOptions()
 			store := &scanSignalStore{Store: NewBadgerEmulatorStore(&BinaryKeyEncoder{})}
 			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, Schema: base, PlannerOptions: &opts})
 			require.NoError(t, err)

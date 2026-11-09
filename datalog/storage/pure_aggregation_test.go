@@ -11,8 +11,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
-// TestStorageBackedPureAggregation tests that pure aggregations work against a
-// real store, on every backend the mode matrix has.
+// TestStorageBackedPureAggregation pins that pure aggregations over a real
+// store answer alike on every leg, and that the max and min aggregations run
+// on the leg's path: streaming on the legs with streaming aggregation, over
+// 500 tuples against a threshold of 100, and batch on the others.
 func TestStorageBackedPureAggregation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -26,8 +28,9 @@ func TestStorageBackedPureAggregation(t *testing.T) {
 			// Add symbol data
 			tx.Add(symbol, datalog.NewKeyword(":symbol/ticker"), "CRWV")
 
-			// Insert 500 price bars to trigger streaming aggregation (threshold is 100)
-			// Values range from 100.0 to 599.0, so max should be 599.0, min should be 100.0
+			// Insert 500 price bars, above the streaming aggregation threshold of
+			// 100. Values range from 100.0 to 599.0, so max should be 599.0, min
+			// should be 100.0
 			for i := 0; i < 500; i++ {
 				barID := datalog.NewIdentity(fmt.Sprintf("bar:%d", i))
 				tx.Add(barID, datalog.NewKeyword(":price/symbol"), symbol)
@@ -46,6 +49,12 @@ func TestStorageBackedPureAggregation(t *testing.T) {
 func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizerMode) {
 	opts := mode.plannerOptions()
 	exec := executor.NewExecutorWithOptions(db.Matcher(), db, opts)
+	// path is the aggregation path the leg runs over 500 tuples: streaming with
+	// streaming aggregation on, batch with it off.
+	path := "batch"
+	if mode.aggregation {
+		path = "streaming"
+	}
 
 	// Test 1: Non-aggregated query (should work)
 	t.Run("NonAggregated", func(t *testing.T) {
@@ -98,12 +107,10 @@ func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizer
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
 
-		// CRITICAL: Verify streaming aggregation was actually used
-		// If threshold changes and this test stops using streaming, it will fail here
-		if aggregationMode != "streaming" {
-			t.Fatalf("TEST CONFIGURATION ERROR: This test must use streaming aggregation to reproduce the bug, but used '%s'. "+
-				"Either increase test data size (currently 500 tuples) or decrease StreamingAggregationThreshold (currently 100).",
-				aggregationMode)
+		// The aggregation ran on the leg's path: a threshold change that moved an
+		// aggregation leg to the batch path fails here.
+		if aggregationMode != path {
+			t.Fatalf("the aggregation ran as %q on %s, whose path is %q", aggregationMode, mode.name, path)
 		}
 
 		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 tuple")
@@ -143,11 +150,9 @@ func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizer
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
 
-		// CRITICAL: Verify streaming aggregation was actually used
-		if aggregationMode != "streaming" {
-			t.Fatalf("TEST CONFIGURATION ERROR: This test must use streaming aggregation to reproduce the bug, but used '%s'. "+
-				"Either increase test data size (currently 500 tuples) or decrease StreamingAggregationThreshold (currently 100).",
-				aggregationMode)
+		// The aggregation ran on the leg's path.
+		if aggregationMode != path {
+			t.Fatalf("the aggregation ran as %q on %s, whose path is %q", aggregationMode, mode.name, path)
 		}
 
 		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 tuple")

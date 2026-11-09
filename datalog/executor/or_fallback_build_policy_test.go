@@ -10,8 +10,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/db"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
-	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 // A fallback's build of a branch of data patterns alone reports its narrowing
@@ -104,8 +104,9 @@ func TestAFallbackReportsTheNarrowingOfItsPatternBranchToEachWindowsKeys(t *test
 }
 
 // A fallback's branch whose value position reads an input the subject lacks
-// is narrowed to the input's value, and its build from the EA cache answers
-// what its plan answers over the same window.
+// is narrowed to the input's value, and every leg's build of each window
+// answers what the reference leg's build from the branch's plan answers; on
+// the prefetch legs the build is from the EA cache.
 func TestAFallbackBranchReadingAnInputIsBuiltFromTheCacheAsByItsPlan(t *testing.T) {
 	// Every fourth entity's :t/a is the input's value, 1, and every other's is
 	// 2.
@@ -120,80 +121,80 @@ func TestAFallbackBranchReadingAnInputIsBuiltFromTheCacheAsByItsPlan(t *testing.
 	// window is one window of the subject: its distinct keys and the size of
 	// the branch's build over it.
 	type window struct{ keys, built int }
-	for _, algebra := range []bool{true, false} {
-		t.Run(fmt.Sprintf("algebra=%v", algebra), func(t *testing.T) {
-			// runQuery runs the query with entity prefetch as given and answers
-			// its windows, the fallback's prefetches and the lookups of :t/a.
-			runQuery := func(prefetch bool) ([]window, int, int) {
-				var mu sync.Mutex
-				var windows []window
-				var triggers, lookups int
-				opts := storage.DefaultPlannerOptions()
-				opts.EnableAlgebraOptimizer = algebra
-				opts.EnableEntityPrefetch = prefetch
-				opts.EnableAttributeFetchFusion = false
-				opts.ScopeWindowCap = 128
-				d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(func(e annotations.Event) {
-					mu.Lock()
-					defer mu.Unlock()
-					switch e.Name {
-					case annotations.ScopeWindow:
-						if e.Data[annotations.KeyForm] == "or-default-join" {
-							windows = append(windows, window{keys: e.Data["distinct_keys"].(int)})
-						}
-					case annotations.ScopeBranchBuild:
-						if e.Data[annotations.KeyForm] == "or-default-join" && e.Data["branch"] == 0 {
-							windows[len(windows)-1].built = e.Data["branch_size"].(int)
-						}
-					case annotations.PrefetchTrigger:
-						if e.Data[annotations.KeyForm] == "or-default-join" {
-							triggers++
-						}
-					case annotations.StorageResolveComplete:
-						_, served := e.Data[annotations.KeyValuesServed]
-						_, ofPattern := e.Data[annotations.KeyPattern]
-						if served && !ofPattern && e.Data[annotations.KeyAttribute] == ta {
-							lookups++
-						}
-					}
-				}))
-				require.NoError(t, err)
-				defer func() { require.NoError(t, d.Close()) }()
-				tx := d.NewTransaction()
-				var want [][]interface{}
-				for i := 1; i <= subjectSize; i++ {
-					e := datalog.NewIdentity(fmt.Sprintf("fallback-input:e%d", i))
-					value := int64(2)
-					if i%4 == 0 {
-						value = 1
-					}
-					require.NoError(t, tx.Add(e, tn, int64(i)))
-					require.NoError(t, tx.Add(e, ta, value))
-					want = append(want, []interface{}{e})
+	// runQuery runs the query under opts and answers its windows, the
+	// fallback's prefetches and the lookups of :t/a.
+	runQuery := func(t *testing.T, opts planner.PlannerOptions) ([]window, int, int) {
+		var mu sync.Mutex
+		var windows []window
+		var triggers, lookups int
+		opts.ScopeWindowCap = 128
+		d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(func(e annotations.Event) {
+			mu.Lock()
+			defer mu.Unlock()
+			switch e.Name {
+			case annotations.ScopeWindow:
+				if e.Data[annotations.KeyForm] == "or-default-join" {
+					windows = append(windows, window{keys: e.Data["distinct_keys"].(int)})
 				}
-				_, err = tx.Commit()
-				require.NoError(t, err)
-				got, err := executor.CollectTuples(d.Query(text, int64(1)))
-				require.NoError(t, err)
-				require.ElementsMatch(t, want, got, "the fallback answers every subject tuple")
-				mu.Lock()
-				defer mu.Unlock()
-				return windows, triggers, lookups
+			case annotations.ScopeBranchBuild:
+				if e.Data[annotations.KeyForm] == "or-default-join" && e.Data["branch"] == 0 {
+					windows[len(windows)-1].built = e.Data["branch_size"].(int)
+				}
+			case annotations.PrefetchTrigger:
+				if e.Data[annotations.KeyForm] == "or-default-join" {
+					triggers++
+				}
+			case annotations.StorageResolveComplete:
+				_, served := e.Data[annotations.KeyValuesServed]
+				_, ofPattern := e.Data[annotations.KeyPattern]
+				if served && !ofPattern && e.Data[annotations.KeyAttribute] == ta {
+					lookups++
+				}
 			}
-
-			fromPlan, triggers, lookups := runQuery(false)
-			require.Zero(t, triggers, "nothing is prefetched with the option off")
-			require.Zero(t, lookups, "every window's branch is built from its plan")
-			narrowed := false
-			for _, w := range fromPlan {
-				narrowed = narrowed || w.built < w.keys
+		}))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, d.Close()) }()
+		tx := d.NewTransaction()
+		var want [][]interface{}
+		for i := 1; i <= subjectSize; i++ {
+			e := datalog.NewIdentity(fmt.Sprintf("fallback-input:e%d", i))
+			value := int64(2)
+			if i%4 == 0 {
+				value = 1
 			}
-			require.True(t, narrowed, "a window's build holds fewer tuples than its keys, so the input narrows the branch")
+			require.NoError(t, tx.Add(e, tn, int64(i)))
+			require.NoError(t, tx.Add(e, ta, value))
+			want = append(want, []interface{}{e})
+		}
+		_, err = tx.Commit()
+		require.NoError(t, err)
+		got, err := executor.CollectTuples(d.Query(text, int64(1)))
+		require.NoError(t, err)
+		require.ElementsMatch(t, want, got, "the fallback answers every subject tuple")
+		mu.Lock()
+		defer mu.Unlock()
+		return windows, triggers, lookups
+	}
 
-			fromCache, triggers, lookups := runQuery(true)
+	fromPlan, triggers, lookups := runQuery(t, executor.OptimizerModes[0].PlannerOptions())
+	require.Zero(t, triggers, "nothing is prefetched on the reference leg")
+	require.Zero(t, lookups, "every window's branch is built from its plan on the reference leg")
+	narrowed := false
+	for _, w := range fromPlan {
+		narrowed = narrowed || w.built < w.keys
+	}
+	require.True(t, narrowed, "a window's build holds fewer tuples than its keys, so the input narrows the branch")
+
+	for _, mode := range executor.OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			windows, triggers, lookups := runQuery(t, mode.PlannerOptions())
+			require.Equal(t, fromPlan, windows, "the leg's build of each window answers what the reference leg's does")
+			if !mode.Prefetch() {
+				require.Zero(t, triggers, "nothing is prefetched with the option off")
+				return
+			}
 			require.Positive(t, triggers, "a window above the threshold is prefetched")
 			require.Positive(t, lookups, "a window's branch is built from the cache")
-			require.Equal(t, fromPlan, fromCache, "the cache's build of each window answers what the plan's does")
 		})
 	}
 }

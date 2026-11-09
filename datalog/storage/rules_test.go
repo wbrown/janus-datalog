@@ -752,10 +752,9 @@ func TestRules_AnalyzeEvaluatesUnderOneSnapshot(t *testing.T) {
 	spec := chain(5)
 	spec.nodes = append(spec.nodes, "n0")
 	withHead := append(chainClosure(5), "n0>n1", "n0>n2", "n0>n3", "n0>n4", "n0>n5")
-	for _, algebra := range []bool{false, true} {
-		t.Run(fmt.Sprintf("algebra_%v", algebra), func(t *testing.T) {
-			opts := DefaultPlannerOptions()
-			opts.EnableAlgebraOptimizer = algebra
+	for _, leg := range optionLegs {
+		t.Run(leg.name, func(t *testing.T) {
+			opts := leg.plannerOptions()
 			store := &scanSignalStore{Store: NewBadgerEmulatorStore(&BinaryKeyEncoder{})}
 			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, PlannerOptions: &opts})
 			require.NoError(t, err)

@@ -19,11 +19,12 @@ import (
 // fails with an option off must fail with it on, and vice versa. The legs are
 // observationally equivalent for every query the engine accepts.
 //
-// The legs are a pairwise covering design over six options: the algebra
+// The legs are a pairwise covering design over seven options: the algebra
 // optimizer, scan sharing, entity prefetch, the symmetric hash join,
-// streaming joins and attribute-fetch fusion (optionLegs). Every pair of
-// options takes all four settings on some leg. One leg is the reference,
-// every option off, and one is DefaultPlannerOptions' profile.
+// streaming joins, attribute-fetch fusion and streaming aggregation
+// (optionLegs). Every pair of options takes all four settings on some leg.
+// One leg is the reference, every option off, and one is
+// DefaultPlannerOptions' profile.
 //
 // A test that passes on only some legs has found either a real divergence
 // (a bug — ledger it) or a mechanism of one option it means to pin. A test
@@ -45,44 +46,42 @@ import (
 // =============================================================================
 
 // optimizerMode is one leg of the matrix: a storage backend crossed with a
-// setting of every planner option a test can turn on.
+// setting of every planner option a test can turn on, named backend/leg. The
+// leg's fields and its plannerOptions are the mode's by promotion.
 type optimizerMode struct {
-	name      string
-	algebra   bool
-	sharing   bool
-	prefetch  bool
-	symmetric bool
-	streaming bool
-	fusion    bool
-	backend   Backend
+	name string
+	optionLeg
+	backend Backend
 }
 
-// optionLeg is one setting of the six options, named by the options on, in
+// optionLeg is one setting of the seven options, named by the options on, in
 // the order the fields are declared, joined with "+"; "none" when every
 // option is off.
 type optionLeg struct {
-	name      string
-	algebra   bool
-	sharing   bool
-	prefetch  bool
-	symmetric bool
-	streaming bool
-	fusion    bool
+	name        string
+	algebra     bool
+	sharing     bool
+	prefetch    bool
+	symmetric   bool
+	streaming   bool
+	fusion      bool
+	aggregation bool
 }
 
 // optionLegs is the pairwise covering design: the strength-2 orthogonal array
 // on three bits (a, b, c), with the algebra optimizer at a, scan sharing at
 // c, prefetch at a⊕c, the symmetric hash join at a⊕b⊕c, streaming joins at
-// b and fusion at b⊕c.
+// b, fusion at b⊕c and streaming aggregation at a⊕b. Each leg names the
+// options it turns on and sets those alone.
 var optionLegs = []optionLeg{
-	{"none", false, false, false, false, false, false},
-	{"sharing+prefetch+symmetric+fusion", false, true, true, true, false, true},
-	{"symmetric+streaming+fusion", false, false, false, true, true, true},
-	{"sharing+prefetch+streaming", false, true, true, false, true, false},
-	{"algebra+prefetch+symmetric", true, false, true, true, false, false},
-	{"algebra+sharing+fusion", true, true, false, false, false, true},
-	{"algebra+prefetch+streaming+fusion", true, false, true, false, true, true},
-	{"algebra+sharing+symmetric+streaming", true, true, false, true, true, false},
+	{name: "none"},
+	{name: "sharing+prefetch+symmetric+fusion", sharing: true, prefetch: true, symmetric: true, fusion: true},
+	{name: "symmetric+streaming+fusion+aggregation", symmetric: true, streaming: true, fusion: true, aggregation: true},
+	{name: "sharing+prefetch+streaming+aggregation", sharing: true, prefetch: true, streaming: true, aggregation: true},
+	{name: "algebra+prefetch+symmetric+aggregation", algebra: true, prefetch: true, symmetric: true, aggregation: true},
+	{name: "algebra+sharing+fusion+aggregation", algebra: true, sharing: true, fusion: true, aggregation: true},
+	{name: "algebra+prefetch+streaming+fusion", algebra: true, prefetch: true, streaming: true, fusion: true},
+	{name: "algebra+sharing+symmetric+streaming", algebra: true, sharing: true, symmetric: true, streaming: true},
 }
 
 // optimizerModes is the engine axis: the tree store crossed with the two
@@ -94,6 +93,12 @@ var optimizerModes = buildOptimizerModes(engineBackends())
 // snapshots, truncation, forks, read sessions, scan intake, index order, the
 // key layout or the blob tier.
 var backendModes = buildOptimizerModes(AvailableBackends())
+
+// referenceMode is the reference leg: the engine backend with every option
+// off. A test comparing the legs' answers computes the reference's once and
+// compares each leg's with it inside that leg, so a leg run alone compares
+// against the reference.
+var referenceMode = optimizerMode{name: "reference", backend: engineBackends()[0]}
 
 // engineBackends is the backend the engine axis runs on: the tree store,
 // which every build has.
@@ -109,16 +114,7 @@ func buildOptimizerModes(backends []Backend) []optimizerMode {
 	modes := make([]optimizerMode, 0, len(backends)*len(optionLegs))
 	for _, backend := range backends {
 		for _, leg := range optionLegs {
-			modes = append(modes, optimizerMode{
-				name:      backend.Name + "/" + leg.name,
-				algebra:   leg.algebra,
-				sharing:   leg.sharing,
-				prefetch:  leg.prefetch,
-				symmetric: leg.symmetric,
-				streaming: leg.streaming,
-				fusion:    leg.fusion,
-				backend:   backend,
-			})
+			modes = append(modes, optimizerMode{name: backend.Name + "/" + leg.name, optionLeg: leg, backend: backend})
 		}
 	}
 	return modes
@@ -163,16 +159,18 @@ func byteKeyBackends(t *testing.T) []optimizerMode {
 	return modes
 }
 
-// plannerOptions returns the default planner options with this mode's
-// setting of every option applied.
-func (m optimizerMode) plannerOptions() planner.PlannerOptions {
+// plannerOptions returns the default planner options with this leg's setting
+// of every option applied. A test that fixes its own store and so has no
+// backend to cross with calls it on the legs of optionLegs.
+func (leg optionLeg) plannerOptions() planner.PlannerOptions {
 	opts := DefaultPlannerOptions()
-	opts.EnableAlgebraOptimizer = m.algebra
-	opts.EnableScanSharing = m.sharing
-	opts.EnableEntityPrefetch = m.prefetch
-	opts.EnableSymmetricHashJoin = m.symmetric
-	opts.EnableStreamingJoins = m.streaming
-	opts.EnableAttributeFetchFusion = m.fusion
+	opts.EnableAlgebraOptimizer = leg.algebra
+	opts.EnableScanSharing = leg.sharing
+	opts.EnableEntityPrefetch = leg.prefetch
+	opts.EnableSymmetricHashJoin = leg.symmetric
+	opts.EnableStreamingJoins = leg.streaming
+	opts.EnableAttributeFetchFusion = leg.fusion
+	opts.EnableStreamingAggregation = leg.aggregation
 	return opts
 }
 
@@ -243,10 +241,11 @@ func legOptions(leg optionLeg) []legOption {
 		{"symmetric", leg.symmetric},
 		{"streaming", leg.streaming},
 		{"fusion", leg.fusion},
+		{"aggregation", leg.aggregation},
 	}
 }
 
-// The option legs are a pairwise covering design: every pair of the six
+// The option legs are a pairwise covering design: every pair of the seven
 // options takes all four settings on some leg.
 func TestTheOptionLegsCoverEveryPairOfOptions(t *testing.T) {
 	options := legOptions(optionLeg{})
@@ -289,12 +288,13 @@ func TestTheOptionLegsCarryTheReferenceAndTheDefaultProfile(t *testing.T) {
 
 	defaults := DefaultPlannerOptions()
 	profile := optionLeg{
-		algebra:   defaults.EnableAlgebraOptimizer,
-		sharing:   defaults.EnableScanSharing,
-		prefetch:  defaults.EnableEntityPrefetch,
-		symmetric: defaults.EnableSymmetricHashJoin,
-		streaming: defaults.EnableStreamingJoins,
-		fusion:    defaults.EnableAttributeFetchFusion,
+		algebra:     defaults.EnableAlgebraOptimizer,
+		sharing:     defaults.EnableScanSharing,
+		prefetch:    defaults.EnableEntityPrefetch,
+		symmetric:   defaults.EnableSymmetricHashJoin,
+		streaming:   defaults.EnableStreamingJoins,
+		fusion:      defaults.EnableAttributeFetchFusion,
+		aggregation: defaults.EnableStreamingAggregation,
 	}
 	carried := false
 	for _, leg := range optionLegs {
@@ -304,4 +304,30 @@ func TestTheOptionLegsCarryTheReferenceAndTheDefaultProfile(t *testing.T) {
 		}
 	}
 	require.True(t, carried, "a leg is DefaultPlannerOptions' profile: %+v", profile)
+}
+
+// A mode's planner options carry the mode's setting of every option, and
+// differ from DefaultPlannerOptions in nothing else.
+func TestAModesPlannerOptionsCarryItsSettings(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			require.Equal(t, mode.algebra, opts.EnableAlgebraOptimizer, "the algebra optimizer")
+			require.Equal(t, mode.sharing, opts.EnableScanSharing, "scan sharing")
+			require.Equal(t, mode.prefetch, opts.EnableEntityPrefetch, "entity prefetch")
+			require.Equal(t, mode.symmetric, opts.EnableSymmetricHashJoin, "the symmetric hash join")
+			require.Equal(t, mode.streaming, opts.EnableStreamingJoins, "streaming joins")
+			require.Equal(t, mode.fusion, opts.EnableAttributeFetchFusion, "attribute-fetch fusion")
+			require.Equal(t, mode.aggregation, opts.EnableStreamingAggregation, "streaming aggregation")
+			rest := DefaultPlannerOptions()
+			rest.EnableAlgebraOptimizer = mode.algebra
+			rest.EnableScanSharing = mode.sharing
+			rest.EnableEntityPrefetch = mode.prefetch
+			rest.EnableSymmetricHashJoin = mode.symmetric
+			rest.EnableStreamingJoins = mode.streaming
+			rest.EnableAttributeFetchFusion = mode.fusion
+			rest.EnableStreamingAggregation = mode.aggregation
+			require.Equal(t, rest, opts, "the options differ from the defaults in the seven options alone")
+		})
+	}
 }
