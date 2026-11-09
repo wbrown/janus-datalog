@@ -228,7 +228,7 @@ Only the hash join build side materializes. Everything else streams. The 4x spee
 
 **Symmetric hash join** (optional, `EnableSymmetricHashJoin`) extends this to stream-to-stream joins: both sides materialize incrementally into hash tables, processing in interleaved batches. Neither side needs to be fully consumed before results start flowing. Trade-off: slightly slower than standard hash join (~37% overhead) but enables full pipeline streaming when both inputs are themselves streaming.
 
-**Forced materialization** happens only when semantically required: aggregation (must see all groups), order-by (must sort), and `Size()` calls on streaming relations (though `EnableTrueStreaming=true` returns -1 instead of forcing consumption).
+**Forced materialization** happens only when semantically required: aggregation (must see all groups) and order-by (must sort). A `Size()` call on a streaming relation answers -1 rather than consuming it.
 
 ### Phase Execution Detail
 

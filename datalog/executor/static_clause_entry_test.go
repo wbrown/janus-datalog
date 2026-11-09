@@ -76,7 +76,7 @@ func TestExecutorEntryRejectsStaticallyInvalidClauses(t *testing.T) {
 				Find:  []query.FindElement{query.FindVariable{Symbol: v}},
 				Where: []query.Clause{pattern, tc.clause},
 			}
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(t) {
 				t.Run(mode.name, func(t *testing.T) {
 					exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 					_, err := exec.Execute(q)

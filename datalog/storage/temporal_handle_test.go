@@ -47,7 +47,7 @@ func setupTemporalTestDB(t *testing.T, mode optimizerMode) (*Database, datalog.E
 // descriptive panic (not the opaque nil-map crash from before the fix).
 // Temporal handles are read-only views; writes are not meaningful.
 func TestTemporalHandle_NewTransaction_PanicsWithClearMessage(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, txID := setupTemporalTestDB(t, mode)
 
@@ -72,7 +72,7 @@ func TestTemporalHandle_NewTransaction_PanicsWithClearMessage(t *testing.T) {
 // temporal handle does not close the shared underlying store. The parent
 // must remain usable after the child is closed.
 func TestTemporalHandle_Close_DoesNotCloseParent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, txID := setupTemporalTestDB(t, mode)
 
@@ -108,7 +108,7 @@ func TestTemporalHandle_NewExecutorWithOptions_UsesTemporalMode(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
@@ -165,7 +165,7 @@ func TestNewExecutorWithOptions_HasSchemaAndCache(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 

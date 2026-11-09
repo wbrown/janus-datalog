@@ -37,7 +37,7 @@ func TestAnExecutorRoutesAnswerCarriesThePatternsEntityVariable(t *testing.T) {
 			func(e annotations.Event) bool { return e.Name == annotations.PatternFusedFetch },
 			func(m optimizerMode) bool { return m.fusion }},
 	} {
-		for _, mode := range legsWhere(optimizerModes, tc.legs) {
+		for _, mode := range legsWhere(legsFor(optimizerModes, fusionOption), tc.legs) {
 			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
 				var events []annotations.Event
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{

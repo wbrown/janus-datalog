@@ -20,7 +20,7 @@ func TestASharedScanReportsItsCompletionWhenTheQueryEnds(t *testing.T) {
 	kind := datalog.NewKeyword(":item/kind")
 	const queryText = `[:find ?e :where [?e :item/kind _] [?z :item/kind _]]`
 
-	for _, mode := range legsWhere(backendModes, func(m optimizerMode) bool { return m.sharing }) {
+	for _, mode := range legsWhere(legsFor(backendModes, sharingOption), func(m optimizerMode) bool { return m.sharing }) {
 		for _, cache := range cacheTestModes {
 			t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 				var kindScans atomic.Int64
@@ -72,7 +72,7 @@ func TestASharedScanReportsItsCompletionWhenTheQueryFailsAtTheCall(t *testing.T)
 	kind, m, n := datalog.NewKeyword(":item/kind"), datalog.NewKeyword(":item/m"), datalog.NewKeyword(":item/n")
 	const queryText = `[:find ?x ?n :where [?e :item/kind "widget"] [?z :item/kind "widget"] [?x :item/m "widget"] [?x :item/n ?n]]`
 
-	for _, mode := range legsWhere(backendModes, func(m optimizerMode) bool { return m.sharing && m.fusion }) {
+	for _, mode := range legsWhere(legsFor(backendModes, sharingOption, fusionOption), func(m optimizerMode) bool { return m.sharing && m.fusion }) {
 		for _, cache := range cacheTestModes {
 			t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 				var kindScans atomic.Int64

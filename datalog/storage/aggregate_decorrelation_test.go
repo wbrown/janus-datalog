@@ -45,7 +45,7 @@ func TestAnAggregatingSubqueryReadsTheSourcesItsCallPasses(t *testing.T) {
 			`[:find ?e :in $ $other :where [?e :p/n _] (not-join [?e] [(q [:find (sum ?v) :in $ ?x :where [?x :p/n ?v]] $other ?e) [[?s]]] [(< ?s 5)])]`,
 			[][]interface{}{{p1}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			home := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			away := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -109,7 +109,7 @@ func TestAnAggregatingSubqueryAnswersUnderEveryShapeOfItsIn(t *testing.T) {
 			`[:find ?e ?s :where [?e :p/n ?a] [(q [:find (sum ?v) :in $ ?n ?n :where [?x :p/n ?n] [?x :p/w ?v]] $ ?a ?a) [[?s]]]]`,
 			byN},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, facts)

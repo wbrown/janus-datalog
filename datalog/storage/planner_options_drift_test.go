@@ -17,14 +17,13 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 
 	// Default-active: documented as on by default.
 	require.True(t, opts.EnableAlgebraOptimizer, "EnableAlgebraOptimizer is documented default-active")
-	require.True(t, opts.EnableTrueStreaming, "EnableTrueStreaming is documented default-active")
 	require.True(t, opts.EnableStreamingAggregation, "EnableStreamingAggregation is documented default-active")
 	require.True(t, opts.EnableScanSharing, "EnableScanSharing is documented default-active")
+	require.True(t, opts.EnableAttributeFetchFusion, "EnableAttributeFetchFusion is documented default-active")
 
 	// Opt-in: documented as off by default (must be set explicitly).
 	require.False(t, opts.EnableEntityPrefetch, "EnableEntityPrefetch is documented opt-in")
 	require.False(t, opts.EnableSymmetricHashJoin, "EnableSymmetricHashJoin is documented opt-in")
-	require.False(t, opts.EnableStreamingJoins, "EnableStreamingJoins is documented opt-in")
 	optionsType := reflect.TypeOf(opts)
 	_, hasJoinDebugFlag := optionsType.FieldByName("EnableDebugLogging")
 	require.False(t, hasJoinDebugFlag, "join diagnostics must use annotations, not a debug flag")

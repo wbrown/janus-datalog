@@ -25,7 +25,7 @@ func createOrTestDB(t *testing.T, mode optimizerMode, handler annotations.Handle
 // are stable (not corrupted by workspace reuse).
 // Uses db.Query to get streaming results without materialization.
 func TestOrClauseTupleStability(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOrTestDB(t, mode, func(e annotations.Event) {
 				t.Logf("[TRACE] %s: %v", e.Name, e.Data)
@@ -98,7 +98,7 @@ func TestOrClauseTupleStability(t *testing.T) {
 // TestOrClauseMultipleBranches verifies tuple stability with multiple OR branches.
 // Uses db.Query for streaming without materialization.
 func TestOrClauseMultipleBranches(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOrTestDB(t, mode, nil)
 

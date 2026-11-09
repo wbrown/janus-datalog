@@ -37,8 +37,9 @@ func TestAGetElseAnswersAlikeUnderBothOptimizerPathsWhereAMatchAnswersOtherwise(
 	}
 	for _, c := range twice {
 		t.Run(c.name, func(t *testing.T) {
-			answers := make([][][]interface{}, len(optimizerModes))
-			for i, mode := range optimizerModes {
+			legs := legsFor(optimizerModes, algebraOption, fusionOption)
+			answers := make([][][]interface{}, len(legs))
+			for i, mode := range legs {
 				opts := DatabaseOptions{}
 				if c.schema != nil {
 					opts.Schema = c.schema()
@@ -56,13 +57,13 @@ func TestAGetElseAnswersAlikeUnderBothOptimizerPathsWhereAMatchAnswersOtherwise(
 			}
 			for i := 1; i < len(answers); i++ {
 				require.ElementsMatch(t, setValuesOrdered(answers[0]), setValuesOrdered(answers[i]),
-					"%s answers otherwise than %s", optimizerModes[i].name, optimizerModes[0].name)
+					"%s answers otherwise than %s", legs[i].name, legs[0].name)
 			}
 		})
 	}
 
 	t.Run("one query text on the database's plan cache, $ the database and then a memory source", func(t *testing.T) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 			t.Run(mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: declared()})
 				tx := d.NewTransaction()
@@ -102,7 +103,7 @@ func TestAGetElseAnswersAlikeUnderBothOptimizerPathsWhereAMatchAnswersOtherwise(
 func TestAGetElseAnswersAlikeWhenThePlanCacheServesItsTextOnAHistoryHandle(t *testing.T) {
 	one := datalog.NewIdentity("history-plan-cache:one")
 	text := `[:find ?e ?v :where [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: getElseFixtureSchema(schema.CardinalityOne)})
 			tx := d.NewTransaction()
@@ -136,8 +137,9 @@ func TestAGetElseAnswersAlikeWhenThePlanCacheServesItsTextOnAHistoryHandle(t *te
 func TestAGetElseAnswersAlikeAfterSetSchemaDeclaresItsAttributeCardinalityMany(t *testing.T) {
 	one := datalog.NewIdentity("set-schema-cardinality:one")
 	text := `[:find ?e ?v :where [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]`
-	answers := make([][][]interface{}, len(optimizerModes))
-	for i, mode := range optimizerModes {
+	legs := legsFor(optimizerModes, algebraOption, fusionOption)
+	answers := make([][][]interface{}, len(legs))
+	for i, mode := range legs {
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: getElseFixtureSchema(schema.CardinalityOne)})
 		tx := d.NewTransaction()
 		require.NoError(t, tx.Add(one, kw(":t/name"), "one"))
@@ -159,7 +161,7 @@ func TestAGetElseAnswersAlikeAfterSetSchemaDeclaresItsAttributeCardinalityMany(t
 	}
 	for i := 1; i < len(answers); i++ {
 		require.ElementsMatch(t, setValuesOrdered(answers[0]), setValuesOrdered(answers[i]),
-			"%s answers otherwise than %s after the install", optimizerModes[i].name, optimizerModes[0].name)
+			"%s answers otherwise than %s after the install", legs[i].name, legs[0].name)
 	}
 }
 
@@ -183,8 +185,9 @@ func TestAGetElseInAnAggregatingSubqueryAnswersAlikeOnTheSourceTheCallPasses(t *
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			answers := make([][][]interface{}, len(optimizerModes))
-			for i, mode := range optimizerModes {
+			legs := legsFor(optimizerModes, algebraOption, aggregationOption)
+			answers := make([][][]interface{}, len(legs))
+			for i, mode := range legs {
 				outer := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: getElseFixtureSchema(schema.CardinalityOne)})
 				tx := outer.NewTransaction()
 				require.NoError(t, tx.Add(one, kw(":t/name"), "one"))
@@ -206,7 +209,7 @@ func TestAGetElseInAnAggregatingSubqueryAnswersAlikeOnTheSourceTheCallPasses(t *
 			}
 			for i := 1; i < len(answers); i++ {
 				require.ElementsMatch(t, answers[0], answers[i],
-					"%s answers otherwise than %s", optimizerModes[i].name, optimizerModes[0].name)
+					"%s answers otherwise than %s", legs[i].name, legs[0].name)
 			}
 		})
 	}

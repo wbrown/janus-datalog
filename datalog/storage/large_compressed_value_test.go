@@ -37,7 +37,7 @@ func jsonishStorage(n int) string {
 func TestLargeCompressedValue_RoundTripsThroughStorage(t *testing.T) {
 	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			for _, mode := range backendModes {
+			for _, mode := range legsFor(backendModes) {
 				t.Run(mode.name, func(t *testing.T) {
 					// Fresh backend case per mode: each case's stored state
 					// lives in its closure, and the writes must not leak

@@ -23,7 +23,7 @@ func createCacheIntegrationTestDatabase(t *testing.T, mode optimizerMode) *Datab
 // TestQueryPathUsesCache verifies that the matcher created by Database.Matcher()
 // has the cache wired in and uses it for lookups.
 func TestQueryPathUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -71,7 +71,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 
 // TestPullAPIUsesCache verifies that Pull API lookups go through the cache.
 func TestPullAPIUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -123,7 +123,7 @@ func TestPullAPIUsesCache(t *testing.T) {
 // TestCacheInvalidatedOnCommit verifies that committing a transaction
 // invalidates affected cache entries.
 func TestCacheInvalidatedOnCommit(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -169,7 +169,7 @@ func TestCacheInvalidatedOnCommit(t *testing.T) {
 // TestMultipleMatchersShareCache verifies that multiple matchers from the same
 // database share the same cache instance.
 func TestMultipleMatchersShareCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -212,7 +212,7 @@ func TestMultipleMatchersShareCache(t *testing.T) {
 // TestAsOfDoesNotUseCache verifies that as-of queries bypass the cache
 // since the cache only stores the latest state.
 func TestAsOfDoesNotUseCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -255,7 +255,7 @@ func TestAsOfDoesNotUseCache(t *testing.T) {
 
 // TestVectorCacheIntegration verifies that vector attributes work with the cache.
 func TestVectorCacheIntegration(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -295,7 +295,7 @@ func TestVectorCacheIntegration(t *testing.T) {
 // TestCacheResolverInterface verifies that PatternMatcher implements CacheResolver
 // correctly when used by the cache.
 func TestCacheResolverInterface(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -350,7 +350,7 @@ func TestCacheResolverInterface(t *testing.T) {
 // TestQueryExecutionUsesCache verifies that actual Datalog queries
 // (not just LookupAttribute) use the cache through the Match() path.
 func TestQueryExecutionUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -398,7 +398,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 // TestJoinQueryUsesCache verifies that join queries with bound E from bindings
 // also use the cache path.
 func TestJoinQueryUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -458,7 +458,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 // TestCardinalityManyQueryUsesCache verifies queries on cardinality-many
 // attributes use the cache.
 func TestCardinalityManyQueryUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -520,7 +520,7 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 // set is cached, so the next scan reads no set from storage. A member
 // withdrawn and a member added after the scan are what the next scan answers.
 func TestCardinalityManyUnboundScanUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -582,7 +582,7 @@ func TestCardinalityManyUnboundScanUsesCache(t *testing.T) {
 // TestCacheConcurrency verifies that concurrent cache access with real storage
 // is thread-safe and returns correct values.
 func TestCacheConcurrency(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 

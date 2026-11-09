@@ -44,7 +44,7 @@ func TestAFailureWhereEveryOtherClauseHoldsFailsTheQueryWhereverItStands(t *test
 		{"an or-default-join with no required run, a group the find does not read",
 			`[:find ?p :where [?p :item/name _] (or-default-join [?q] (and [?q :item/v ?a] [(+ ?a 1) ?b]) [(ground 0) ?q])]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -94,7 +94,7 @@ func TestAMissingFailureWhereEveryOtherClauseHoldsFailsTheQueryFromAWindowedBody
 		{"a correlated subquery's body",
 			`[:find ?p :where [?p :item/name _] [?q :item/ref ?a] [(q [:find ?z :in $ ?a :where [(missing? $ ?a :item/absent)] [(ground 1) ?z]] $ ?a) [[?z]]]]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -136,7 +136,7 @@ func TestAFailureBesideAClauseHoldingNowhereFailsNoQuery(t *testing.T) {
 	age := datalog.NewKeyword(":item/age")
 	v := datalog.NewKeyword(":item/v")
 	k := datalog.NewKeyword(":item/k")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, symmetricOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -251,7 +251,7 @@ func TestADestructuredLookupFailsTheQueryOnlyWhereEveryOtherClauseHolds(t *testi
 	name := datalog.NewKeyword(":item/name")
 	n := datalog.NewKeyword(":t/n")
 	s := datalog.NewKeyword(":t/s")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()

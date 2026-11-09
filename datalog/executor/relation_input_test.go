@@ -37,7 +37,7 @@ func TestRelationInput(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			ctx := NewContext()
@@ -221,7 +221,7 @@ func TestRelationInput_GroupedMax(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			ctx := NewContext()
@@ -377,7 +377,7 @@ func TestRelationInput_EdgeCases(t *testing.T) {
 	matcher := factsDatabase(t, datoms)
 	ctx := NewContext()
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			t.Run("empty input relation", func(t *testing.T) {
 				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
@@ -541,7 +541,7 @@ func TestRelationInput_ThreeHundredTuples(t *testing.T) {
 	matcher := factsDatabase(t, datoms)
 	ctx := NewContext()
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			t.Run("three hundred input tuples", func(t *testing.T) {
 				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())

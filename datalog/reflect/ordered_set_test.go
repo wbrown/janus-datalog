@@ -261,7 +261,7 @@ func TestSaveStruct_OrderedSet_SchemaVerify(t *testing.T) {
 	t.Logf("Schema attribute: %s cardinality=%s unique=%v",
 		prefsKw.String(), prefsAttr.Cardinality, prefsAttr.UniqueElements)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -337,7 +337,7 @@ func TestSaveStruct_OrderedSet(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -406,7 +406,7 @@ func TestSaveStruct_OrderedSetDuplicates(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -483,7 +483,7 @@ func TestPullInto_OrderedSet(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -554,7 +554,7 @@ func TestSaveStruct_OrderedSetUpdate(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -693,7 +693,7 @@ func TestSaveStruct_OrderedSetEmpty(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -746,7 +746,7 @@ func TestSaveStruct_OrderedSetRefs(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{

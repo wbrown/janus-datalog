@@ -20,7 +20,7 @@ import (
 // Each entity's EATV scan crosses from :doc/content (Vector) to :person/name (One),
 // triggering the vector group transition.
 func TestEATV_VectorTransitionDropsDatom(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Registered at open. The assertion below is that a reuse-strategy
 			// event naming EATV is present, so the fixture's own events are

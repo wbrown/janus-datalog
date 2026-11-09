@@ -49,7 +49,7 @@ func TestSimpleSubquery(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			builds := 0
 			opts := mode.plannerOptions()
@@ -205,7 +205,7 @@ func TestSubqueryWithMultipleInputs(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, algebraOption, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 

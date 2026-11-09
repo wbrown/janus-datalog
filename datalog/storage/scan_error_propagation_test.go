@@ -100,7 +100,7 @@ func scanFailureShapes(err error) map[string]Iterator {
 // The CardinalityMany and CardinalityVector arms carry the same guard.
 func TestResolveEntityAttributesSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated scan failure")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, allOptions...) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			// Failure-shape iterators are stateful; build a fresh set per mode.
@@ -147,7 +147,7 @@ func TestResolveVectorAttributeSurfacesScanErrors(t *testing.T) {
 		t.Fatalf("build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, allOptions...) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			// Failure-shape iterators are stateful; build a fresh set per mode.

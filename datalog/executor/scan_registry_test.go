@@ -41,7 +41,7 @@ func TestScanRegistry_PutThenGet(t *testing.T) {
 	seq := &LazySeq{}
 	syms := []query.Symbol{datalog.NewSymbol("?t"), datalog.NewSymbol("?s")}
 	properties := RelationProperties{Keys: [][]query.Symbol{{syms[0]}}}
-	options := ExecutorOptions{EnableTrueStreaming: true}
+	options := ExecutorOptions{EnableScanSharing: true}
 
 	reg.Put(unboundScanOf(":registry/first"), &SharedScan{
 		Seq:        seq,

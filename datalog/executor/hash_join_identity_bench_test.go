@@ -70,7 +70,6 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
-					options:  ExecutorOptions{EnableStreamingJoins: true},
 				}
 				right := NewMaterializedRelation(rightSymbols, rightTuples)
 
@@ -94,7 +93,6 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
-					options:  ExecutorOptions{EnableStreamingJoins: true},
 				}
 
 				result := left.Join(right)
@@ -117,7 +115,6 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins: true,
 						DefaultHashTableSize: 256,
 					},
 				}
@@ -126,7 +123,6 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins: true,
 						DefaultHashTableSize: 256,
 					},
 				}

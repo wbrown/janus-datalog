@@ -155,9 +155,15 @@ func TestRefutePlanCache_ARuleBodySubqueryReadsTheSourceItsCallPassesOnBothOptim
 		}
 	}
 	views := []view{
-		{"latest", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database { return d }},
-		{"history", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database { return d.History() }},
-		{"as-of first", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database { return d.AsOf(txIDs[0]) }},
+		{"latest", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database {
+			return d
+		}},
+		{"history", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database {
+			return d.History()
+		}},
+		{"as-of first", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database {
+			return d.AsOf(txIDs[0])
+		}},
 		{"cardinality-many database", twin(schema.CardinalityMany)},
 		{"cardinality-one database", twin(schema.CardinalityOne)},
 	}
@@ -193,7 +199,7 @@ func TestRefutePlanCache_ARuleBodySubqueryReadsTheSourceItsCallPassesOnBothOptim
 				t.Run(fmt.Sprintf("history %d/%s/%s", i, shape.name, v.name), func(t *testing.T) {
 					reference, referenceTx := refuteCallSourceDatabase(t, h, referenceMode)
 					want, wantErr := run(reference, v.of(t, h, reference, referenceTx), shape.rules)
-					for _, mode := range optimizerModes {
+					for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 						total++
 						leg, legTx := refuteCallSourceDatabase(t, h, mode)
 						got, gotErr := run(leg, v.of(t, h, leg, legTx), shape.rules)
@@ -306,7 +312,7 @@ func TestRefutePlanCache_EveryEntryAnswersARuleBodySubqueryOverAHistoryHandleAli
 	}
 	want := entries(referenceMode)
 	differ := map[string]string{}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		got := entries(mode)
 		for entry, reference := range want {
 			if leg := got[entry]; leg != reference {

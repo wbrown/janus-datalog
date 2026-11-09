@@ -11,7 +11,7 @@ import (
 )
 
 func TestMultiSource_MemorySourceWithDatabase(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -73,7 +73,7 @@ func TestMultiSource_MemorySourceWithDatabase(t *testing.T) {
 }
 
 func TestMultiSource_MemorySourceOnly(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -115,7 +115,7 @@ func TestMultiSource_MemorySourceOnly(t *testing.T) {
 }
 
 func TestMultiSource_SliceSourceWithQueryBuilder(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -173,7 +173,7 @@ func TestMultiSource_SliceSourceWithQueryBuilder(t *testing.T) {
 }
 
 func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -226,7 +226,7 @@ func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
 }
 
 func TestMultiSource_SourceValidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -242,7 +242,7 @@ func TestMultiSource_SourceValidation(t *testing.T) {
 }
 
 func TestMultiSource_DefaultSourceAlwaysAvailable(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -270,7 +270,7 @@ func TestMultiSource_DefaultSourceAlwaysAvailable(t *testing.T) {
 }
 
 func TestMultiSource_CrossDatabaseJoin(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			usersDB := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			permsDB := createOptimizerModeDB(t, mode, DatabaseOptions{})

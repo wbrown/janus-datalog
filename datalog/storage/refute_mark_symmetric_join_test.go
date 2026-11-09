@@ -28,7 +28,7 @@ func TestReviewMark_AFailureBesideAnEmptyJoinSideFailsNoQueryUnderEveryJoin(t *t
 		{"the failing group joined with an empty group on a pattern's entity",
 			`[:find ?q :where [?q :item/v ?a] [(+ ?a 1) ?b] [?r :item/w ?c] [(+ ?c 1) ?d] [?r :item/missing ?q]]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			opts := mode.plannerOptions()
 			d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})

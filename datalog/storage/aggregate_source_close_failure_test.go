@@ -73,7 +73,7 @@ func TestAnAggregateOverASourceAnswersItsScanFailureAndCloseFailureOnEveryLeg(t 
 	}
 	for _, s := range sources {
 		for _, q := range queries {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes) {
 				t.Run(fmt.Sprintf("%s/%s/%s", s.name, q.name, mode.name), func(t *testing.T) {
 					source, fail := s.open(t)
 					db := createOptimizerModeDB(t, mode, DatabaseOptions{})

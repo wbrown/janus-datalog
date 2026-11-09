@@ -23,7 +23,7 @@ func TestGateReview_ExplainOnAHistoryHandlePlansTheRuleBodysGetElseAsTheLookup(t
 		{"on a database that ran nothing before", false},
 		{"after the database's Query ran the text", true},
 	}
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption, fusionOption), func(m optimizerMode) bool { return m.algebra }) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := gateReviewRuleBodyDatabase(t, mode, one)

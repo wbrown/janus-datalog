@@ -12,7 +12,7 @@ import (
 // TestDecorrelatedOrJoinBranchResults traces what each or-join branch produces
 // to debug why scenario 2 (no tasks) is missing from results.
 func TestDecorrelatedOrJoinBranchResults(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(e annotations.Event) {

@@ -183,7 +183,7 @@ func vboundQueryFor(v string) string {
 }
 
 func TestVBoundCache_SimpleSet(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			apply := func(db *Database) {
@@ -201,7 +201,7 @@ func TestVBoundCache_SimpleSet(t *testing.T) {
 // key remains in AVET after the overwrite; the value-prefix candidate scan still
 // surfaces e1, and validation must reject it because the current value is "cave".
 func TestVBoundCache_Supersession(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			apply := func(db *Database) {
@@ -226,7 +226,7 @@ func TestVBoundCache_Supersession(t *testing.T) {
 // Re-add to the same value across an intervening different value. The value-V
 // scan now finds two "room" entries for e1; resolution must take the latest.
 func TestVBoundCache_ReAddSameValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
@@ -251,7 +251,7 @@ func TestVBoundCache_ReAddSameValue(t *testing.T) {
 // the proof: cache-on and cache-off both yield empty. The cache's own tombstone
 // rejection is proven separately in TestVBoundCache_TombstoneAfterOverwrite.
 func TestVBoundCache_Tombstone(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
@@ -278,7 +278,7 @@ func TestVBoundCache_Tombstone(t *testing.T) {
 // the stale add, so the candidate iterator emits e1; validateCandidate must then
 // reject it because the current (E, A) is a tombstone. expectCacheBranch=true.
 func TestVBoundCache_TombstoneAfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
@@ -300,7 +300,7 @@ func TestVBoundCache_TombstoneAfterOverwrite(t *testing.T) {
 }
 
 func TestVBoundCache_TombstoneThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
@@ -326,7 +326,7 @@ func TestVBoundCache_TombstoneThenReAdd(t *testing.T) {
 }
 
 func TestVBoundCache_TombstoneThenReAddDifferent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
@@ -356,7 +356,7 @@ func TestVBoundCache_TombstoneThenReAddDifferent(t *testing.T) {
 }
 
 func TestVBoundCache_MultiEntitySameValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			e2 := datalog.NewIdentity("e2")
@@ -379,7 +379,7 @@ func TestVBoundCache_MultiEntitySameValue(t *testing.T) {
 // Mixed supersession across many entities: e1 stays room, e2 room→cave, e3
 // cave→room. "room" must resolve to {e1, e3}; "cave" to {e2}.
 func TestVBoundCache_MultiEntityMixedSupersession(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			e2 := datalog.NewIdentity("e2")
@@ -408,7 +408,7 @@ func TestVBoundCache_MultiEntityMixedSupersession(t *testing.T) {
 // A value no entity ever held: zero candidates, so the cache branch legitimately
 // does not fire (nothing to validate). Differential equivalence still holds.
 func TestVBoundCache_NeverExisted(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			apply := func(db *Database) {
@@ -428,7 +428,7 @@ func TestVBoundCache_NeverExisted(t *testing.T) {
 // snapshot correctness of the scan path itself is covered by
 // TestVBoundValidation_AsOfRespectsSnapshot.
 func TestVBoundCache_AsOfValidatesThroughItsViewsCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
@@ -485,7 +485,7 @@ func TestVBoundCache_AsOfValidatesThroughItsViewsCache(t *testing.T) {
 // Two facets: (a) value overwritten after the snapshot, (b) value tombstoned
 // after the snapshot. In both, the as-of query must still see the snapshot value.
 func TestVBoundValidation_AsOfRespectsSnapshot(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			a := datalog.NewKeyword(":place/type")
 
@@ -543,7 +543,7 @@ func TestVBoundValidation_AsOfRespectsSnapshot(t *testing.T) {
 // the fast path mirrors. Unique V-bound queries short-circuit via the unique
 // winner path before validation, so we assert correctness AND zero cache-resolved.
 func TestVBoundCache_UniqueSkipsCacheBranch(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			uniqueSchema := func() *schema.Schema {
 				s := schema.NewSchema()

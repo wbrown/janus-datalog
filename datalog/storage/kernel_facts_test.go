@@ -150,7 +150,7 @@ func (k *kernelEvents) take() kernelRecord {
 // its 9,865 reached cells, the reach count agrees, and unfilled holds its
 // 70,458 pairs, on both planner paths.
 func TestRules_TheWholeRelationsOverTheKernelFactsAreTheRecorded(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, facts := openKernelFacts(t, mode, nil)
 			reach, err := executor.CollectTuples(d.Query(facts.reachWhole, facts.rules))
@@ -172,7 +172,7 @@ func TestRules_TheWholeRelationsOverTheKernelFactsAreTheRecorded(t *testing.T) {
 // and cell the whole unfilled relation pairs, which on these facts is every
 // one of the sixteen.
 func TestRules_ABoundInvocationOverTheKernelFactsAnswersTheWholeRelationAtItsBindings(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, facts := openKernelFacts(t, mode, nil)
 			unfilled, err := executor.CollectTuples(d.Query(facts.unfilledWhole, facts.rules))
@@ -210,7 +210,7 @@ func TestRules_ABoundInvocationOverTheKernelFactsAnswersTheWholeRelationAtItsBin
 // relation's. The hash joins and the phases each run completes are logged
 // beside the tuples.
 func TestRules_ABoundInvocationOverTheKernelFactsReportsLessWorkThanTheWholeRelation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			events := &kernelEvents{}
 			d, facts := openKernelFacts(t, mode, events.handle)

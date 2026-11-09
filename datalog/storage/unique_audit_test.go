@@ -28,7 +28,7 @@ import (
 // Locks in the regression guard — Pull wildcard uses ResolveAllAttributes
 // which uses ResolveLWW which applies the walk for unique attrs.
 func TestWildcardPull_UniqueFallback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -91,7 +91,7 @@ func TestWildcardPull_UniqueFallback(t *testing.T) {
 // mode is an open question that still needs a decision — fix
 // ResolveLWW, or defer it.
 func TestHistoryHandle_Pull_DoesNotApplyWalk(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -144,7 +144,7 @@ func TestHistoryHandle_Pull_DoesNotApplyWalk(t *testing.T) {
 // If the test surfaces unexpected walk behavior, we need to add a
 // history-mode guard to ResolveLWW.
 func TestHistoryHandle_WildcardPull(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -195,7 +195,7 @@ func TestHistoryHandle_WildcardPull(t *testing.T) {
 // based key would collide the two. The walk uses encodeValueForSearch
 // which preserves type tags, so the two should be distinct.
 func TestValueEncoding_Int64VsString_DoesNotCrossCollide(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// The walk uses the encoded-value key, which includes a type tag, so
 			// int64(5) and string("5") are distinct under the same V only if the
@@ -239,7 +239,7 @@ func TestValueEncoding_Int64VsString_DoesNotCrossCollide(t *testing.T) {
 // equality in the walk. Two different entities claiming the same
 // []byte content should follow normal (A, V)-LWW rules.
 func TestValueEncoding_BytesComparison(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":thing/hash").Type(schema.TypeBytes).Unique(schema.UniqueValue).Add().

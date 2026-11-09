@@ -16,7 +16,7 @@ import (
 // This goes through the full Database.ExecuteQuery path which uses
 // the planner - the same path the user's code takes.
 func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -83,7 +83,7 @@ func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 // TestScenarioSummaryQuery_E2E tests the exact query from the user's production code.
 // This query uses OR with correlated subqueries, get-else, and aggregations.
 func TestScenarioSummaryQuery_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -194,7 +194,7 @@ const scenarioSummaryQueryFull = `
 // TestNestedSubqueryInOr_E2E tests OR with NESTED SUBQUERY (subquery inside subquery)
 // This is the unique pattern in the production query's third OR clause
 func TestNestedSubqueryInOr_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -253,7 +253,7 @@ func TestNestedSubqueryInOr_E2E(t *testing.T) {
 
 // TestProductionQueryStructure_E2E incrementally builds toward the production query
 func TestProductionQueryStructure_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -321,7 +321,7 @@ func TestProductionQueryStructure_E2E(t *testing.T) {
 
 // TestGetElseBeforeOrClause_E2E tests get-else BEFORE the OR clause
 func TestGetElseBeforeOrClause_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -369,7 +369,7 @@ func TestGetElseBeforeOrClause_E2E(t *testing.T) {
 
 // TestMultipleSequentialOrClauses_E2E tests MULTIPLE sequential OR clauses
 func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -423,7 +423,7 @@ func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 
 // TestOrWithGetElseInsideSubquery_E2E tests OR with get-else inside the subquery
 func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -469,7 +469,7 @@ func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
 
 // TestOrWithMultipleAggregations_E2E tests OR with multiple aggregations in subquery
 func TestOrWithMultipleAggregations_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -516,7 +516,7 @@ func TestOrWithMultipleAggregations_E2E(t *testing.T) {
 
 // TestFullScenarioSummaryQuery_E2E tests the EXACT production query
 func TestFullScenarioSummaryQuery_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

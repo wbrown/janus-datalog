@@ -23,7 +23,7 @@ func TestAUniqueSetScannedOverEveryEntityIsServedFromTheCache(t *testing.T) {
 	const q = `[:find ?e ?v :where [?e :scan-many/tag ?v]]`
 	want := [][]interface{}{{alice, "a1"}, {alice, "a2"}, {bob, "b1"}}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		for _, cache := range []struct {
 			name    string
 			disable bool

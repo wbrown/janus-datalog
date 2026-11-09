@@ -26,7 +26,7 @@ func TestQuery_ACompletionReachesTheHandlerWhereTheQueryEnds(t *testing.T) {
 		{named("e1"), ":edge", named("e2")}, {named("e2"), ":edge", named("e3")},
 	}
 	text := `[:find ?e :where [?e :t/n _]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var events []annotations.Event

@@ -45,8 +45,8 @@ type valueRouteCase struct {
 // runValueRouteCases runs each case's query over a database holding the
 // facts, in both optimizer modes, and asserts the case's answer with no panic
 // and no error.
-func runValueRouteCases(t *testing.T, facts []fact, cases []valueRouteCase) {
-	for _, mode := range optimizerModes {
+func runValueRouteCases(t *testing.T, facts []fact, cases []valueRouteCase, reach ...option) {
+	for _, mode := range legsFor(optimizerModes, reach...) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -96,7 +96,7 @@ func TestVectorAtValuePosition_ABoundVectorAnswersNoTupleUnderAScalarAttribute(t
 		{"the vector bound inside a not-join body", `[:find ?e :where [?e :a _] (not-join [?e] [(ground [1 2]) ?v] [?e :r ?v])]`, nil, []string{"x", "y", "z"}},
 		{"the entity bound beside the vector", `[:find ?e :where [?e :a 2] [(ground [1 2]) ?v] [?e :r ?v]]`, nil, nil},
 	}
-	runValueRouteCases(t, valueRouteFacts(), cases)
+	runValueRouteCases(t, valueRouteFacts(), cases, sharingOption)
 }
 
 // A bound vector under every handle: the history handle reads raw datoms
@@ -125,7 +125,7 @@ func TestVectorAtValuePosition_UnderEveryHandle(t *testing.T) {
 		{"scalar input beside an entity a pattern binds", `[:find ?e :in $ ?v :where [?e :a 1] [?e %s ?v]]`, []interface{}{vectorOneTwo}},
 		{"collection input of vectors beside an entity a pattern binds", `[:find ?e :in $ [?v ...] :where [?e :a 1] [?e %s ?v]]`, []interface{}{[]interface{}{vectorOneTwo, []interface{}{int64(3)}}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":one").Type(schema.TypeLong).One().Add().
@@ -177,7 +177,7 @@ func TestVectorAtValuePosition_ACarriedVectorAndARuleArgumentAnswerNoTuple(t *te
 		{"rule body reached with a vector argument", `[:find ?e :in $ % ?v :where (hasr ?e ?v)]`, []interface{}{`[[(hasr ?e ?v) [?e :r ?v]]]`, vectorOneTwo}, nil},
 		{"the bound vector under the vector attribute answers its entity", `[:find ?t :in $ ?v :where [?t :tags ?v]]`, []interface{}{vectorOneTwo}, []string{"t"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().Attribute(":tags").Type(schema.TypeLong).Vector().Add().Build()
 			require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestVectorAtValuePosition_ADeclaredAttributeAnswersNoTuple(t *testing.T) {
 		{":in scalar given a vector", `[:find ?e :in $ ?v :where [?e :r ?v]]`, []interface{}{vectorOneTwo}, nil},
 	}
 	for _, declaration := range declarations {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			t.Run(declaration.name+"/"+mode.name, func(t *testing.T) {
 				s, err := declaration.declare(schema.NewBuilder().Attribute(":r").Type(schema.TypeLong)).Add().Build()
 				require.NoError(t, err)
@@ -242,7 +242,7 @@ func TestVectorAtValuePosition_AConstantVectorAnswersNoTupleUnderAScalarAttribut
 		{"undeclared attribute, entity bound beside the literal", `[:find ?e :where [?e :a 1] [?e :r [1 2]]]`, nil, nil},
 		{"the literal under the vector attribute answers its entity", `[:find ?e :where [?e :tags [1 2]]]`, nil, []string{"t"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":tags").Type(schema.TypeLong).Vector().Add().
@@ -263,7 +263,7 @@ func TestVectorAtValuePosition_AConstantVectorAnswersNoTupleUnderAScalarAttribut
 // QueryInto and QueryOneInto over a scalar :in entry given a vector, read at
 // an undeclared attribute's value position.
 func TestVectorAtValuePosition_ThroughQueryIntoAndQueryOneInto(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()

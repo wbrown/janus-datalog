@@ -42,9 +42,13 @@ func TestMain(m *testing.M) {
 	// Run tests
 	code := m.Run()
 
-	// Optional: Clean up test database after tests
-	// Uncomment if you want automatic cleanup:
-	// os.RemoveAll(dbPath)
+	// Under -reach, the run's record of each test's reach (reach_report_test.go).
+	if *reachReport != "" {
+		if err := writeReachReport(*reachReport); err != nil {
+			fmt.Fprintf(os.Stderr, "write the reach report: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	os.Exit(code)
 }

@@ -1411,9 +1411,9 @@ func applyFindPulls(
 // Several groups join by a fold of the hash join under their common symbols,
 // none for groups sharing no symbol, whose join is their product. Each later
 // group is the build side, held in the join index under its key, and the
-// join so far is the probe side streaming through it, whatever the executor's
-// join option, so each group is opened once, the subject reports no size, and
-// the fold holds the later groups and never the join so far
+// join so far is the probe side streaming through it, so each group is
+// opened once, the subject reports no size, and the fold holds the later
+// groups and never the join so far
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.2).
 func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, groups Relations) (Relation, []int) {
 	if len(groups) == 0 || len(neededSymbols) == 0 {
@@ -1432,12 +1432,10 @@ func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, g
 	if len(consumed) == 1 {
 		return groups[consumed[0]], consumed
 	}
-	streaming := e.options
-	streaming.EnableStreamingJoins = true
 	result := groups[consumed[0]]
 	for _, index := range consumed[1:] {
 		held := groups[index]
-		result = HashJoinWithOptions(held, result, CommonSymbols(held, result), streaming)
+		result = HashJoinWithOptions(held, result, CommonSymbols(held, result), e.options)
 	}
 	return result, consumed
 }

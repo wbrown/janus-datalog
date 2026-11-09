@@ -75,7 +75,6 @@ func runJoinPropertyDifferential(t *testing.T, seed int64) {
 			left := generatedJoinRelation(leftSymbols, leftTuples, lp, mode == 1 || mode == 3)
 			right := generatedJoinRelation(rightSymbols, rightTuples, rp, mode == 2 || mode == 3)
 			return left, right, ExecutorOptions{
-				EnableStreamingJoins:    mode != 0,
 				EnableSymmetricHashJoin: mode == 3,
 			}
 		}
@@ -247,7 +246,7 @@ func generatedJoinRelation(
 	return NewStreamingRelationWithProperties(
 		symbols,
 		materialized.Iterator(),
-		ExecutorOptions{EnableTrueStreaming: true},
+		ExecutorOptions{},
 		properties,
 	)
 }

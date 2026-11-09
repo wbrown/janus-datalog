@@ -46,7 +46,7 @@ func TestWindowGrowsFromOneTupleToTheCap(t *testing.T) {
 		OutputVars:   []query.Symbol{value},
 		Branches:     [][]query.Clause{{BranchPattern(entity, value, attr)}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
@@ -143,7 +143,7 @@ func TestFixpointContinuedAcrossWindowsDerivesEachTupleOnce(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(pages))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where [?x :page/kind "leaf"] (or-default-join [[?x] ?y] (follows ?x ?y) [(ground :end) ?y])]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var begins, completes, derived, windows int
 			opts := mode.PlannerOptions()
@@ -202,7 +202,7 @@ func TestIterationBoundIsCountedPerWindowAndTheTupleBoundIsCarried(t *testing.T)
 		fromTheHead = append(fromTheHead, Tuple{Page(i)})
 		fromTheSink = append(fromTheSink, Tuple{Page(pages + 1 - i)})
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name()+"/iterations per window", func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 1

@@ -23,7 +23,7 @@ func TestRefute_ALimitOverAJoinOfAnEvaluatingGroupAnswersItsFailureUnderEveryJoi
 		`[:find ?q :where [?p :item/w ?x] [(identity ?x) ?b] [?q :item/v ?a] [(+ ?a 1) ?b] :limit 1]`,
 	}
 	const n = 400
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, symmetricOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, err := db.OpenMemory(db.WithPlannerOptions(mode.plannerOptions()))
 			require.NoError(t, err)

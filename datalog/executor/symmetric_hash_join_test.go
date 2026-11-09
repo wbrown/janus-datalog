@@ -202,14 +202,11 @@ func TestSymmetricHashJoin(t *testing.T) {
 		// This is harder to test directly, but we can verify it returns
 		// a StreamingRelation and doesn't materialize
 
-		// Enable true streaming for this test
-		opts := ExecutorOptions{EnableTrueStreaming: true}
-
 		leftIter := &sliceIterator{tuples: leftTuples, pos: -1}
-		leftRel := NewStreamingRelationWithOptions(leftSymbols, leftIter, opts)
+		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
 		rightIter := &sliceIterator{tuples: rightTuples, pos: -1}
-		rightRel := NewStreamingRelationWithOptions(rightSymbols, rightIter, opts)
+		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
 		result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)
@@ -218,7 +215,7 @@ func TestSymmetricHashJoin(t *testing.T) {
 		_, ok := result.(*StreamingRelation)
 		assert.True(t, ok, "Result should be a StreamingRelation")
 
-		// Verify Size() returns -1 (unknown) for streaming when EnableTrueStreaming is on
+		// A streaming relation answers no size before it is read
 		assert.Equal(t, -1, result.Size())
 	})
 

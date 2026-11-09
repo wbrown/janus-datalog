@@ -18,7 +18,7 @@ func TestAnEmptyCommitWritesNoMarkAndAnswersTheStoresHighestElementID(t *testing
 	alice := datalog.NewIdentity("empty-commit:alice")
 	const q = `[:find ?e ?v :where [?e :empty-commit/name ?v]]`
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -49,7 +49,7 @@ func TestAnEmptyCommitWritesNoMarkAndAnswersTheStoresHighestElementID(t *testing
 // commit on a store holding nothing writes nothing and returns the zero
 // ElementID, at which AsOf answers nothing.
 func TestAnEmptyCommitOnAnEmptyStoreAnswersTheZeroElementID(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			point, err := db.NewTransaction().Commit()
@@ -77,7 +77,7 @@ func TestCommittingAStructTheViewAlreadyHoldsWritesNothing(t *testing.T) {
 	}
 	alice := datalog.NewIdentity("empty-commit:saved")
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -109,7 +109,7 @@ func TestAnEmptyCommitClosesItsTransactionAndReleasesItFromARewind(t *testing.T)
 	name := datalog.NewKeyword(":empty-commit/name")
 	alice := datalog.NewIdentity("empty-commit:rewound")
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()

@@ -36,11 +36,11 @@ func TestStreamingPerformanceDemo(t *testing.T) {
 			fmt.Printf("  Filter Ratio: %.0f%%\n", scenario.filterRatio*100)
 			fmt.Printf("  Operations: %v\n", scenario.operations)
 
-			// Run with materialized (streaming disabled)
-			matTime := runScenarioMaterialized(t, scenario.dataSize, scenario.filterRatio, scenario.operations)
+			// Run over a materialized relation
+			matTime := measureScenario(t, scenario.dataSize, scenario.filterRatio, scenario.operations, false)
 
-			// Run with streaming enabled
-			streamTime := runScenarioStreaming(t, scenario.dataSize, scenario.filterRatio, scenario.operations)
+			// Run over a streaming relation
+			streamTime := measureScenario(t, scenario.dataSize, scenario.filterRatio, scenario.operations, true)
 
 			// Calculate improvement
 			improvement := float64(matTime) / float64(streamTime)
@@ -54,8 +54,8 @@ func TestStreamingPerformanceDemo(t *testing.T) {
 			fmt.Printf("    Est. Memory Reduction: %.0f%%\n", expectedMemReduction)
 
 			want := expectedPipelineResult(scenario.dataSize, scenario.filterRatio, scenario.operations)
-			for _, opts := range []ExecutorOptions{{}, {EnableTrueStreaming: true}} {
-				symbols, tuples := runPipeline(t, scenario.dataSize, scenario.filterRatio, scenario.operations, opts)
+			for _, streaming := range []bool{false, true} {
+				symbols, tuples := runPipeline(t, scenario.dataSize, scenario.filterRatio, scenario.operations, streaming)
 				id, score := query.SymbolIndex(symbols, datalog.NewSymbol("?id")), query.SymbolIndex(symbols, datalog.NewSymbol("?score"))
 				if len(symbols) != 2 || id < 0 || score < 0 {
 					t.Fatalf("the pipeline projects ?id and ?score; got %v", symbols)
@@ -64,7 +64,7 @@ func TestStreamingPerformanceDemo(t *testing.T) {
 				for i, tuple := range tuples {
 					got[i] = Tuple{tuple[id], tuple[score]}
 				}
-				assert.ElementsMatch(t, want, got, "streaming %v", opts.EnableTrueStreaming)
+				assert.ElementsMatch(t, want, got, "streaming %v", streaming)
 			}
 		})
 	}
@@ -72,38 +72,27 @@ func TestStreamingPerformanceDemo(t *testing.T) {
 	fmt.Println("\n=== END DEMONSTRATION ===")
 }
 
-func runScenarioMaterialized(t *testing.T, size int, filterRatio float64, ops []string) int64 {
-	// Zero options: the pipeline runs over a MaterializedRelation
-	opts := ExecutorOptions{}
-
-	return measureScenarioWithOpts(t, size, filterRatio, ops, opts)
-}
-
-func runScenarioStreaming(t *testing.T, size int, filterRatio float64, ops []string) int64 {
-	// Create options with streaming enabled
-	opts := ExecutorOptions{
-		EnableTrueStreaming: true,
-	}
-
-	return measureScenarioWithOpts(t, size, filterRatio, ops, opts)
-}
-
-func measureScenarioWithOpts(t *testing.T, size int, filterRatio float64, ops []string, opts ExecutorOptions) int64 {
+// measureScenario is the mean time of a hundred runs of the pipeline, over a
+// StreamingRelation when streaming is set and a MaterializedRelation
+// otherwise.
+func measureScenario(t *testing.T, size int, filterRatio float64, ops []string, streaming bool) int64 {
 	// Run multiple iterations for stable measurement
 	iterations := 100
 	var totalNs int64
 
 	for i := 0; i < iterations; i++ {
 		start := nanoTime()
-		runPipeline(t, size, filterRatio, ops, opts)
+		runPipeline(t, size, filterRatio, ops, streaming)
 		totalNs += nanoTime() - start
 	}
 
 	return totalNs / int64(iterations)
 }
 
-// runPipeline returns the symbols and tuples of the pipeline's answer.
-func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts ExecutorOptions) ([]query.Symbol, []Tuple) {
+// runPipeline returns the symbols and tuples of the pipeline's answer, run
+// over a StreamingRelation when streaming is set and a MaterializedRelation
+// otherwise, the two real relation kinds.
+func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, streaming bool) ([]query.Symbol, []Tuple) {
 	// Create test data
 	var tuples []Tuple
 	for i := 0; i < size; i++ {
@@ -111,13 +100,11 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 	}
 	symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?value")}
 
-	// The materialized mode operates on a MaterializedRelation, the streaming
-	// mode on a composed StreamingRelation — the two real relation kinds.
 	var current Relation
-	if opts.EnableTrueStreaming {
-		current = NewStreamingRelationWithOptions(symbols, &sliceIterator{tuples: tuples, pos: -1}, opts)
+	if streaming {
+		current = NewStreamingRelation(symbols, &sliceIterator{tuples: tuples, pos: -1})
 	} else {
-		current = NewMaterializedRelationWithOptions(symbols, tuples, opts)
+		current = NewMaterializedRelation(symbols, tuples)
 	}
 	for _, op := range ops {
 		switch op {
@@ -222,41 +209,36 @@ func BenchmarkStreamingScenarios(b *testing.B) {
 
 	for _, sc := range scenarios {
 		b.Run(sc.name+"_Materialized", func(b *testing.B) {
-			opts := ExecutorOptions{}
-
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchmarkScenarioWithOpts(b, sc.dataSize, sc.filter, opts)
+				benchmarkScenario(b, sc.dataSize, sc.filter, false)
 			}
 		})
 
 		b.Run(sc.name+"_Streaming", func(b *testing.B) {
-			opts := ExecutorOptions{
-				EnableTrueStreaming: true,
-			}
-
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchmarkScenarioWithOpts(b, sc.dataSize, sc.filter, opts)
+				benchmarkScenario(b, sc.dataSize, sc.filter, true)
 			}
 		})
 	}
 }
 
-func benchmarkScenarioWithOpts(b *testing.B, size int, filterRatio float64, opts ExecutorOptions) {
+// benchmarkScenario runs the filter-and-project pipeline once, over a
+// StreamingRelation when streaming is set and a MaterializedRelation
+// otherwise, the two real relation kinds.
+func benchmarkScenario(b *testing.B, size int, filterRatio float64, streaming bool) {
 	var tuples []Tuple
 	for i := 0; i < size; i++ {
 		tuples = append(tuples, Tuple{i, i * 10, i * 100})
 	}
 	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
-	// The materialized mode operates on a MaterializedRelation, the streaming
-	// mode on a composed StreamingRelation — the two real relation kinds.
 	var rel Relation
-	if opts.EnableTrueStreaming {
-		rel = NewStreamingRelationWithOptions(symbols, &sliceIterator{tuples: tuples, pos: -1}, opts)
+	if streaming {
+		rel = NewStreamingRelation(symbols, &sliceIterator{tuples: tuples, pos: -1})
 	} else {
-		rel = NewMaterializedRelationWithOptions(symbols, tuples, opts)
+		rel = NewMaterializedRelation(symbols, tuples)
 	}
 
 	// Apply aggressive filter
@@ -384,32 +366,32 @@ func TestMemoryCharacteristics(t *testing.T) {
 			}
 		}
 
-		for _, opts := range []ExecutorOptions{{}, {EnableTrueStreaming: true}} {
+		for _, streaming := range []bool{false, true} {
 			var rel Relation
-			if opts.EnableTrueStreaming {
-				rel = NewStreamingRelationWithOptions(symbols, &sliceIterator{tuples: input, pos: -1}, opts)
+			if streaming {
+				rel = NewStreamingRelation(symbols, &sliceIterator{tuples: input, pos: -1})
 			} else {
-				rel = NewMaterializedRelationWithOptions(symbols, input, opts)
+				rel = NewMaterializedRelation(symbols, input)
 			}
 			answer, err := tc.operate(rel)
 			if err != nil {
-				t.Fatalf("%s, streaming %v: %v", tc.name, opts.EnableTrueStreaming, err)
+				t.Fatalf("%s, streaming %v: %v", tc.name, streaming, err)
 			}
 			if len(answer.Symbols()) != tc.width {
 				t.Fatalf("%s, streaming %v: the answer carries %v; want %v",
-					tc.name, opts.EnableTrueStreaming, answer.Symbols(), symbols[:tc.width])
+					tc.name, streaming, answer.Symbols(), symbols[:tc.width])
 			}
 			positions := make([]int, tc.width)
 			for k, sym := range symbols[:tc.width] {
 				positions[k] = query.SymbolIndex(answer.Symbols(), sym)
 				if positions[k] < 0 {
 					t.Fatalf("%s, streaming %v: the answer carries %v; want %v",
-						tc.name, opts.EnableTrueStreaming, answer.Symbols(), symbols[:tc.width])
+						tc.name, streaming, answer.Symbols(), symbols[:tc.width])
 				}
 			}
 			tuples, err := CollectTuples(answer, nil)
 			if err != nil {
-				t.Fatalf("%s, streaming %v: %v", tc.name, opts.EnableTrueStreaming, err)
+				t.Fatalf("%s, streaming %v: %v", tc.name, streaming, err)
 			}
 			got := make([]Tuple, len(tuples))
 			for i, tuple := range tuples {
@@ -418,7 +400,7 @@ func TestMemoryCharacteristics(t *testing.T) {
 					got[i][k] = tuple[position]
 				}
 			}
-			assert.ElementsMatch(t, want, got, "%s, streaming %v", tc.name, opts.EnableTrueStreaming)
+			assert.ElementsMatch(t, want, got, "%s, streaming %v", tc.name, streaming)
 		}
 	}
 

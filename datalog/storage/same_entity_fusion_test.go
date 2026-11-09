@@ -124,7 +124,7 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 
 			t.Run("present", func(t *testing.T) {
@@ -243,7 +243,7 @@ func TestFusionConstantConstraintDifferential(t *testing.T) {
 		:where [?e :place/code "R1"]
 		       [?e :place/type "room"]]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 
 			t.Run("matching value keeps tuple", func(t *testing.T) {
@@ -293,7 +293,7 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 	tags := datalog.NewKeyword(":place/tags")
 	e1 := datalog.NewIdentity("constraint-coverage")
 
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.fusion }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, fusionOption), func(m optimizerMode) bool { return m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 
 			t.Run("cardinality one constraint fires", func(t *testing.T) {
@@ -359,7 +359,7 @@ func TestFusion_CoverageFires(t *testing.T) {
 	tags := datalog.NewKeyword(":place/tags")
 	e1 := datalog.NewIdentity("e1")
 
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.fusion }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, fusionOption), func(m optimizerMode) bool { return m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 
 			t.Run("card-one fetch fires fusion", func(t *testing.T) {
@@ -421,7 +421,7 @@ func TestFusion_AnAttributeTheSchemaDoesNotDefineFusesAndAnswersAlike(t *testing
 	e1, e2 := datalog.NewIdentity("e1"), datalog.NewIdentity("e2")
 	query := `[:find ?e ?n :where [?e :place/type "room"] [?e :place/note ?n]]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			apply := func(db *Database) {
 				tx := db.NewTransaction()
@@ -452,7 +452,7 @@ func TestFusion_AnAttributeTheSchemaDoesNotDefineFusesAndAnswersAlike(t *testing
 // attribute the matcher resolves cardinality-one, declared so or with no
 // definition, and never under History.
 func TestFusionGate_ModeAndCardinality(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testFusionGateModeAndCardinality(t, mode)
 		})
@@ -500,7 +500,7 @@ func TestFusionDifferentialAsOfUpdatesAndTombstones(t *testing.T) {
 		removeTx datalog.ElementID
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			open := func(mode optimizerMode, disableCache bool) fixture {
 				db := openFusionDB(t, mode, DatabaseOptions{DisableCache: disableCache})
@@ -555,7 +555,7 @@ func TestFusionLookupFailureIsNotAttributeAbsence(t *testing.T) {
 	code := datalog.NewKeyword(":place/code")
 	queryText := `[:find ?code :in $ ?entity :where [?entity :place/code ?code]]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openFusionDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()

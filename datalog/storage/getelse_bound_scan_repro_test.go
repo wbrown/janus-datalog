@@ -64,7 +64,7 @@ func renderBoundForTest(e annotations.Event) string {
 // pattern is logged to show the human-visible impact, which scales with the
 // :repro/note extent rather than with the (singleton) result.
 func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Registered at open. captureQuery below clears this between calls so
 			// each call returns its own query's events; the handler is never
@@ -233,7 +233,7 @@ func setupGetElseNarrowingDB(t *testing.T, mode optimizerMode, handler annotatio
 // excluded. The scan-narrowing structure of the same query is pinned
 // separately in TestGetElseMultiEntityScanNarrowed, on the algebra legs.
 func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, want := setupGetElseNarrowingDB(t, mode, nil)
 
@@ -280,7 +280,7 @@ func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 // TestGetElseMultiEntityStoredOrDefault, and every leg's agreement with the
 // reference leg in TestGetElseScanNarrowing_SemanticPreservation.
 func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption, fusionOption), func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testGetElseMultiEntityScanNarrowed(t, mode)
 		})
@@ -401,7 +401,7 @@ func TestGetElseScanNarrowing_SemanticPreservation(t *testing.T) {
 	}
 	want := norm(referenceTuples)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, _ := setupGetElseNarrowingDB(t, mode, nil)
 			tuples, err := executor.CollectTuples(db.Query(q))

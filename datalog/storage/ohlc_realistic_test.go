@@ -33,7 +33,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 	priceClose := datalog.NewKeyword(":price/close")
 	priceVolume := datalog.NewKeyword(":price/volume")
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

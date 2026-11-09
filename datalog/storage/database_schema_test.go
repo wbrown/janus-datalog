@@ -10,7 +10,7 @@ import (
 )
 
 func TestDatabaseWithSchema(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -29,7 +29,7 @@ func TestDatabaseWithSchema(t *testing.T) {
 }
 
 func TestSchemaTypeValidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create schema with type constraints
 			s, err := schema.NewBuilder().
@@ -71,7 +71,7 @@ func TestSchemaTypeValidation(t *testing.T) {
 }
 
 func TestSchemaUnknownAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create schema with only name defined
 			s, err := schema.NewBuilder().
@@ -99,7 +99,7 @@ func TestSchemaUnknownAttribute(t *testing.T) {
 }
 
 func TestNoSchemaNoValidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create database without schema
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -119,7 +119,7 @@ func TestNoSchemaNoValidation(t *testing.T) {
 }
 
 func TestSetSchema(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create database without schema
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -146,7 +146,7 @@ func TestSetSchema(t *testing.T) {
 }
 
 func TestNilValueRejected(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create database without schema - nil should still be rejected
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})

@@ -50,7 +50,7 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Test WITHOUT decorrelation
 			execNoDecor := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
@@ -145,7 +145,7 @@ func TestDecorrelationAnnotations(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Execute WITH decorrelation and capture annotations. The handler is
 			// registered on the options the executor is built with.

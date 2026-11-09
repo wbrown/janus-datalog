@@ -81,7 +81,7 @@ func (f assertionFixture) answers(t *testing.T, view *Database, text string, inp
 // clause binds to the position's variable. The answers are the same with the
 // pattern's entity free, bound by an earlier clause, and given as an input.
 func TestHistoryBindsWhetherEachDatomAssertsOrWithdraws(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := openAssertionFixture(t, mode, false)
 			history := f.db.History()
@@ -131,7 +131,7 @@ func TestHistoryBindsWhetherEachDatomAssertsOrWithdraws(t *testing.T) {
 // and true bound by an earlier clause, answer what the pattern of four
 // elements answers. Each holds with the cache enabled and disabled.
 func TestTheLatestAndAsOfViewsBindEveryTupleAsAnAssertion(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		for _, cache := range []struct {
 			name    string
 			disable bool

@@ -27,7 +27,7 @@ func TestReviewAlgebra_GetElseFromOnAMemorySourceAnswersAlikeUnderBothOptimizerP
 		qb.PatFrom(m, e, qb.Kw(":t/name"), qb.Blank()),
 		qb.GetElseFrom(m, e, qb.Kw(":t/a"), "none").As(v),
 	).MustBuild()
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, algebraOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, err := db.OpenMemory(db.WithPlannerOptions(mode.plannerOptions()))
 			require.NoError(t, err)

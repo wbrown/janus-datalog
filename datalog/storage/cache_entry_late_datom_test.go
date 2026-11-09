@@ -330,7 +330,7 @@ func TestCacheEntryIsTheResolutionOfEveryDatomOfItsKey(t *testing.T) {
 		},
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, target := range lateDatomTargets {
 				t.Run(target.name, func(t *testing.T) {
@@ -426,7 +426,7 @@ func TestCacheServesAUniqueEntryOnlyToAViewHoldingEveryClaimItRead(t *testing.T)
 		},
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
@@ -513,7 +513,7 @@ func TestAnAsOfViewKeepsItsResolutionOfAKey(t *testing.T) {
 		},
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {

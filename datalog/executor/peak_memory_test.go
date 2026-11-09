@@ -41,7 +41,6 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: false,
 						DefaultHashTableSize:    256,
 					},
@@ -51,7 +50,6 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: false,
 						DefaultHashTableSize:    256,
 					},
@@ -122,7 +120,6 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: true,
 						DefaultHashTableSize:    256,
 					},
@@ -132,7 +129,6 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: true,
 						DefaultHashTableSize:    256,
 					},

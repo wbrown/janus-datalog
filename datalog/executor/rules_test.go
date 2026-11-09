@@ -384,7 +384,7 @@ const successorRulesText = `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`
 func TestExecuteWithRelations_RequiredBindingSchedulesAfterItsProvider(t *testing.T) {
 	rs := mustRules(t, successorRulesText)
 	q := mustParse(t, `[:find ?m :in $ % :where (succ ?n ?m) [(ground 5) ?n]]`)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(nil, nil, mode.plannerOptions())
 			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil))
@@ -404,7 +404,7 @@ func TestExecuteWithRelations_RequiredBindingSchedulesAfterItsProvider(t *testin
 func TestExecuteWithRelations_RequiredBindingNothingBinds(t *testing.T) {
 	rs := mustRules(t, successorRulesText)
 	q := mustParse(t, `[:find ?m :in $ % :where (succ ?n ?m)]`)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(nil, nil, mode.plannerOptions())
 			_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
@@ -431,7 +431,7 @@ func TestExecuteWithRelations_RequiredBindingInSubqueryBodyIsOrderedAfterItsBind
 	                                :where (succ ?n ?m)
 	                                       [(ground 5) ?n]]
 	                               $ %) [[?m] ...]]]`)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(nil, nil, mode.plannerOptions())
 			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil))

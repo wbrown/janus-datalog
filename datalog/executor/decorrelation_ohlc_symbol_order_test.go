@@ -152,7 +152,7 @@ func TestOHLCSymbolOrderBug(t *testing.T) {
 	// ?close-price = 102.50 (max close in 15:55-16:00 range = bar3.close)
 	// ?total-volume = 3050000 (sum of all volumes)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, SymmetricOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			t.Run("ParallelDecorrelation", func(t *testing.T) {
 				matcher := factsDatabase(t, datoms)

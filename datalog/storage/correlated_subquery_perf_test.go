@@ -36,7 +36,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 		tasksPerScenario = 100
 	)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, prefetchOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(e annotations.Event) {
@@ -274,7 +274,7 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 // each carrying its task count and complete. Each leg logs the algebra
 // optimizer's rewrite of the query.
 func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, prefetchOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			testCorrelatedSubqueryAlgebraOptimizer(t, mode)
 		})
@@ -402,7 +402,7 @@ func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, mode optimizerMode) {
 // so InnerJoin never drops anything — it validates the decorrelation speedup.
 // This test validates correctness when defaults are needed.
 func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, prefetchOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			testCorrelatedSubqueryAlgebraOptimizerWithDefaults(t, mode)
 		})
@@ -534,7 +534,7 @@ func testCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T, mode optim
 // Previous tests used simplified queries that missed phasing issues triggered
 // by the combination of get-else + NOT + OR-fallback in the same clause set.
 func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t, mode)
 		})

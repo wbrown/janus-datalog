@@ -35,7 +35,7 @@ func TestAsOfZeroTargetProbe(t *testing.T) {
 		{"V-bound vector, open attribute", `[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`, []interface{}{int64(1), int64(2)}},
 		{"vector, constant attribute", `[:find ?e ?v :where [?e :z/vec ?v]]`, nil},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 			info, err := db.Snapshot("empty")

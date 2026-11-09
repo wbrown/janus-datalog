@@ -15,9 +15,7 @@ func BenchmarkKeyPreservingJoinProjection(b *testing.B) {
 	leftSymbols := []query.Symbol{id, leftValue}
 	rightSymbols := []query.Symbol{id, rightValue}
 	projectedSymbols := []query.Symbol{id, leftValue}
-	opts := ExecutorOptions{
-		EnableStreamingJoins: true,
-	}
+	opts := ExecutorOptions{}
 
 	for _, tupleCount := range []int{10_000, 100_000} {
 		leftTuples := make([]Tuple, tupleCount)

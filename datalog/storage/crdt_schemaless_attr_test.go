@@ -30,7 +30,7 @@ import (
 func TestSchemalessAttrBoundQuery_BugRepro(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -74,7 +74,7 @@ func TestSchemalessAttrBoundQuery_BugRepro(t *testing.T) {
 func TestSchemalessAttrUnboundQuery_BugRepro(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -127,7 +127,7 @@ func TestSchemalessAttrUnboundQuery_BugRepro(t *testing.T) {
 func TestSchemalessAttrMultipleWrites(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -200,7 +200,7 @@ func TestSchemalessAttrMultipleWrites(t *testing.T) {
 func TestSchemalessRemove_RoundTrip(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -266,7 +266,7 @@ func TestSchemalessRemove_RoundTrip(t *testing.T) {
 func TestSchemalessRemove_ThenReAdd(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -312,7 +312,7 @@ func TestSchemalessRemove_ThenReAdd(t *testing.T) {
 func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -388,7 +388,7 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 
 // Test 14: Nil-schema matcher can read data written with schema
 func TestNilSchemaMatcher_ReadsSchemaData(t *testing.T) {
-	for _, omode := range optimizerModes {
+	for _, omode := range legsFor(optimizerModes) {
 		t.Run(omode.name, func(t *testing.T) {
 			db := createCacheTestDB(t, omode, false, nil)
 

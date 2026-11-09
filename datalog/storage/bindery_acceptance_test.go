@@ -269,7 +269,7 @@ const (
 // seeded by every changed sheet at once.
 func TestBindery_ReachesFromChangedSheetsAnswersTheReference(t *testing.T) {
 	changed := []int{0, 9, 50, 127}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			counts := &ruleEventCounts{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: binderySchema(), AnnotationHandler: counts.handle})
@@ -297,7 +297,7 @@ func TestBindery_ReadinessOverPredecessorQuiresAnswersTheReference(t *testing.T)
 	want := model.ready("stitched")
 	require.NotEmpty(t, want, "the model holds ready quires for the contract to be testable")
 	require.Less(t, len(want), model.quires, "the model holds blocked quires for the contract to be testable")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: binderySchema()})
 			g := model.write(t, d)
@@ -315,7 +315,7 @@ func TestBindery_FinishableQuiresAnswerTheReference(t *testing.T) {
 	want := model.finishable()
 	require.NotEmpty(t, want, "the model holds finishable quires for the contract to be testable")
 	require.Less(t, len(want), model.quires, "the model holds stranded quires for the contract to be testable")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: binderySchema()})
 			g := model.write(t, d)
@@ -366,7 +366,7 @@ func (s *strataBegun) perStratum() map[query.Symbol]int {
 // continued across the windows: the strata begun over one window of quires
 // are those begun over several, each once.
 func TestBindery_ReconcileUnderNotJoinBeginsEachStratumOnce(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var strata []map[query.Symbol]int
 			for _, n := range binderyEventSizes {
@@ -396,7 +396,7 @@ func TestBindery_ReconcileUnderNotJoinBeginsEachStratumOnce(t *testing.T) {
 // reachable states, zero where its state reaches none, and begins each
 // stratum of the rewritten set once whatever N is.
 func TestBindery_FallbackCountSubqueryBeginsEachStratumOnce(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var strata []map[query.Symbol]int
 			for _, n := range binderyEventSizes {

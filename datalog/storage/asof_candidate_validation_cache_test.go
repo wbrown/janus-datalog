@@ -64,7 +64,7 @@ func TestAsOfHandleValidatesCandidatesThroughItsOwnCache(t *testing.T) {
 	const items = 200
 	item := func(i int) datalog.Identity { return datalog.NewIdentity(fmt.Sprintf("as-of-cache:item-%d", i)) }
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, disableCache := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/cache_disabled_%t", mode.name, disableCache), func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: itemKindSchema(t), DisableCache: disableCache})
@@ -115,7 +115,7 @@ func TestAsOfHandleValidatesCandidatesAgainstTheValueAsOfItsTarget(t *testing.T)
 		return datalog.NewIdentity(fmt.Sprintf("as-of-cache-target:item-%d", i))
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, disableCache := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/cache_disabled_%t", mode.name, disableCache), func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: itemKindSchema(t), DisableCache: disableCache})

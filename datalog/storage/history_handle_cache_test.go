@@ -20,7 +20,7 @@ func TestAHistoryHandleStoresNothingInTheCacheItShares(t *testing.T) {
 	lines := datalog.NewKeyword(":history-cache/lines")
 	doc := datalog.NewIdentity("history-cache:doc")
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		for _, cache := range []struct {
 			name    string
 			disable bool

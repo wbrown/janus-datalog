@@ -150,7 +150,7 @@ func TestAScanSharedRelationAnswersEachFailureOfItsScanOnce(t *testing.T) {
 		{"a scan read to its end", all, false},
 		{"a scan its reader stops reading before the end", first, false},
 	}
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.sharing }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, allOptions...), func(m optimizerMode) bool { return m.sharing }) {
 		t.Run(mode.name, func(t *testing.T) {
 			var failing, failRead atomic.Bool
 			var scans atomic.Int32

@@ -67,7 +67,7 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 	                      $ ?e) [[?count ?total]]]
 	                  [(ground [0 0]) [?count ?total]])]`
 	want := scanSharingReferenceAnswer(t, q)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, prefetchOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupScanSharingTestDB(t, mode)
 			rel, err := db.Query(q)
@@ -94,7 +94,7 @@ func TestScanSharing_CorrectnessDifferential(t *testing.T) {
 	for _, r := range want {
 		require.Equal(t, int64(50), r[1], "each scenario holds 50 complete tasks")
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupScanSharingTestDB(t, mode)
 			rel, err := db.Query(q)
@@ -118,7 +118,7 @@ func TestScanSharing_OffRaisesNoSharingEvent(t *testing.T) {
 	                      $ ?e) [[?count]]]
 	                  [(ground 0) ?count])]`
 	want := scanSharingReferenceAnswer(t, q)
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.sharing }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, sharingOption), func(m optimizerMode) bool { return !m.sharing }) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupScanSharingTestDB(t, mode)
 			var sharingEvents int

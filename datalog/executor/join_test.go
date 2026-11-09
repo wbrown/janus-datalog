@@ -393,10 +393,7 @@ func TestStreamingJoinProbeAnnotationLifecycle(t *testing.T) {
 			[]query.Symbol{join, leftValue},
 			[]Tuple{{int64(1), "left"}},
 		)
-		return HashJoinWithOptions(left, probe, []query.Symbol{join}, ExecutorOptions{
-			Handler:              handler,
-			EnableStreamingJoins: true,
-		})
+		return HashJoinWithOptions(left, probe, []query.Symbol{join}, ExecutorOptions{Handler: handler})
 	}
 	probe := func() Relation {
 		return NewMaterializedRelation(

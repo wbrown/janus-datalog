@@ -21,7 +21,7 @@ import (
 func TestQuery_ARefusalReachesTheHandlerAsACompletedQuery(t *testing.T) {
 	unparsable := `[:find ?e :where [?e :t/n`
 	unrealizable := `[:find ?x :where [?e :t/n 1]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var events []annotations.Event

@@ -43,9 +43,9 @@ func reviewDecorrelationFacts() ([]fact, map[datalog.Identity]string) {
 // lateral join with defaults.
 func reviewDecorrelationQueries() []string {
 	type inner struct {
-		find string
-		body string
-		arity int
+		find      string
+		body      string
+		arity     int
 		aggregate bool
 	}
 	inners := []inner{
@@ -162,7 +162,7 @@ func TestReviewSources_DecorrelationAnswersAlikeOnBothPaths(t *testing.T) {
 	queries := reviewDecorrelationQueries()
 	outcomes := map[string]map[string]string{}
 	var off map[string]string
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 		commitFacts(t, d, facts)
 		answered := map[string]string{}
@@ -218,7 +218,7 @@ func TestReviewSources_EveryGeneratedSubqueryIsDecorrelated(t *testing.T) {
 			applied++
 		}
 	}
-	d := createOptimizerModeDB(t, legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra })[0], DatabaseOptions{AnnotationHandler: handler})
+	d := createOptimizerModeDB(t, legsWhere(legsFor(optimizerModes, algebraOption, aggregationOption), func(m optimizerMode) bool { return m.algebra })[0], DatabaseOptions{AnnotationHandler: handler})
 	commitFacts(t, d, facts)
 	for _, text := range reviewDecorrelationQueries() {
 		t.Run(text, func(t *testing.T) {

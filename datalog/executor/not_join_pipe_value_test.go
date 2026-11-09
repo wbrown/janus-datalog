@@ -98,7 +98,7 @@ func TestNotJoinClause_PipeInValue_E2E(t *testing.T) {
 		},
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 

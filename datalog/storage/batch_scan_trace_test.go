@@ -11,7 +11,7 @@ import (
 )
 
 func TestBatchScanTrace(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// 200 entities. At that size chooseJoinStrategy returns HashJoinScan,
 			// and at or below executor.SmallBindingBoundary the hash join seeks

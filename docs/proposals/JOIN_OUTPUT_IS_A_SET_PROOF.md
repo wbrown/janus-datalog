@@ -28,7 +28,7 @@ Every name below is the code's, given a symbol for the proof.
 - **P6 (the key derivation).** `joinProperties` keeps the left keys when some right key lies within J (`hasKeyWithin`), keeps the right keys when some left key lies within J, and derives nothing else. Each hash arm and the symmetric arm build seen exactly when the derived keys are empty.
 - **P7 (the fixpoint's relations).** `derivedSet.relation`, the delta relations `runStratum` builds under each predicate's delta symbol, and `seedRelation` carry `deduplicatedProperties(symbols)`: one key over all the relation's symbols.
 - **P8 (semi-join and anti-join).** `SemiJoin` and `AntiJoin` pull each left tuple once and keep it on a membership test of its key against the right side's keys. `materializeFilteredLeft` constructs the result through `newMaterializedRelationFromSet` when the left has a key, and through `NewMaterializedRelationWithProperties`, which runs `deduplicateTuples`, when it has none.
-- **P9 (the default path).** `storage.DefaultPlannerOptions` sets `EnableStreamingJoins` and `EnableSymmetricHashJoin` false, so a database query joins through the materialized arm unless its caller opts in.
+- **P9 (the default path).** `storage.DefaultPlannerOptions` sets `EnableSymmetricHashJoin` false, so a database query joins through the hash join's streaming arm unless its caller opts into the symmetric arm.
 
 ## 3. Theorems
 
@@ -92,7 +92,7 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 ## 7. What the proof does not cover
 
 - The input side of P1. A caller that hands a join a relation that is not a set gets a result that is not a set, where today it got one deduplicated by seen. The record names such inputs invalid, and no production constructor admits one.
-- The default path. The streaming and symmetric arms are proven alike. P9 keeps them opt-in, and this change does not alter the default.
+- The default path. The streaming and symmetric arms are proven alike. P9 keeps the symmetric arm opt-in, and this change does not alter the default.
 - The order a body's clauses run in, which decides how many relations a delta copy joins before its delta; the planner is not touched.
 - `derivedSet.absorb`, which keys every tuple a body answers into the predicate's set. That is the union across bodies and iterations, which the record requires to restore set semantics, and it stays.
 - `crossProduct`, which constructs through `NewMaterializedRelationWithOptions` and so runs a dedup pass over a product of sets; the record lists it as avoidable, and no failure names it.

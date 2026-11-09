@@ -19,7 +19,7 @@ import (
 func TestEntityJoinBug(t *testing.T) {
 	for _, backend := range storage.AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {
-			for _, mode := range legsWhere(func(m optimizerMode) bool { return !m.fusion }) {
+			for _, mode := range legsWhere(legsFor(fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
 				t.Run(mode.name, func(t *testing.T) {
 					testEntityJoinBug(t, backend, mode)
 				})

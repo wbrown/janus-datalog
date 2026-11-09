@@ -66,7 +66,7 @@ func TestAPatternOverAStreamingGroupIsReadInWindows(t *testing.T) {
 	want := plannedRouteReference(t, queryText)
 	require.Len(t, want, 18, "each item of a kind pairs with the three items labeled with it")
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, cache := range cacheTestModes {
 			t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 				tuples, forms := windowedForms(t, mode.backend, mode.plannerOptions(), cache.disableCache, queryText)
@@ -86,7 +86,7 @@ func TestAPatternBoundThroughAnInputRelationTakesTheBoundRoute(t *testing.T) {
 	want := plannedRouteReference(t, queryText, given)
 	require.Len(t, want, 2, "each given item answers its kind")
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		for _, cache := range cacheTestModes {
 			t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 				tuples, forms := windowedForms(t, mode.backend, mode.plannerOptions(), cache.disableCache, queryText, given)
@@ -107,7 +107,7 @@ func TestAPatternsRouteIsThePlansWhateverExecutionHasReadOfItsGroup(t *testing.T
 	want := plannedRouteReference(t, queryText)
 	require.Len(t, want, 18, "each item of a kind pairs with the three items labeled with it")
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, cache := range cacheTestModes {
 			t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 				tuples, forms := windowedForms(t, mode.backend, mode.plannerOptions(), cache.disableCache, queryText)

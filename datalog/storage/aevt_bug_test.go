@@ -46,7 +46,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 		}
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -142,7 +142,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 // NOTE: With CRDT semantics, schemaless queries (or cardinality-one) use EATV
 // to get the current value (first entry has highest Tx).
 func TestEATVPrefixRangeDebug(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

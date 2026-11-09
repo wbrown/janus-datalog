@@ -12,7 +12,7 @@ import (
 // under a live context runs as it does without the option.
 func TestWithContextCancelsQuery(t *testing.T) {
 	const names = `[:find ?name :where [?e :dump/name ?name]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			path := ""
 			if mode.backend.Persistent {

@@ -37,7 +37,7 @@ func TestANestedStructReadFromAPullCarriesItsEntitysID(t *testing.T) {
 		name   string
 		schema *schema.Schema
 	}{{"with a schema", sch}, {"without a schema", nil}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		for _, s := range schemas {
 			t.Run(mode.name+"/"+s.name, func(t *testing.T) {
 				popts := mode.plannerOptions()

@@ -30,7 +30,7 @@ func TestQuery_PlansEveryScopeAtPlanQuery(t *testing.T) {
 	        (or-default-join [[?e] ?k] [?e :t/r ?k] [(ground 0) ?k])
 	        (not-join [?e] [?e :t/n _])
 	        [(q [:find (count ?s) :in $ ?a :where [?s :t/k ?a]] $ ?a) [[?c]]]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, formFacts())

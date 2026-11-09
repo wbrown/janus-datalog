@@ -28,7 +28,7 @@ func TestSubqueryDatomicCompatible(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, algebraOption, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 

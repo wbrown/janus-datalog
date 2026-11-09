@@ -691,7 +691,7 @@ func TestVectorWritesReadBackAlikeThroughEveryReader(t *testing.T) {
 				require.Equal(t, sc.want[k], want[k][0],
 					"the reference model computes the scenario's vector after transaction %d", k)
 			}
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes) {
 				for _, cache := range vectorWritesCaches {
 					t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 						d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, DisableCache: cache.disable})
@@ -874,7 +874,7 @@ func TestVectorConcurrentTransactionsReadBackAlikeThroughEveryReader(t *testing.
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes) {
 				for _, cache := range vectorWritesCaches {
 					t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 						d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, DisableCache: cache.disable})

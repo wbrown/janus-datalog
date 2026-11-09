@@ -25,7 +25,7 @@ func TestOrJoinWithARequiredOnlyHeaderFiltersTheOuter(t *testing.T) {
 		t.Fatalf("ParseQuery: %v", err)
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := executor.Execute(q)

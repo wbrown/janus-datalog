@@ -176,7 +176,8 @@ func TestPrintFunctions(t *testing.T) {
 // from iterators, which is critical for streaming relations that may reuse buffers.
 // This is a regression test for the CLI empty results bug.
 func TestTableFormatterTupleCopying(t *testing.T) {
-	// Create a relation with streaming behavior enabled
+	// A stream whose iterator hands back one workspace it overwrites on the
+	// next pull, the shape the formatter has to copy from.
 	symbols := []query.Symbol{datalog.NewSymbol("x"), datalog.NewSymbol("y"), datalog.NewSymbol("z")}
 	tuples := []Tuple{
 		{int64(1), int64(10), int64(100)},
@@ -184,9 +185,7 @@ func TestTableFormatterTupleCopying(t *testing.T) {
 		{int64(3), int64(30), int64(300)},
 	}
 
-	rel := NewMaterializedRelationWithOptions(symbols, tuples, ExecutorOptions{
-		EnableTrueStreaming: true, // Enable streaming mode
-	})
+	rel := newReusingWorkspaceStream(symbols, tuples)
 
 	// Format as table
 	formatter := NewTableFormatter()

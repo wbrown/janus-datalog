@@ -28,7 +28,7 @@ func TestRefuteSources_AnAggregateBeforeAGroupingVariableBindsByFindPosition(t *
 		{"two parameters, aggregate last", `[:find ?q ?m ?n :where [?q :p/k ?b] [?q :p/v ?w] [(q [:find ?a (count ?z) :in $ ?a ?c :where [?z :p/k ?a] [?z :p/v ?c]] $ ?b ?w) [[?m ?n]]]]`},
 	}
 	answers := map[bool]map[string]string{}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 		commitFacts(t, d, refuteTwoParamFacts())
 		answers[mode.algebra] = map[string]string{}

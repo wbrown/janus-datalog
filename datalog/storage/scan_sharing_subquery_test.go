@@ -49,7 +49,7 @@ func TestSubqueryBodiesScanningOnePatternReadItOnceUnderScanSharing(t *testing.T
 	queryText := optimizationMatrixQuery(0)
 	want := optimizationMatrixReferenceAnswer(t, queryText, scenarios, tasksPerScenario)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		for _, cache := range cacheTestModes {
 			leg := mode.name + "/" + cache.name
 			t.Run(leg, func(t *testing.T) {
@@ -140,7 +140,7 @@ func TestASiteReadInEveryWindowIsSharedAcrossItsWindows(t *testing.T) {
 	             $ ?scenario) [[?taskCount]]]]`
 	want := optimizationMatrixReferenceAnswer(t, queryText, scenarios, tasksPerScenario)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		for _, cache := range cacheTestModes {
 			leg := mode.name + "/" + cache.name
 			t.Run(leg, func(t *testing.T) {
@@ -211,7 +211,7 @@ func TestAConsumerThatStopsEarlyLeavesTheSharedScanWhole(t *testing.T) {
 		want = append(want, []interface{}{item})
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		for _, cache := range cacheTestModes {
 			t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 				db := createCacheTestDB(t, mode, cache.disableCache, nil)
@@ -251,7 +251,7 @@ func TestAScanReadAtOneSiteIsNotShared(t *testing.T) {
 		want = append(want, []interface{}{item})
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		for _, cache := range cacheTestModes {
 			t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 				var kindScans, colorScans, served, created atomic.Int64

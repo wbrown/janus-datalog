@@ -79,7 +79,7 @@ func queryUnboundForEA(t *testing.T, db *Database, e datalog.Identity, a datalog
 
 // Test 1: Add value, Remove value, query → attribute doesn't exist
 func TestCardinalityOneRemove_RoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -118,7 +118,7 @@ func TestCardinalityOneRemove_RoundTrip(t *testing.T) {
 // V is irrelevant for CardinalityOne remove. The OpCRDTRemove at highest Tx
 // means the attribute is gone.
 func TestCardinalityOneRemove_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -152,7 +152,7 @@ func TestCardinalityOneRemove_AfterOverwrite(t *testing.T) {
 
 // Test 3: Add, Remove, Add again → latest Add wins
 func TestCardinalityOneRemove_ThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -187,7 +187,7 @@ func TestCardinalityOneRemove_ThenReAdd(t *testing.T) {
 
 // Test 4: Remove before any Add → then Add → value exists
 func TestCardinalityOneRemove_BeforeAnyAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -218,7 +218,7 @@ func TestCardinalityOneRemove_BeforeAnyAdd(t *testing.T) {
 // Add "Alice", Remove("Bob") → attribute doesn't exist
 // Even though "Bob" was never the value, OpCRDTRemove at highest Tx means gone.
 func TestCardinalityOneRemove_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -247,7 +247,7 @@ func TestCardinalityOneRemove_VIsIrrelevant(t *testing.T) {
 
 // Test 6: Multiple entities — removing one doesn't affect the other
 func TestCardinalityOneRemove_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -286,7 +286,7 @@ func TestCardinalityOneRemove_MultipleEntities(t *testing.T) {
 
 // Test 11: Bound query (E and A via :in) after remove → empty
 func TestCardinalityOneRemove_BoundQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -317,7 +317,7 @@ func TestCardinalityOneRemove_BoundQuery(t *testing.T) {
 
 // Test 12: V-bound query after remove → empty
 func TestCardinalityOneRemove_VBoundQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -365,7 +365,7 @@ func TestCardinalityOneRemove_VBoundQuery(t *testing.T) {
 
 // Test 13: Unbound query after remove → entity/attribute absent from results
 func TestCardinalityOneRemove_UnboundQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -395,7 +395,7 @@ func TestCardinalityOneRemove_UnboundQuery(t *testing.T) {
 // =============================================================================
 
 func TestCardinalityOneRemove_SetThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -425,7 +425,7 @@ func TestCardinalityOneRemove_SetThenRemove(t *testing.T) {
 // =============================================================================
 
 func TestCardinalityOneRemove_Unbound_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -454,7 +454,7 @@ func TestCardinalityOneRemove_Unbound_AfterOverwrite(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_Unbound_ThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -484,7 +484,7 @@ func TestCardinalityOneRemove_Unbound_ThenReAdd(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_Unbound_BeforeAnyAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -509,7 +509,7 @@ func TestCardinalityOneRemove_Unbound_BeforeAnyAdd(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_Unbound_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -533,7 +533,7 @@ func TestCardinalityOneRemove_Unbound_VIsIrrelevant(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_Unbound_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -563,7 +563,7 @@ func TestCardinalityOneRemove_Unbound_MultipleEntities(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_Unbound_SetThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -618,7 +618,7 @@ func vBoundMatchCount(t *testing.T, db *Database, a datalog.Keyword, v interface
 }
 
 func TestCardinalityOneRemove_VBound_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -651,7 +651,7 @@ func TestCardinalityOneRemove_VBound_AfterOverwrite(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_ThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -682,7 +682,7 @@ func TestCardinalityOneRemove_VBound_ThenReAdd(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_BeforeAnyAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -706,7 +706,7 @@ func TestCardinalityOneRemove_VBound_BeforeAnyAdd(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -732,7 +732,7 @@ func TestCardinalityOneRemove_VBound_VIsIrrelevant(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 
@@ -760,7 +760,7 @@ func TestCardinalityOneRemove_VBound_MultipleEntities(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_SetThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCardinalityOneDB(t, mode)
 

@@ -153,7 +153,7 @@ func TestAfterRefHeuristicBug_KeyLayout(t *testing.T) {
 // TestAfterRefHeuristicBug_Integration tests the full write+read path
 // through BadgerDB, demonstrating that datoms are silently lost.
 func TestAfterRefHeuristicBug_Integration(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -321,7 +321,7 @@ func TestAfterRefHeuristicBug_NonRefValues(t *testing.T) {
 // TestAfterRefHeuristicBug_FullDBRoundTrip writes N entities each with 3
 // reference fields, reads them back, and counts missing fields.
 func TestAfterRefHeuristicBug_FullDBRoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

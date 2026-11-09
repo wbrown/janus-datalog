@@ -196,6 +196,25 @@ var OptimizerModes = optimizerModes
 // OptimizerModesWhere is the modes a predicate admits, in the table's order.
 var OptimizerModesWhere = optimizerModesWhere
 
+// LegsFor is the legs a test runs on for the reach it names.
+var LegsFor = legsFor
+
+// Option is one of the six options a reach names.
+type Option = option
+
+// AllOptions is the six options.
+var AllOptions = allOptions
+
+// The six options a reach names.
+const (
+	AlgebraOption     = algebraOption
+	SharingOption     = sharingOption
+	PrefetchOption    = prefetchOption
+	SymmetricOption   = symmetricOption
+	FusionOption      = fusionOption
+	AggregationOption = aggregationOption
+)
+
 // Name answers the mode's name.
 func (m optimizerMode) Name() string { return m.name }
 

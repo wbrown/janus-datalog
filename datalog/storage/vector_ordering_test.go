@@ -21,7 +21,7 @@ import (
 // and a comparator that recurses through CompareValues cannot accidentally agree
 // with the old one.
 func TestVectorOrderingIsElementWiseEndToEnd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			testVectorOrderingIsElementWiseEndToEnd(t, mode)
 		})

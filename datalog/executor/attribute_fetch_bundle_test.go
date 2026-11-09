@@ -92,7 +92,7 @@ func TestASameEntityAttributeRunFusesAndAnswersAsUnfused(t *testing.T) {
 		attr    datalog.Keyword
 		in, out int
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var fetches []fetch
 			d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(mode.PlannerOptions()), db.WithAnnotationHandler(func(e annotations.Event) {

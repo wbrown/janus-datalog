@@ -91,7 +91,7 @@ func TestOrDefaultOutputBoundByAnEarlierClauseIsJoined(t *testing.T) {
 		{y2, ":r", n2},
 	}
 	clauses := []string{`[?w :p ?e]`, `[?y :q ?e]`, `(or-default [?e :p ?m] (and [?m :p ?e] [?y ?a ?m]))`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -117,7 +117,7 @@ func TestTwoFormsSharingAnOutputAreJoined(t *testing.T) {
 		`(or-default [?e :t/a ?c] [(ground 0) ?c])`,
 		`(or-default [?e :t/b ?c] [(ground 0) ?c])`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -144,7 +144,7 @@ func TestScopeKeepsTheGroupsItDoesNotRead(t *testing.T) {
 		{"not", `(not [?e :t/a _])`, []string{"e1"}},
 		{"or", `(or [?e :t/a _] [?e :t/n 1])`, []string{"e0", "e1"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -177,7 +177,7 @@ func TestOrDefaultZeroCountGivesEachGroupItsCountOrZero(t *testing.T) {
 		`[?c :category/name ?category]`,
 		`(or-default [(q [:find (count ?p) :in $ ?c :where [?p :product/category ?c]] $ ?c) [[?count]]] [(ground 0) ?count])`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -196,7 +196,7 @@ func TestNotWithABranchLocalKeepsAnEntityWithoutTheAttribute(t *testing.T) {
 		{e1, ":p", int64(1)}, {e1, ":q", int64(2)},
 	}
 	clauses := []string{`[?e :p _]`, `(not [?e :q ?x])`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)

@@ -101,7 +101,7 @@ func vectorSchema() schema.SchemaProvider {
 func TestSchemalessRead_VectorMatchesSchemaAware(t *testing.T) {
 	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, allOptions...) {
 				t.Run(mode.name, func(t *testing.T) {
 					// Fresh backend case per mode: each case's stored state
 					// lives in its closure, and the writes must not leak
@@ -187,7 +187,7 @@ func TestSchemalessLookupAttribute_VectorMatchesSchemaAware(t *testing.T) {
 func TestSchemalessRead_ManyMatchesSchemaAware(t *testing.T) {
 	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, allOptions...) {
 				t.Run(mode.name, func(t *testing.T) {
 					// Fresh backend case per mode: each case's stored state
 					// lives in its closure, and the writes must not leak
@@ -256,7 +256,7 @@ func TestSchemalessRead_ManyMatchesSchemaAware(t *testing.T) {
 func TestSchemalessReopen_WriteUsesInferredCardinality(t *testing.T) {
 	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, allOptions...) {
 				t.Run(mode.name, func(t *testing.T) {
 					// Fresh backend case per mode: each case's stored state
 					// lives in its closure, and the writes must not leak

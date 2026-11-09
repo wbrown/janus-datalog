@@ -46,7 +46,7 @@ func TestRules_ARequiredInvocationAtAnExtentRootInsideAScopeDerivesWhatTheFreeEv
 		{"an or-join branch", `[(p ?x ?q) [?x :page/n _] [?r :page/kind "root"] (or-join [[?r ?x] ?q] (and [?x :page/next ?m] (pairs ?r ?m ?q)) [?r :page/other ?q])]`},
 		{"a subquery's inner query", `[(p ?x ?q) [?x :page/n _] [?r :page/kind "root"] [(q [:find ?w :in $ % ?s ?y :where [?y :page/next ?m] (pairs ?s ?m ?w)] $ % ?r ?x) [[?q] ...]]]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var strata []string
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: func(e annotations.Event) {

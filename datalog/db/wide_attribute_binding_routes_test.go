@@ -38,7 +38,7 @@ func TestAKeywordWiderThanStorageHoldsBoundAtTheAttributePositionNamesNoAttribut
 		{"the cache on", nil},
 		{"the cache off", []db.Option{db.WithoutCache()}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		for _, cache := range caches {
 			t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 				options := append([]db.Option{db.WithPlannerOptions(mode.plannerOptions())}, cache.options...)

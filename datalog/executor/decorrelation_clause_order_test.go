@@ -40,7 +40,7 @@ func TestLegacyDecorrelationPreservesInterleavedClauseDependencies(t *testing.T)
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			baseline := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 			baselineResult, err := baseline.Execute(q)

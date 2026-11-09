@@ -19,7 +19,7 @@ import (
 // Actual behavior: The `or` clause appears to be ignored entirely, returning
 // all tuples regardless of whether they match either branch.
 func TestOrClauseBug(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -89,7 +89,7 @@ func TestOrClauseBug(t *testing.T) {
 
 // TestOrClauseBugTraced runs the same test with annotation tracing to understand the execution
 func TestOrClauseBugTraced(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

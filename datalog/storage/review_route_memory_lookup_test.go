@@ -58,7 +58,7 @@ func TestReviewRoute_MemorySourceGetElseAnswersOneValueOnEveryRoute(t *testing.T
 			want: [][]interface{}{{"one", "blue"}, {"two", "none"}},
 		},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -112,7 +112,7 @@ func TestReviewRoute_SliceSourceDatabaseFunctionsAnswerTheSlicesFacts(t *testing
 			want: [][]interface{}{},
 		},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})

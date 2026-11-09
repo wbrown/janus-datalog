@@ -21,7 +21,7 @@ func TestDatabasePlanCache(t *testing.T) {
 
 	// On the legs without attribute-fetch fusion the second pattern runs over
 	// the first's streaming group through the window scope the cache holds.
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.fusion }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -120,7 +120,7 @@ func TestDatabasePlanCache(t *testing.T) {
 // input and again with a non-empty one holds two entries of its text, one per
 // bound set.
 func TestDatabasePlanCacheServesAPlanMadeUnderABoundInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -179,7 +179,7 @@ func TestDatabaseWithoutCache(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -212,7 +212,7 @@ func TestExecutorCreationOverhead(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

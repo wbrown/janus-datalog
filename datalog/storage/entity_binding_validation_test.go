@@ -17,7 +17,7 @@ import (
 // because the strategy chosen is an optimization detail.
 
 func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -117,7 +117,7 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 // strings that are the L85 text of real entities. The join keeps ref-partnered
 // tuples and drops the rest; no error.
 func TestVEJoinOverMixedDataMatchesOnlyRefs(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -158,7 +158,7 @@ func TestVEJoinOverMixedDataMatchesOnlyRefs(t *testing.T) {
 // never an error and never a panic. The seek strategies drop such tuples at
 // construction; the hash join must agree.
 func TestBoundEntityNonMatchOnValuePositionJoin(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -230,7 +230,7 @@ func TestBoundEntityNonMatchOnValuePositionJoin(t *testing.T) {
 // variable treats a non-Keyword attribute value as a typed non-match on every
 // join strategy — no tuples from that tuple, never an error and never a panic.
 func TestBoundAttributeNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

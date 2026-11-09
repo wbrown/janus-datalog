@@ -51,7 +51,7 @@ func TestReuseStrategy_ASingleBoundValueIsValidatedWhenTheAttributeResolvesAsOne
 	pattern := q.Where[0].(*query.DataPattern)
 	d1, d2 := datalog.NewIdentity("d1"), datalog.NewIdentity("d2")
 	for _, sc := range refSchemas(t) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			t.Run(sc.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sc.s, DisableCache: true})
 				keys := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?d")}, []executor.Tuple{{d1}, {d2}})
@@ -71,7 +71,7 @@ func TestReuseStrategy_SeveralBoundPositionsSeekOnTheValueForADeclaredManyAlone(
 	pattern := q.Where[0].(*query.DataPattern)
 	a, d1, d2 := datalog.NewIdentity("a"), datalog.NewIdentity("d1"), datalog.NewIdentity("d2")
 	for _, sc := range refSchemas(t) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			t.Run(sc.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sc.s, DisableCache: true})
 				keys := executor.NewMaterializedRelation(
@@ -99,7 +99,7 @@ func TestDeclaredManyAttribute_TheMatcherAnswersItsMembersSeekingOnTheValue(t *t
 	q, err := parser.ParseQuery(`[:find ?a :in $ ?d :where [?a :t/ref ?d]]`)
 	require.NoError(t, err)
 	pattern := q.Where[0].(*query.DataPattern)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: many, DisableCache: true})
 			a, b := datalog.NewIdentity("a"), datalog.NewIdentity("b")
@@ -129,7 +129,7 @@ func TestDeclaredManyAttribute_TheMatcherAnswersItsMembersSeekingOnTheValue(t *t
 func TestDeclaredVectorAttribute_ABoundValueAnswersTheEntitiesCarryingIt(t *testing.T) {
 	vec, err := schema.NewBuilder().Attribute(":t/vec").Type(schema.TypeString).Vector().Add().Build()
 	require.NoError(t, err)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, disableCache := range []bool{false, true} {
 			name := mode.name
 			if disableCache {

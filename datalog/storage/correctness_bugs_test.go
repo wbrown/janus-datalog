@@ -61,7 +61,7 @@ func TestResolveLWWFromDatoms_TombstoneReturnsNil(t *testing.T) {
 //
 // Pre-fix: returns the tombstoned datom's V via line 867.
 func TestLookupAttribute_StorageFallback_Tombstone(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":user/name").Type(schema.TypeString).One().Add().

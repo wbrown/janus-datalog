@@ -36,21 +36,13 @@ func BenchmarkSymmetricVsAsymmetricHashJoin(b *testing.B) {
 					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
-					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
-						EnableSymmetricHashJoin: false, // Disable symmetric
-						DefaultHashTableSize:    256,
-					},
+					options:  ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256},
 				}
 				right := &StreamingRelation{
 					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
-					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
-						EnableSymmetricHashJoin: false,
-						DefaultHashTableSize:    256,
-					},
+					options:  ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256},
 				}
 
 				result := left.Join(right)
@@ -72,21 +64,13 @@ func BenchmarkSymmetricVsAsymmetricHashJoin(b *testing.B) {
 					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
-					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
-						EnableSymmetricHashJoin: true, // Enable symmetric
-						DefaultHashTableSize:    256,
-					},
+					options:  ExecutorOptions{EnableSymmetricHashJoin: true, DefaultHashTableSize: 256},
 				}
 				right := &StreamingRelation{
 					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
-					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
-						EnableSymmetricHashJoin: true,
-						DefaultHashTableSize:    256,
-					},
+					options:  ExecutorOptions{EnableSymmetricHashJoin: true, DefaultHashTableSize: 256},
 				}
 
 				result := left.Join(right)
@@ -128,21 +112,13 @@ func BenchmarkSymmetricHashJoinTableSize(b *testing.B) {
 						symbols:  leftSymbols,
 						iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 						size:     -1,
-						options: ExecutorOptions{
-							EnableStreamingJoins:    true,
-							EnableSymmetricHashJoin: true,
-							DefaultHashTableSize:    tableSize,
-						},
+						options:  ExecutorOptions{EnableSymmetricHashJoin: true, DefaultHashTableSize: tableSize},
 					}
 					right := &StreamingRelation{
 						symbols:  rightSymbols,
 						iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 						size:     -1,
-						options: ExecutorOptions{
-							EnableStreamingJoins:    true,
-							EnableSymmetricHashJoin: true,
-							DefaultHashTableSize:    tableSize,
-						},
+						options:  ExecutorOptions{EnableSymmetricHashJoin: true, DefaultHashTableSize: tableSize},
 					}
 
 					result := left.Join(right)

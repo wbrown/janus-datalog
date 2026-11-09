@@ -28,9 +28,7 @@ type Executor struct {
 // optimizer mode axis so the two can never drift.
 func defaultPlannerOptions() planner.PlannerOptions {
 	return planner.PlannerOptions{
-		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
-		EnableStreamingJoins:       false,
 		EnableStreamingAggregation: true,
 		EnableAttributeFetchFusion: true,
 	}
@@ -96,9 +94,7 @@ func anySourceRefusesUnknownAttributes(matcher PatternMatcher) bool {
 func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
 		Handler:                    opts.Handler,
-		EnableTrueStreaming:        opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:    opts.EnableSymmetricHashJoin,
-		EnableStreamingJoins:       opts.EnableStreamingJoins,
 		EnableStreamingAggregation: opts.EnableStreamingAggregation,
 		EnableScanSharing:          opts.EnableScanSharing,
 		EnableEntityPrefetch:       opts.EnableEntityPrefetch,

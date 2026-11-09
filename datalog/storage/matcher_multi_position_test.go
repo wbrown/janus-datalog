@@ -15,7 +15,7 @@ import (
 // TestMultiPositionBindingCorrectness verifies correctness when both E and V are bound
 // This is the core regression test for the fix
 func TestMultiPositionBindingCorrectness(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -103,7 +103,7 @@ func TestMultiPositionBindingCorrectness(t *testing.T) {
 
 // TestMultiPositionAllCombinations tests E+A, E+V, A+V, E+A+V bound cases
 func TestMultiPositionAllCombinations(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -216,7 +216,7 @@ func TestMultiPositionAllCombinations(t *testing.T) {
 // TestMultiPositionAsymmetricCardinality reproduces the slow query scenario
 // V has 1 distinct value, E has many distinct values
 func TestMultiPositionAsymmetricCardinality(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -273,7 +273,7 @@ func TestMultiPositionAsymmetricCardinality(t *testing.T) {
 
 // TestMultiPositionNoMatches ensures empty results are handled correctly
 func TestMultiPositionNoMatches(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -315,7 +315,7 @@ func TestMultiPositionNoMatches(t *testing.T) {
 
 // TestMultiPositionSingleBinding ensures single-tuple binding works
 func TestMultiPositionSingleBinding(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -355,7 +355,7 @@ func TestMultiPositionSingleBinding(t *testing.T) {
 
 // TestMultiPositionResultOrdering verifies results are same regardless of binding order
 func TestMultiPositionResultOrdering(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -423,7 +423,7 @@ func TestMultiPositionResultOrdering(t *testing.T) {
 // TestMultiPositionPerformance benchmarks the multi-position binding fix
 // This reproduces the slow query scenario: 81 entities, 1 code value
 func TestMultiPositionPerformance(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -602,7 +602,7 @@ func collectEntityIDs(result executor.Relation) []string {
 // where chooseBestMultiPositionStrategy iterates the relation, then the binding-driven
 // scan iterates it again — which a StreamingRelation refuses without Materialize().
 func TestMultiPositionWithStreamingBinding(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -692,7 +692,7 @@ func (it *sliceTupleIterator) Error() error { return it.err }
 // []byte is not comparable in Go and cannot be used as map keys.
 // This reproduces the panic: "hash of unhashable type []uint8"
 func TestMultiPositionWithBytesValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

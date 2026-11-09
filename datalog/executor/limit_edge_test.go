@@ -45,7 +45,7 @@ func catItemDatoms() []datalog.Datom {
 func TestSubqueryLimitIsPerInvocation(t *testing.T) {
 	matcher := factsDatabase(t, catItemDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
@@ -86,7 +86,7 @@ func TestSubqueryLimitIsPerInvocation(t *testing.T) {
 func TestSubqueryLimitTopPerGroup(t *testing.T) {
 	matcher := factsDatabase(t, catItemDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())
 
@@ -131,7 +131,7 @@ func TestSubqueryLimitTopPerGroup(t *testing.T) {
 func TestPureAggregateWithLimit(t *testing.T) {
 	matcher := factsDatabase(t, catItemDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -177,7 +177,7 @@ func TestPureAggregateWithLimit(t *testing.T) {
 func TestPullWithLimit(t *testing.T) {
 	matcher := factsDatabase(t, catItemDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 

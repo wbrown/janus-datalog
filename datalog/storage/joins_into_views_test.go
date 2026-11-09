@@ -168,7 +168,7 @@ func TestJoinsIntoDerivedViewsAnswerTheJoinOfSets(t *testing.T) {
 			}
 		}
 
-		for _, mode := range backendModes {
+		for _, mode := range legsFor(backendModes) {
 			t.Run(g.name+"/"+mode.name, func(t *testing.T) {
 				declared := schema.NewBuilder().
 					Attribute(":g/name").Type(schema.TypeString).One().Add().

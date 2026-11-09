@@ -18,7 +18,7 @@ import (
 // conversion, naming the value or the type.
 
 func TestAnUnsignedIntegerWithinRangeIsTheIntegerItEquals(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -103,7 +103,7 @@ func TestAValueOutsideTheDomainIsRefusedWhereItEnters(t *testing.T) {
 		{"an unsigned integer above int64's range", aboveRange, strconv.FormatUint(aboveRange, 10)},
 		{"a float32", float32(1), "float32"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

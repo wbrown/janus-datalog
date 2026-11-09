@@ -238,7 +238,7 @@ type FunctionEvaluatorIterator struct {
 	evaluation query.Evaluation
 	symbols    []query.Symbol // the source's symbols
 	align      bindingAlignment
-	bound   bool // the expression binds a symbol
+	bound      bool // the expression binds a symbol
 	// expands is true for the collection and relation forms, which read any
 	// number of tuples from a value; the scalar and tuple forms read one.
 	expands bool

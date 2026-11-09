@@ -13,7 +13,7 @@ import (
 // through it, and a window whose body streams reads the invocation through
 // its own window. The subject is a relation input with the sink first.
 func TestRules_AnInvocationContinuesOneEvaluationWhicheverRouteEachWindowTakes(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			counts := &ruleEventCounts{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: counts.handle})

@@ -18,7 +18,7 @@ import (
 // its entry. With the slot gone the key reads the cache's floor, which the rewind raised, so
 // a resolution that read the removed datoms is not stored for it.
 func TestTruncateToInvalidatesCache(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -63,7 +63,7 @@ func TestTruncateToInvalidatesCache(t *testing.T) {
 // deterministic by holding the in-flight transaction open, which parks the rollback in its
 // drain.
 func TestTruncateToDropsWritesStartedDuringRollback(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -110,7 +110,7 @@ func TestTruncateToDropsWritesStartedDuringRollback(t *testing.T) {
 // a duplicate (Lamport, ReplicaID). Run under -race to also catch unsynchronized access to
 // the drain state.
 func TestTruncateToConcurrentWritersNoCollision(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

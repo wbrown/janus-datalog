@@ -39,8 +39,8 @@ type queryCase struct {
 // runQueryCases commits the facts in both optimizer modes, runs each case's
 // query over them with its rule set and inputs, and asserts its rendered
 // tuples.
-func runQueryCases(t *testing.T, facts []fact, cases []queryCase) {
-	for _, mode := range optimizerModes {
+func runQueryCases(t *testing.T, facts []fact, cases []queryCase, reach ...option) {
+	for _, mode := range legsFor(optimizerModes, reach...) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -88,7 +88,7 @@ func TestSubqueryConstantArgument_TheInnerSymbolReadsTheConstant(t *testing.T) {
 		{"the constant's inner symbol also a find symbol the binding carries", "",
 			`[:find ?x ?y :where [?x :p ?v] [(q [:find ?v ?y :in $ ?v ?w :where [?y :q ?v] [?y :r ?w]] $ 5 ?x) [[?v ?y]]]]`, nil, nil},
 	}
-	runQueryCases(t, constantArgumentFacts(), cases)
+	runQueryCases(t, constantArgumentFacts(), cases, algebraOption, sharingOption, fusionOption, aggregationOption)
 }
 
 // The same call under every form that can enclose it with a header or a run
@@ -108,7 +108,7 @@ func TestSubqueryConstantArgument_UnderEveryEnclosingForm(t *testing.T) {
 		{"a relation input carrying the symbol", "",
 			`[:find ?x ?y :in $ [[?x ?v]] :where ` + call + `]`, []interface{}{[][]interface{}{{datalog.NewIdentity("a"), int64(1)}}}, []string{"a c"}},
 	}
-	runQueryCases(t, constantArgumentFacts(), cases)
+	runQueryCases(t, constantArgumentFacts(), cases, sharingOption, symmetricOption, fusionOption)
 }
 
 // Executing a query Explain has planned plans nothing: the plan cache's
@@ -122,7 +122,7 @@ func TestSubqueryConstantArgument_ExecutingAnExplainedQueryPlansNothing(t *testi
 		{"the inner symbol carried by the subject",
 			`[:find ?x ?y :where [?x :p ?v] [(q [:find ?y :in $ ?v ?w :where [?y :q 5]] $ 5 ?x) [[?y] ...]]]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, constantArgumentFacts())

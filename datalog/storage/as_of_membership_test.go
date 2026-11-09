@@ -25,7 +25,7 @@ func TestAnAsOfMembershipMatchAnswersTheMembershipAsOfItsTarget(t *testing.T) {
 	}
 	held, withdrawn, added := seeds["member:held"], seeds["member:withdrawn"], seeds["member:added"]
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, cacheMode := range cacheTestModes {
 			t.Run(mode.name+"/"+cacheMode.name, func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, DisableCache: cacheMode.disableCache})

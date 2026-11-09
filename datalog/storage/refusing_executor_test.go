@@ -22,7 +22,7 @@ func TestNewExecutor_OverARefusingMatcherRefusesAndAnswers(t *testing.T) {
 	require.NoError(t, err)
 	declared, err := parser.ParseQuery(`[:find ?v :where [?e :t/name ?v]]`)
 	require.NoError(t, err)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, RefuseUnknownAttributes: true})
 			tx := d.NewTransaction()

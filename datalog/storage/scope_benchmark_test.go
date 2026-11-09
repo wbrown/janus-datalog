@@ -91,7 +91,7 @@ func benchmarkScope(b *testing.B, subjects []scopeSubject, find, form string, wa
 		}
 		for _, n := range scopeBenchmarkSizes {
 			for _, windowCap := range scopeWindowCaps(n) {
-				for _, mode := range optimizerModes {
+				for _, mode := range legsFor(optimizerModes, allOptions...) {
 					b.Run(fmt.Sprintf("%d/%s/%s/cap%d", n, subject.name, mode.name, windowCap), func(b *testing.B) {
 						opts := mode.plannerOptions()
 						opts.ScopeWindowCap = windowCap

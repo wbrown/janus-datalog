@@ -23,7 +23,7 @@ func TestNotJoinBodyScanFailureIsTheQuerysError(t *testing.T) {
 			query.Variable{Name: entity}, query.Constant{Value: failing}, query.Variable{Name: value},
 		}}},
 	}}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			matcher := &failingScanMatcher{
 				failAttr: failing,
@@ -66,7 +66,7 @@ func TestFormFailureCompletesWithSuccessFalse(t *testing.T) {
 			query.Variable{Name: entity}, query.Constant{Value: failing}, query.Variable{Name: value},
 		}}}},
 	}}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.plannerOptions()
@@ -104,7 +104,7 @@ func TestInvocationOfAHeldPredicateOverAStreamingGroupJoinsAtTheCollapse(t *test
 	require.True(t, ok, "the rule set declares follows")
 	held := NewMaterializedRelation(head, []Tuple{{page(1), page(5)}, {page(2), page(5)}, {page(3), page(5)}, {page(4), page(5)}})
 	clauses := mustParse(t, `[:find ?a ?c :in $ % :where (follows ?a ?c)]`).Where
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			windows := 0
 			opts := mode.plannerOptions()
@@ -153,7 +153,7 @@ func TestSubqueryBodyScanFailureSurfacesWhenTheResultIsDriven(t *testing.T) {
 		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Variable{Name: entity}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{value}},
 	}}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			matcher := &failingScanMatcher{
 				failAttr: failing,

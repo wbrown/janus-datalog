@@ -224,7 +224,7 @@ func requireSmokeAnswers(t *testing.T, want, got smokeAnswers, when string) {
 // without attribute-fetch fusion, so a collection input reaches the
 // binding-driven paths, whose completion events are required.
 func TestBadgerAnswersWhatTheTreeStoreAnswersAndAgainAfterReopen(t *testing.T) {
-	for _, mode := range legsWhere(backendModes, func(m optimizerMode) bool { return !m.fusion }) {
+	for _, mode := range legsWhere(legsFor(backendModes, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
 		if mode.backend.Name != "badger" {
 			continue
 		}

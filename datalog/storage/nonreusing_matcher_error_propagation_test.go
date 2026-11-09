@@ -127,7 +127,7 @@ func TestNonReusingIterator_SurfacesDeferredScanError(t *testing.T) {
 // result. The error must surface either from the call itself or from draining
 // the returned relation.
 func TestMatchWithoutIteratorReuse_SurfacesDeferredBindingError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{ReplicaID: 1})
 			m := db.Matcher().(*PatternMatcher)

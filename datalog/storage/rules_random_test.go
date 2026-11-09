@@ -189,7 +189,7 @@ var closureForms = []struct {
 // input, bound at the first position through a pattern, and under a
 // negation.
 func TestRules_ClosureFormsOnRandomGraphsMatchTheReference(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			for trial := 0; trial < 25; trial++ {
 				spec := randomGraph(int64(trial))
@@ -234,7 +234,7 @@ func TestRules_ParityRecursionOnRandomGraphsMatchesTheReference(t *testing.T) {
 	const rules = `[[(odd ?a ?b) [?a :edge ?b]]
 	                [(odd ?a ?c) [?a :edge ?b] (even ?b ?c)]
 	                [(even ?a ?c) [?a :edge ?b] (odd ?b ?c)]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			for trial := 0; trial < 25; trial++ {
 				spec := randomGraph(int64(trial))
@@ -288,7 +288,7 @@ func TestRules_ConcurrentQueriesDeriveWhatSerialQueriesDerive(t *testing.T) {
 		{`[:find ?a ?b :in $ % :where (u ?a ?b)]`, nil},
 		{`[:find ?b :in $ % ?a :where (u ?a ?b)]`, []interface{}{nodeID(nodeName(5))}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: graphSchema()})
 			g := writeGraph(t, d, spec)
@@ -427,7 +427,7 @@ func TestRules_QueryLevelShapesOnRandomGraphsMatchTheReference(t *testing.T) {
 	                [(reach ?a ?c) (e ?a ?b) (reach ?b ?c)]]`
 	pair := func(a, b int64) string { return fmt.Sprintf("%d>%d", a, b) }
 	one := func(a int64) string { return fmt.Sprintf("%d", a) }
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			for seed := int64(1); seed <= 6; seed++ {
 				g := randomIntGraph(seed, 12, 18)
@@ -1017,9 +1017,9 @@ var scopeShapeCases = []scopeCase{
 // runScopeCases runs each case on twenty-five random coloured graphs in every
 // mode and reports every case whose tuples, or whose error, differ from the
 // reference's, naming the trial, the case, the graph's edges and colours.
-func runScopeCases(t *testing.T, cases []scopeCase) {
+func runScopeCases(t *testing.T, cases []scopeCase, reach ...option) {
 	t.Helper()
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, reach...) {
 		t.Run(mode.name, func(t *testing.T) {
 			for trial := 0; trial < 25; trial++ {
 				cg := randomColoredGraph(int64(trial))
@@ -1057,7 +1057,7 @@ func runScopeCases(t *testing.T, cases []scopeCase) {
 // under not-join, or-join and or-default-join, in a query and in a rule body,
 // derives on a random coloured graph what the reference computes.
 func TestRules_ShadowedLocalsOnRandomGraphsMatchTheReference(t *testing.T) {
-	runScopeCases(t, shadowedLocalCases)
+	runScopeCases(t, shadowedLocalCases, sharingOption, fusionOption)
 }
 
 // An invocation of a predicate whose first position must be bound derives on
@@ -1065,13 +1065,13 @@ func TestRules_ShadowedLocalsOnRandomGraphsMatchTheReference(t *testing.T) {
 // own branch or body binds that position, under not, or-join, or and
 // or-default, as it does when the enclosing scope binds it.
 func TestRules_InvocationBoundByItsBranchOnRandomGraphs(t *testing.T) {
-	runScopeCases(t, branchBoundCases)
+	runScopeCases(t, branchBoundCases, sharingOption, fusionOption)
 }
 
 // Every other shape a query invokes a rule in under a nested form derives on
 // a random coloured graph what the reference computes.
 func TestRules_ScopeShapesOnRandomGraphsMatchTheReference(t *testing.T) {
-	runScopeCases(t, scopeShapeCases)
+	runScopeCases(t, scopeShapeCases, sharingOption, symmetricOption, fusionOption)
 }
 
 // A random rule set holds four predicates, p0 and p1 in group 0 and p2 and
@@ -1552,7 +1552,7 @@ var ruleSetSeeds = []struct {
 // boundShapes, and the chain's free evaluation answers what Go computes. A
 // free invocation that fails is a failure.
 func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, span := range ruleSetSeeds {
 				for seed := span.start; seed < span.start+span.count; seed++ {

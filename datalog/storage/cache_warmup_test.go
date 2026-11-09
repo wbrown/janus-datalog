@@ -16,7 +16,7 @@ func createWarmupTestDatabase(t *testing.T, mode optimizerMode) *Database {
 }
 
 func TestWarmCacheSingleAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWarmupTestDatabase(t, mode)
 
@@ -70,7 +70,7 @@ func TestWarmCacheSingleAttribute(t *testing.T) {
 }
 
 func TestWarmCacheMultipleAttributes(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWarmupTestDatabase(t, mode)
 
@@ -118,7 +118,7 @@ func TestWarmCacheMultipleAttributes(t *testing.T) {
 }
 
 func TestWarmCacheEmptyAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWarmupTestDatabase(t, mode)
 
@@ -172,7 +172,7 @@ func TestWarmCacheEmptyAttribute(t *testing.T) {
 // an optimization the caller has switched off, and it keeps WarmCache callable
 // from setup code that does not know how the database was opened.
 func TestWarmCacheOnCacheDisabledDatabase(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
 
@@ -195,7 +195,7 @@ func TestWarmCacheOnCacheDisabledDatabase(t *testing.T) {
 }
 
 func TestWarmCacheIdempotent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWarmupTestDatabase(t, mode)
 

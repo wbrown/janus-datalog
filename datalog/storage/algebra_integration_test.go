@@ -78,7 +78,7 @@ func algebraReferenceAnswer(t *testing.T, queryText string) [][]interface{} {
 func TestAlgebraIntegration_SimplePatterns(t *testing.T) {
 	q := `[:find ?e ?title :where [?e :entity/type :entity.type/scenario] [?e :scenario/title ?title]]`
 	want := algebraReferenceAnswer(t, q)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 			got, err := executor.CollectTuples(db.Query(q))
@@ -96,7 +96,7 @@ func TestAlgebraIntegration_NotClause(t *testing.T) {
 	              [?e :entity/tag ?tag]
 	              (not [?e :entity/deleted true])]`
 	want := algebraReferenceAnswer(t, q)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 			got, err := executor.CollectTuples(db.Query(q))
@@ -113,7 +113,7 @@ func TestAlgebraIntegration_GetElse(t *testing.T) {
 	              (not [?e :entity/deleted true])
 	              [(get-else $ ?e :scenario/title "") ?title]]`
 	want := algebraReferenceAnswer(t, q)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 			got, err := executor.CollectTuples(db.Query(q))
@@ -136,7 +136,7 @@ func TestAlgebraIntegration_OrFallbackWithSubquery(t *testing.T) {
 	                      $ ?e) [[?count]]]
 	                  [(ground 0) ?count])]`
 	want := algebraReferenceAnswer(t, q)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 			{
@@ -177,7 +177,7 @@ func TestAlgebraIntegration_SubqueryWithNot(t *testing.T) {
 	                      $ ?e) [[?count]]]
 	                  [(ground 0) ?count])]`
 	want := algebraReferenceAnswer(t, q)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 			got, err := executor.CollectTuples(db.Query(q))
@@ -211,7 +211,7 @@ func TestAlgebraIntegration_SequentialQueries(t *testing.T) {
 			[][]interface{}{{s1, int64(3)}, {s2, int64(1)}}},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 
@@ -234,7 +234,7 @@ func TestAlgebraIntegration_SequentialQueries(t *testing.T) {
 // patterns [?t :task/status ...], [?t :task/key ...] each do full storage scans.
 // With prefetch, patterns 2+ should resolve from the EA cache.
 func TestAlgebraIntegration_PrefetchInDecorrelatedSubquery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var matchEvents []annotations.Event
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{
@@ -320,7 +320,7 @@ func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
 	                      $ ?e) [[?count ?total]]]
 	                  [(ground [0 0]) [?count ?total]])]`
 	want := algebraReferenceAnswer(t, q)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 			{

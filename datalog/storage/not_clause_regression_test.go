@@ -142,7 +142,7 @@ func buildComplexNotQuery() *query.Query {
 // complex query with multiple get-else, OR-with-subquery, comparison, and
 // order-by clauses.
 func TestNotClauseComplexQuery_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Tracing only; registered at open because everything the database
 			// builds is constructed with it.
@@ -261,7 +261,7 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 // from the enclosing query instead of treated as existential — the
 // classification query.ScopeOf assigns via ClauseScope.CorrelatesOptional.
 func TestNotClauseWithUnboundInnerVar_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

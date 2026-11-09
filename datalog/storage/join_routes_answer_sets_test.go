@@ -118,7 +118,7 @@ func TestJoinRoutesAnswerTheJoinOfSets(t *testing.T) {
 			want:  [][]interface{}{}},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			s := schema.NewSchema()
@@ -189,7 +189,7 @@ func TestAJoinWithAnEmptySideAnswersEmptyThoughTheOtherSideFails(t *testing.T) {
 		`[:find ?p ?m :where [?p :item/name ?n] [(+ ?n 1) ?m] [?q :item/missing ?m]]`,
 		`[:find ?p ?m :where [?q :item/missing ?m] [?p :item/name ?n] [(+ ?n 1) ?m]]`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()

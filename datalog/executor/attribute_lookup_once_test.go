@@ -61,7 +61,7 @@ func (m *lookupCountingMatcher) CanFuseAttributeFetch(source query.Symbol, attr 
 // label, every second with a kind, every third with a nick, and every fifth
 // retired.
 type lookupItems struct {
-	count                        int
+	count                          int
 	id, kind, nick, label, retired datalog.Keyword
 }
 
@@ -114,8 +114,8 @@ type countedRun struct {
 // runCountingLookups runs text over the item fixture on every leg of the
 // optimizer matrix, under the leg's options, with the EA cache on and off,
 // through a lookupCountingMatcher, and hands check each run.
-func runCountingLookups(t *testing.T, f lookupItems, fuses bool, text string, check func(t *testing.T, run countedRun)) {
-	for _, mode := range OptimizerModes {
+func runCountingLookups(t *testing.T, f lookupItems, fuses bool, text string, check func(t *testing.T, run countedRun), reach ...Option) {
+	for _, mode := range LegsFor(t, reach...) {
 		for _, disableCache := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/cache-off=%v", mode.Name(), disableCache), func(t *testing.T) {
 				d, err := storage.OpenFacts(f.facts(), storage.DatabaseOptions{DisableCache: disableCache})

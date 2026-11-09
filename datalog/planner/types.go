@@ -149,12 +149,8 @@ type PlannerOptions struct {
 	// every source, so a planner given none declines every get-else rewrite.
 	MatchAnswersLookup algebra.MatchAnswersLookup
 
-	// Executor streaming options - control memory vs performance tradeoffs
-	EnableTrueStreaming     bool // Avoid auto-materialization of StreamingRelation (default: true)
-	EnableSymmetricHashJoin bool // Use symmetric hash join for stream-to-stream joins (default: false)
-
-	// Executor join/aggregation options
-	EnableStreamingJoins       bool // Return StreamingRelation from joins instead of materializing
+	// Executor join and aggregation options
+	EnableSymmetricHashJoin    bool // Use symmetric hash join for stream-to-stream joins (default: false)
 	EnableStreamingAggregation bool // Enable streaming aggregation (default: true)
 
 	// Rule evaluation bounds, each an error naming the predicates and the

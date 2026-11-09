@@ -40,7 +40,7 @@ func TestRules_RenamingABranchLocalChangesNothing(t *testing.T) {
 			`[:find ?x ?y ?k :in $ % :where [?x :color ?c] [?y :color ?c] (or-default-join [[?x] ?k] (and (r ?x ?q) [(ground 1) ?k]) [(ground 0) ?k])]`,
 			[]string{"n1>n1>1", "n1>n3>1", "n2>n2>0", "n3>n1>0", "n3>n3>0"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: coloredGraphSchema()})
 			names := writeColoredGraph(t, d, g)
@@ -90,7 +90,7 @@ func TestRules_AnInvocationSeededByItsBranchDerivesWhatTheSeedReaches(t *testing
 			reached},
 	}
 	const flat = `[:find ?x ?y :in $ % :where [?x :name "n1"] (or-join [?x ?y] (and [?x :edge ?m] (r ?m ?y)) (and [?x :name "zz"] [(ground 0) ?y]))]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			adorned := &rewriteAdornments{}
 			opts := mode.plannerOptions()
@@ -140,7 +140,7 @@ func TestRules_TwoAlikeInvocationsUnderAFormAnswerInEitherOrder(t *testing.T) {
 			`[:find ?xn ?zn ?w :in $ % [[?xn ?zn]] :where [?x :name ?xn] [?z :name ?zn] (or-join [[?x ?z] ?w] (and (reach ?x ?w) (reach ?z ?u) [(= ?w ?u)]) (and [?x :name "zz"] [(ground 0) ?w]))]`,
 			func(x, z string) []string { return []string{x + ">" + z + ">n6"} }},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			adorned := &rewriteAdornments{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})

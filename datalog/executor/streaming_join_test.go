@@ -9,24 +9,20 @@ import (
 )
 
 func TestStreamingHashJoin(t *testing.T) {
-	// Test with streaming enabled - create relations with options
-	opts := ExecutorOptions{EnableStreamingJoins: true}
-	left := NewMaterializedRelationWithOptions(
+	left := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name")},
 		[]Tuple{
 			{"u1", "Alice"},
 			{"u2", "Bob"},
 		},
-		opts,
 	)
 
-	right := NewMaterializedRelationWithOptions(
+	right := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?age")},
 		[]Tuple{
 			{"u1", 25},
 			{"u2", 30},
 		},
-		opts,
 	)
 
 	result := HashJoin(left, right, []query.Symbol{datalog.NewSymbol("?user")})
@@ -50,33 +46,28 @@ func TestStreamingHashJoin(t *testing.T) {
 }
 
 func TestStreamingHashJoinChain(t *testing.T) {
-	// Test with streaming enabled - create relations with options
-	opts := ExecutorOptions{EnableStreamingJoins: true}
-	users := NewMaterializedRelationWithOptions(
+	users := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name")},
 		[]Tuple{
 			{"u1", "Alice"},
 			{"u2", "Bob"},
 		},
-		opts,
 	)
 
-	ages := NewMaterializedRelationWithOptions(
+	ages := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?age")},
 		[]Tuple{
 			{"u1", 25},
 			{"u2", 30},
 		},
-		opts,
 	)
 
-	depts := NewMaterializedRelationWithOptions(
+	depts := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?dept")},
 		[]Tuple{
 			{"u1", "Engineering"},
 			{"u2", "Sales"},
 		},
-		opts,
 	)
 
 	// First join

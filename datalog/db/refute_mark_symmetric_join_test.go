@@ -47,7 +47,7 @@ func TestRefuteMark_EveryJoinStrategyAnswersAFailureBesideAnEmptySideAlike(t *te
 		return out
 	}
 	want := answers(t, referenceMode)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, symmetricOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			got := answers(t, mode)
 			for i, q := range queries {

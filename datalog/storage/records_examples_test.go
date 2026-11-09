@@ -43,7 +43,7 @@ func refusedAtAnyBoundary(src string) error {
 
 func TestDatomicCompatibilityExamples_RunAsStated(t *testing.T) {
 	p1, q1, q2 := datalog.NewIdentity("p1"), datalog.NewIdentity("q1"), datalog.NewIdentity("q2")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -111,7 +111,7 @@ func TestEnumerate_AnswersAlikeWithThePatternWrittenAfterIt(t *testing.T) {
 	s, err := schema.NewBuilder().Attribute(":character/skills").Type(schema.TypeString).Vector().Add().Build()
 	require.NoError(t, err)
 	want := [][]interface{}{{int64(0), "stealth"}, {int64(1), "archery"}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		if mode.backend.Name == "badger-emulator" {
 			continue
 		}
@@ -143,7 +143,7 @@ func TestEnumerate_AnswersAlikeWithThePatternWrittenAfterIt(t *testing.T) {
 // case's tuples are logged for the assertion that follows the observation.
 func TestExpressionBindingForms_AnswerAsTheRecordsState(t *testing.T) {
 	s1, s2 := datalog.NewIdentity("s1"), datalog.NewIdentity("s2")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		if mode.backend.Name == "badger-emulator" {
 			continue
 		}
@@ -200,7 +200,7 @@ func TestExpressionBindingForms_AnswerAsTheRecordsState(t *testing.T) {
 func TestSubqueryBinding_EverySpellingAnswersTheRelation(t *testing.T) {
 	o := datalog.NewIdentity("o")
 	want := [][]interface{}{{o, int64(0)}, {o, int64(1)}, {o, int64(2)}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -227,7 +227,7 @@ func TestSubqueryBinding_EverySpellingAnswersTheRelation(t *testing.T) {
 // the caller gave one.
 func TestTxInstant_IsTheTimeTheTransactionWasOpenedAt(t *testing.T) {
 	at := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransactionAt(at)
@@ -276,7 +276,7 @@ func TestFork_MemoryTreesForksAndABadgerStoreRefuses(t *testing.T) {
 // answer: a flat header of outputs, and a required run of a scalar input.
 func TestQueryBuilderOrJoinExamples_BuildAndAnswer(t *testing.T) {
 	ann, bob, cy := datalog.NewIdentity("ann"), datalog.NewIdentity("bob"), datalog.NewIdentity("cy")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -318,7 +318,7 @@ func TestRefusingDatabase_RefusesARuleBodysUndeclaredAttributeUnderFreeAndBoundI
 	s, err := schema.NewBuilder().Attribute(":edge").Type(schema.TypeRef).Many().Add().Build()
 	require.NoError(t, err)
 	a, b := datalog.NewIdentity("a"), datalog.NewIdentity("b")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, RefuseUnknownAttributes: true})
 			tx := d.NewTransaction()

@@ -26,7 +26,7 @@ type pullUser struct {
 // PullInto result should reflect the fallback value (v1), not the
 // superseded latest (v2) and not nil.
 func TestPullInto_UniqueFallback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 

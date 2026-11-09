@@ -43,7 +43,7 @@ func TestRefuteAlgebra_GetElseOnAMemorySourceAnswersItsLookupOnEveryRoute(t *tes
 			inputs: []interface{}{`[[(valued ?e ?v) [$mem ?e :t/name _] [(get-else $mem ?e :t/a "none") ?v]]]`},
 		},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})

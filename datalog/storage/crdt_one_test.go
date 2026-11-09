@@ -12,7 +12,7 @@ import (
 // TestCardinalityOneCurrentValue verifies that cardinality-one queries return
 // only the highest ElementID (current value) in CRDT mode.
 func TestCardinalityOneCurrentValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -88,7 +88,7 @@ func TestCardinalityOneCurrentValue(t *testing.T) {
 
 // TestCardinalityOneHistory verifies that MatchWithHistory returns all versions
 func TestCardinalityOneHistory(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -156,7 +156,7 @@ func TestCardinalityOneHistory(t *testing.T) {
 
 // TestCardinalityOneAsOf verifies that MatchAsOf returns the correct historical value
 func TestCardinalityOneAsOf(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -229,7 +229,7 @@ func TestCardinalityOneAsOf(t *testing.T) {
 // TestCardinalityOneNoRead verifies that Set() doesn't read existing value
 // (append-only CRDT semantics)
 func TestCardinalityOneNoRead(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -298,7 +298,7 @@ func TestCardinalityOneNoRead(t *testing.T) {
 
 // TestSetCardinalityValidation verifies that Set() rejects non-cardinality-one attributes
 func TestSetCardinalityValidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -331,7 +331,7 @@ func TestSetCardinalityValidation(t *testing.T) {
 // When two writes have the same Lamport value but different ReplicaIDs,
 // the higher ReplicaID should win (LWW semantics).
 func TestCardinalityOneConcurrentWrites(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -455,7 +455,7 @@ func TestCardinalityOneConcurrentWrites(t *testing.T) {
 // TestSchemalessDefaultsToCardinalityOne verifies that schemaless attributes
 // default to cardinality-one behavior
 func TestSchemalessDefaultsToCardinalityOne(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -508,7 +508,7 @@ func TestSchemalessDefaultsToCardinalityOne(t *testing.T) {
 // resolution. For cardinality-one (LWW), this means ALL historical values are
 // returned, not just the winner.
 func TestHistoryMode(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

@@ -15,7 +15,7 @@ import (
 // TestTupleBuilderCacheConcurrency tests that the tuple builder cache is thread-safe
 // This reproduces a concurrent map access bug.
 func TestTupleBuilderCacheConcurrency(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -63,7 +63,7 @@ func TestTupleBuilderCacheConcurrency(t *testing.T) {
 
 // TestTupleBuilderCacheSharing tests that AsOf matchers share the cache correctly
 func TestTupleBuilderCacheSharing(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -97,7 +97,7 @@ func TestTupleBuilderCacheSharing(t *testing.T) {
 // one matcher serve the next, instead of every Matcher() call starting with
 // an empty cache. Temporal handles inherit the parent's population.
 func TestDatabaseMatchersShareTupleBuilders(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -134,7 +134,7 @@ func TestDatabaseMatchersShareTupleBuilders(t *testing.T) {
 // and paid an L85 render per Match (the per-entity resolve allocation
 // regression in docs/perf/storage_correctness_campaign_benchstat_2026-07-20.txt).
 func TestTupleBuilderCacheKeysOnStructure(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -164,7 +164,7 @@ func TestTupleBuilderCacheKeysOnStructure(t *testing.T) {
 // zero allocations: the key is a stack-built struct over a typed map, so a
 // cache whose purpose is avoiding work never allocates to ask for it.
 func TestTupleBuilderCacheLookupDoesNotAllocate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -192,7 +192,7 @@ func TestTupleBuilderCacheLookupDoesNotAllocate(t *testing.T) {
 // TestIteratorWorkspaceIsolation verifies that two iterators on the same
 // pattern have independent tuple storage (workspace reuse doesn't cross iterators).
 func TestIteratorWorkspaceIsolation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -275,7 +275,7 @@ func TestIteratorWorkspaceIsolation(t *testing.T) {
 // concurrent iterator creation and iteration. This test should be run
 // with -race flag to detect any data races introduced by workspace reuse.
 func TestIteratorWorkspaceConcurrency(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

@@ -35,7 +35,7 @@ func collectEntityResults(t *testing.T, rel executor.Relation) map[string]bool {
 // named in the required run, reaches both branches, and exactly the entity
 // whose name or code equals it matches.
 func TestOrJoinInBoundCorrelate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -74,7 +74,7 @@ func TestOrJoinInBoundCorrelate(t *testing.T) {
 // one of the two inputs the required run names, so each input quantifies
 // its own branch.
 func TestOrJoinInBoundMixedCorrelates(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -119,7 +119,7 @@ func TestOrJoinInBoundMixedCorrelates(t *testing.T) {
 // bound by a pattern of the enclosing scope: named in the required run, it
 // reaches both branches as an input does.
 func TestOrJoinClauseBoundCorrelate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, symmetricOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -158,7 +158,7 @@ func TestOrJoinClauseBoundCorrelate(t *testing.T) {
 // TestOrJoinInBoundMixedCorrelatesAggregate pins the aggregate find over the
 // mixed shape: one tuple, the count of the entities the branches admit.
 func TestOrJoinInBoundMixedCorrelatesAggregate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -202,7 +202,7 @@ func TestOrJoinInBoundMixedCorrelatesAggregate(t *testing.T) {
 // TestOrJoinTupleInputEnvironment pins a tuple input's symbol as an input
 // like a scalar: named in the required run, ?ref reaches both branches.
 func TestOrJoinTupleInputEnvironment(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -241,7 +241,7 @@ func TestOrJoinTupleInputEnvironment(t *testing.T) {
 // reads an input through the or-join's header, which names it in the
 // required run.
 func TestOrJoinBranchPredicateReadsAnInputThroughTheHeader(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -279,7 +279,7 @@ func TestOrJoinBranchPredicateReadsAnInputThroughTheHeader(t *testing.T) {
 // taken per entity and input, true for the entity named alpha and false for
 // the other.
 func TestOrDefaultJoinBranchConsumesEnvironment(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -326,7 +326,7 @@ func TestOrDefaultJoinBranchConsumesEnvironment(t *testing.T) {
 // first branch is two patterns, one reading the input ?ref through the
 // required run: the entity named alpha gets its code, the other the default.
 func TestOrDefaultJoinCacheableBranchConsumesEnvironment(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -374,7 +374,7 @@ func TestOrDefaultJoinCacheableBranchConsumesEnvironment(t *testing.T) {
 // TestOrJoinWideHeaderInBound is a regression pin: the wide-header rewrite of
 // the both-branches shape works today and must keep working.
 func TestOrJoinWideHeaderInBound(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -413,7 +413,7 @@ func TestOrJoinWideHeaderInBound(t *testing.T) {
 // named in the required run, reaching the branches when a relation input
 // binds ?r as a group of two regions the plan runs once over.
 func TestOrJoinEnvironmentBesideARelationInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -457,7 +457,7 @@ func TestOrJoinEnvironmentBesideARelationInput(t *testing.T) {
 // bridges the groups its keys span — see
 // BUG_NOT_SPANNING_DISJOINT_GROUPS_APPLIED_PER_GROUP.
 func TestOrJoinBranchNotReadsAnExternalThroughTheHeader(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -519,7 +519,7 @@ func TestOrJoinBranchNotReadsAnExternalThroughTheHeader(t *testing.T) {
 // for the inference forms: a plain-or branch whose only outer correlate is
 // NOT-consumed must pull that correlate's group into the outer relation.
 func TestOrBranchNotConsumesExternalInSeparateGroup(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -562,7 +562,7 @@ func TestOrBranchNotConsumesExternalInSeparateGroup(t *testing.T) {
 // TestOrJoinInBoundCorrelateInSubquery pins an or-join inside a subquery
 // reading the subquery's own input ?r through its required run.
 func TestOrJoinInBoundCorrelateInSubquery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

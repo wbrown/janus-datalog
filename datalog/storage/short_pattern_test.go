@@ -10,7 +10,7 @@ import (
 // omits unbound: [?e :t/n] answers what [?e :t/n _] answers, and [?e] what
 // [?e _ _] answers, with or without a source named, on both planner paths.
 func TestQuery_AShortPatternLeavesItsTrailingPositionsUnbound(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, []fact{

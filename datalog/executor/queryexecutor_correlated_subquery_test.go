@@ -47,7 +47,7 @@ func TestQueryExecutorCorrelatedSubquery(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			opts := mode.ZeroPlannerOptions()
 			exec := NewExecutorWithOptions(matcher, nil, opts)

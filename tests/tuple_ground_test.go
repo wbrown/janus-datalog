@@ -343,7 +343,7 @@ func testTupleGroundQB(t *testing.T, db *storage.Database) {
 // Note: OR clause fallback behavior with pure pattern matching (without subqueries) has
 // different semantics than with subqueries. This tests the pattern-only case.
 func TestTupleGroundQBInOr(t *testing.T) {
-	eachMode(t, testTupleGroundQBInOr)
+	eachMode(t, testTupleGroundQBInOr, sharingOption, fusionOption)
 }
 
 func testTupleGroundQBInOr(t *testing.T, db *storage.Database) {

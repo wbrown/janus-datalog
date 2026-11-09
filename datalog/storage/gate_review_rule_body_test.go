@@ -100,7 +100,7 @@ func TestGateReview_ABoundRuleBodysGetElseAnswersAlikeOnASecondRunOfItsText(t *t
 				return second
 			}
 			want := secondRun(referenceMode)
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 				require.Equal(t, want, secondRun(mode), "%s answers the second run otherwise than the reference leg", mode.name)
 			}
 		})

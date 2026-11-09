@@ -13,7 +13,7 @@ import (
 // an attribute its schema does not declare, and one opened without it returns
 // no tuple for the same query.
 func TestOpenRefusesUnknownAttributesWhenAsked(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s := declaredDumpSchema(t, "the subject's tags")
 			path := ""

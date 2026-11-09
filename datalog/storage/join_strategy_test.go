@@ -31,7 +31,7 @@ func TestVerifyStrategyUsed(t *testing.T) {
 
 	// On the legs without attribute-fetch fusion the email pattern runs as
 	// the join whose strategy each subtest reads.
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.fusion }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -154,7 +154,7 @@ func TestMaterializationDetection(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -193,22 +193,18 @@ func TestMaterializationDetection(t *testing.T) {
 
 			// Create matcher with instrumentation registered on its options
 			var events []string
-			opts := executor.ExecutorOptions{
-				EnableStreamingJoins:    true,
-				EnableSymmetricHashJoin: false,
-				DefaultHashTableSize:    256,
-				Handler: func(event annotations.Event) {
-					if event.Name == "storage/join-strategy" {
-						joinStrategy := event.Data["join_strategy"]
-						bindingSize := event.Data["binding_size"]
-						events = append(events, fmt.Sprintf("Join strategy: %v (binding size: %v)", joinStrategy, bindingSize))
-					}
-					if event.Name == "storage/reuse-strategy" {
-						strategyType := event.Data["strategy_type"]
-						events = append(events, fmt.Sprintf("Reuse strategy: %v", strategyType))
-					}
-				},
-			}
+			opts := executor.ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256, Handler: func(event annotations.Event) {
+				if event.Name == "storage/join-strategy" {
+					joinStrategy := event.Data["join_strategy"]
+					bindingSize := event.Data["binding_size"]
+					events = append(events, fmt.Sprintf("Join strategy: %v (binding size: %v)", joinStrategy, bindingSize))
+				}
+				if event.Name == "storage/reuse-strategy" {
+					strategyType := event.Data["strategy_type"]
+					events = append(events, fmt.Sprintf("Reuse strategy: %v", strategyType))
+				}
+			}}
+
 			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())

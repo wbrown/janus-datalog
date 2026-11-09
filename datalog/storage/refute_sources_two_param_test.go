@@ -147,7 +147,7 @@ func TestRefuteSources_TwoParameterDecorrelationAnswersAlikeOnBothPaths(t *testi
 	}
 	outcomes := map[bool]map[string]string{}
 	applied := map[string]bool{}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		var decorrelated bool
 		handler := func(event annotations.Event) {
 			if event.Name == annotations.AlgebraDecorrelateApply {
@@ -217,7 +217,7 @@ func TestRefuteSources_EachTwoParameterSubqueryTakesTheDecorrelationDecisionOfIt
 			declined = append(declined, event.Data["reason"])
 		}
 	}
-	d := createOptimizerModeDB(t, legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra })[0], DatabaseOptions{AnnotationHandler: handler})
+	d := createOptimizerModeDB(t, legsWhere(legsFor(optimizerModes, algebraOption, aggregationOption), func(m optimizerMode) bool { return m.algebra })[0], DatabaseOptions{AnnotationHandler: handler})
 	commitFacts(t, d, refuteTwoParamFacts())
 	shapes := map[bool]int{}
 	for _, query := range refuteTwoParamQueries() {

@@ -151,7 +151,7 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -170,11 +170,7 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 					}
 
 					// Create executor with appropriate options
-					opts := executor.ExecutorOptions{
-						EnableStreamingJoins:    true,
-						EnableSymmetricHashJoin: tc.symmetric,
-						DefaultHashTableSize:    256,
-					}
+					opts := executor.ExecutorOptions{EnableSymmetricHashJoin: tc.symmetric, DefaultHashTableSize: 256}
 
 					matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
@@ -268,7 +264,7 @@ func TestStorageBackedJoinLimitE2E(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -285,11 +281,7 @@ func TestStorageBackedJoinLimitE2E(t *testing.T) {
 						t.Fatalf("Parse failed: %v", err)
 					}
 
-					opts := executor.ExecutorOptions{
-						EnableStreamingJoins:    true,
-						EnableSymmetricHashJoin: tc.symmetric,
-						DefaultHashTableSize:    256,
-					}
+					opts := executor.ExecutorOptions{EnableSymmetricHashJoin: tc.symmetric, DefaultHashTableSize: 256}
 
 					matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())

@@ -42,7 +42,7 @@ func TestExecuteWithRelationsRefusesARelationCountThatDiffersFromTheInputs(t *te
 			given:     1, bound: 2,
 		},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())

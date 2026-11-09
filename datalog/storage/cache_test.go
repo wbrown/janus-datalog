@@ -110,7 +110,7 @@ func (f *cacheFixture) version(t *testing.T, attr datalog.Keyword) datalog.Eleme
 // hit reads no index. Reporting entry.scanned on a hit would make a trace of a
 // thousand hits claim a thousand index reads that never happened.
 func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		// want is the keys the resolution takes from the index: under
 		// cardinality one the group's first key, the current value, and under
 		// many and vector the whole group, one key per datom written.
@@ -165,7 +165,7 @@ func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 // reader under cardinality one is served the latest member, never the set's
 // view, whatever reader resolved the pair before.
 func TestCacheEntryUnderAnotherCardinalityIsNotAHit(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "x")
@@ -249,7 +249,7 @@ func TestCacheNewCache(t *testing.T) {
 // A second resolve of a fresh entry is a hit: the same entry, with no index
 // read.
 func TestCacheFreshness(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -272,7 +272,7 @@ func TestCacheFreshness(t *testing.T) {
 // An invalidated entry is rebuilt from the store once the key's version moves
 // past it.
 func TestCacheInvalidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -299,7 +299,7 @@ func TestCacheInvalidation(t *testing.T) {
 // An entry behind the key's version is rebuilt from the store, and the rebuilt
 // entry carries the version of the datom it resolved.
 func TestCacheRebuildWhenStale(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -324,7 +324,7 @@ func TestCacheRebuildWhenStale(t *testing.T) {
 }
 
 func TestUpdateMaxVersion(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "test")
@@ -372,7 +372,7 @@ func TestUpdateMaxVersionConcurrency(t *testing.T) {
 }
 
 func TestCacheRebuildCardinalityOne(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -390,7 +390,7 @@ func TestCacheRebuildCardinalityOne(t *testing.T) {
 }
 
 func TestCacheRebuildCardinalityMany(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "warrior", "veteran")
@@ -411,7 +411,7 @@ func TestCacheRebuildCardinalityMany(t *testing.T) {
 }
 
 func TestCacheRebuildCardinalityVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.skills, "stealth", "archery", "lockpicking")
@@ -430,7 +430,7 @@ func TestCacheRebuildCardinalityVector(t *testing.T) {
 }
 
 func TestCacheManySetMembership(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "a", "b", "c")
@@ -455,7 +455,7 @@ func TestCacheManySetMembership(t *testing.T) {
 }
 
 func TestCacheManyEmptyAfterRemoves(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "a")
@@ -471,7 +471,7 @@ func TestCacheManyEmptyAfterRemoves(t *testing.T) {
 }
 
 func TestCacheClear(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -497,7 +497,7 @@ func TestCacheClear(t *testing.T) {
 // A cache with nothing in it, as after a restart, resolves the first access
 // from the store and serves the second from the entry.
 func TestCacheAfterRestart(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -519,7 +519,7 @@ func TestCacheAfterRestart(t *testing.T) {
 // entry, for all three cardinalities, and the failing miss opens one scan:
 // the resolver is invoked once and a failed rebuild is not retried.
 func TestCacheRebuildStoreError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, tc := range []struct {
 			name  string
 			write func(t *testing.T, f *cacheFixture) datalog.Keyword

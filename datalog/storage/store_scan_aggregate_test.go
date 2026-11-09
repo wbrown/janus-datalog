@@ -72,7 +72,7 @@ func (s scanFaultingIterator) Close() error {
 func TestAPureAggregateAnswersAStoreScansFailuresAlikeOnEveryLeg(t *testing.T) {
 	score := datalog.NewKeyword(":item/score")
 	answers := map[string]error{}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, allOptions...) {
 		var faulting atomic.Bool
 		options := mode.plannerOptions()
 		db, err := NewDatabaseWithOptions(DatabaseOptions{
@@ -94,7 +94,7 @@ func TestAPureAggregateAnswersAStoreScansFailuresAlikeOnEveryLeg(t *testing.T) {
 		answers[mode.name] = err
 	}
 	reference := optimizerModes[0].name
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, allOptions...) {
 		require.Equal(t, errors.Is(answers[reference], errStoreClose), errors.Is(answers[mode.name], errStoreClose),
 			"the close failure reaches the caller on %s exactly when it does on %s: %v against %v", mode.name, reference, answers[mode.name], answers[reference])
 	}

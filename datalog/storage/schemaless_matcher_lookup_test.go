@@ -17,7 +17,7 @@ func TestAMatcherWithNoSchemaAnswersThroughEitherLookup(t *testing.T) {
 	name := datalog.NewKeyword(":person/name")
 	nick := datalog.NewKeyword(":person/nick")
 	alice := datalog.NewIdentity("person:alice")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, disableCache := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/cache-off=%v", mode.name, disableCache), func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: disableCache})

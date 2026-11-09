@@ -9,7 +9,7 @@ import (
 )
 
 func TestMemoryDatabaseRoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			database, err := db.OpenMemory(db.WithReplicaID(7), db.WithPlannerOptions(mode.plannerOptions()))
 			require.NoError(t, err)

@@ -65,7 +65,7 @@ func TestRefuteEval_AFailureWhereEveryOtherClauseHoldsFailsEveryReadEntry(t *tes
 			return err
 		}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -95,7 +95,7 @@ func TestRefuteEval_AFailingGroupBesideAnEmptyGroupFailsNoQuery(t *testing.T) {
 		`[:find ?p :where [?p :item/name _] [?q :item/v ?a] [(+ ?a 1) ?b] [?r :item/missing _]]`,
 		`[:find ?p :where [?p :item/name _] [?r :item/missing _] [?q :item/v ?a] [(+ ?a 1) ?b]]`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()

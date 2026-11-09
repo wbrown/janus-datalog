@@ -36,7 +36,7 @@ func TestAQueryResultAnswersTheCopyContractFromItsIterator(t *testing.T) {
 		Attribute(":t/tag").Type(schema.TypeString).Many().Add().
 		Build()
 	require.NoError(t, err)
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 			commitFacts(t, d, facts)

@@ -17,7 +17,7 @@ func TestFindBoundaryReadsAGroupMarkedForReplay(t *testing.T) {
 		{y0, ":q", int64(1)},
 	}
 	count := `[(q [:find (count ?s) :in $ ?e :where [?s :r ?e]] $ ?e) [[?c]]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -45,7 +45,7 @@ func TestFindBoundaryTakesTheVerdictUnderAggregation(t *testing.T) {
 		{e0, ":p", int64(1)},
 		{y0, ":q", int64(1)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -73,7 +73,7 @@ func TestProductOverAnEmptyGroupLeavesTheOtherGroupReadable(t *testing.T) {
 	}
 	count := `[(q [:find (count ?s) :in $ ?e :where [?s :r ?e]] $ ?e) [[?c]]]`
 	text := "[:find ?e ?y ?c :where [?e :absent _] [?y :q _] " + count + "]"
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)

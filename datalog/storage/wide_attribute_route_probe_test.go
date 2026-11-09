@@ -87,7 +87,7 @@ func TestWideAttributeBindingProbeEveryRoute(t *testing.T) {
 		{"per-binding, E written, A bound", false, nil, true, onAlice, func() executor.Relation { return aOnly(executor.Tuple{wide}) }, nil, string(annotations.ScanPerBinding)},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, r := range routes {
 			t.Run(mode.name+"/"+r.name, func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: !r.cache})

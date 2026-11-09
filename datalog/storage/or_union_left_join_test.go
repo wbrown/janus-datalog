@@ -23,7 +23,7 @@ import (
 //
 // This avoids correlated execution entirely — both branches run independently.
 func TestOrUnionAsLeftJoin(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(e annotations.Event) {

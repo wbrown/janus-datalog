@@ -16,7 +16,7 @@ import (
 // A user was trying to create entities, add facts, and query them.
 // q1 (count with blank value) worked; q2 (blank in entity position) did not.
 func TestIssue61_ExampleUseCases(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 

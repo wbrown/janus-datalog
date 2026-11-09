@@ -70,7 +70,7 @@ func resolveOne(db *Database, e datalog.Identity, a datalog.Keyword) (any, error
 // possible. With the in-flight fix the read sees v2; without it (the commit's
 // arrival not yet recorded, entry still v1) it would see the stale v1.
 func TestCommit_NoStaleCachedReadAfterCommitReturns(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openInFlightDB(t, mode)
 			e := datalog.NewIdentity("e1")
@@ -105,7 +105,7 @@ func TestCommit_NoStaleCachedReadAfterCommitReturns(t *testing.T) {
 // move backward for a given reader. Run under -race to catch data races in the
 // sentinel/CAS paths.
 func TestCommit_ConcurrentReadersSeeCommittedValue(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openInFlightDB(t, mode)
 			e := datalog.NewIdentity("e1")
@@ -171,7 +171,7 @@ func TestCommit_ConcurrentReadersSeeCommittedValue(t *testing.T) {
 // unchanged) and asserts the cache rebuilds the correct pre-"commit" value and
 // isn't left poisoned for the next real commit.
 func TestCommit_RollbackPathDoesNotPoisonCache(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openInFlightDB(t, mode)
 			e := datalog.NewIdentity("e1")

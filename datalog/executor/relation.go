@@ -336,9 +336,8 @@ func (ci *CachingIterator) Next() bool {
 	if ci.inner.Next() {
 		tuple := ci.inner.Tuple()
 
-		// CRITICAL: Always copy tuples when caching
-		// The inner iterator may reuse tuple buffers (EnableTrueStreaming=true)
-		// We must copy to ensure cached tuples are independent
+		// Always copy tuples when caching: the inner iterator may reuse its
+		// tuple buffer, and a cached tuple has to be independent of it.
 		tupleCopy := make(Tuple, len(tuple))
 		copy(tupleCopy, tuple)
 
@@ -1425,7 +1424,7 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 		// a fresh tuple per Next, so the seen-keys need no copy.
 		resultIterator = NewDedupIterator(projIter, 0, false)
 	}
-	// Preserve options (especially EnableTrueStreaming) to prevent re-scanning
+	// The projection carries the relation's options, its handler among them
 	return NewStreamingRelationWithProperties(
 		symbols,
 		resultIterator,

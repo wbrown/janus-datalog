@@ -147,7 +147,7 @@ func widthReadRoutes() []widthReadRoute {
 func TestAnAttributeWiderThanStorageHoldsIsRefusedAtEveryReadEntry(t *testing.T) {
 	require.Equal(t, datalog.MaxAttributeBytes, len(widthAttr("s", false)))
 	require.Equal(t, datalog.MaxAttributeBytes+1, len(widthAttr("s", true)))
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		for _, disableCache := range []bool{false, true} {
 			cache := "cache on"
 			if disableCache {

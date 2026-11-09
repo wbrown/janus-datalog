@@ -240,7 +240,7 @@ func TestGateReview_GetElseOnEveryRouteAnswersAlikeOnBothOptimizerPaths(t *testi
 	first := map[string]string{}
 	for i, c := range generateGateReviewCases(20261103, 120) {
 		want := gateReviewAnswers(t, buildGateReviewHistory(t, c, referenceMode))
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 			got := gateReviewAnswers(t, buildGateReviewHistory(t, c, mode))
 			for r, route := range gateReviewRoutes {
 				for v := range got[r] {
@@ -270,7 +270,7 @@ func TestGateReview_GetElseOnEveryRouteAnswersAlikeOnBothOptimizerPaths(t *testi
 func TestGateReview_ThePlanCacheServesNoPlanAHandleAnswersOtherwise(t *testing.T) {
 	text := `[:find ?e ?v :where [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]`
 	for i, c := range generateGateReviewCases(7, 60) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 			leg := buildGateReviewHistory(t, c, mode)
 			views := gateReviewViews(leg)
 			for v := range views {
@@ -291,7 +291,7 @@ func TestGateReview_ThePlanCacheServesNoPlanAHandleAnswersOtherwise(t *testing.T
 // refusals.
 func TestGateReview_EveryRouteAnswers(t *testing.T) {
 	c := gateReviewCase{cardinality: schema.CardinalityOne, txs: 2, installAfter: -1, ops: []gateReviewOp{{tx: 0, entity: 0, value: "x"}, {tx: 1, entity: 0, value: "y"}}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		h := buildGateReviewHistory(t, c, mode)
 		for _, route := range gateReviewRoutes {
 			inputs := []interface{}{WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): h.db.History()})}
@@ -311,7 +311,7 @@ func TestGateReview_EveryRouteAnswers(t *testing.T) {
 // $src the latest view, so the differential above compares a rewritten plan
 // with the per-tuple lookup on each route.
 func TestGateReview_TheRewriteAppliesOnEveryRoute(t *testing.T) {
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption), func(m optimizerMode) bool { return m.algebra }) {
 		for _, route := range gateReviewRoutes {
 			applied := 0
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{
@@ -369,7 +369,7 @@ func TestGateReview_EveryRouteAnswersAlikeAfterSetSchemaBetweenRuns(t *testing.T
 			return run()
 		}
 		want, wantErr := secondRun(referenceMode)
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 			got, gotErr := secondRun(mode)
 			if (wantErr == nil) != (gotErr == nil) || !reflect.DeepEqual(want, got) {
 				diverged[mode.name+" / "+route.name] = fmt.Sprintf("reference %v %v, leg %v %v", want, wantErr, got, gotErr)

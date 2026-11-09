@@ -128,7 +128,7 @@ func populateOptimizationMatrix(tb testing.TB, db *Database, numScenarios, tasks
 // the reference leg's by
 // TestSubqueryBodiesScanningOnePatternReadItOnceUnderScanSharing.
 func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption), func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQueryRetainsScenarioKeyThroughFallbacks(t, mode)
 		})
@@ -416,7 +416,7 @@ func benchmarkComplexQueryCheckpointAccount(b *testing.B, options *planner.Plann
 // Every leg's answer to the same query body is compared with the reference
 // leg's by TestSubqueryBodiesScanningOnePatternReadItOnceUnderScanSharing.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra && m.fusion && !m.prefetch }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption, prefetchOption), func(m optimizerMode) bool { return m.algebra && m.fusion && !m.prefetch }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQuerySubqueryExecutionCounts(t, mode)
 		})
@@ -524,7 +524,7 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 // A warm read-only steady state is expected to rebuild nothing; this reports
 // any rebuild population by attribute and reason.
 func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, prefetchOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQueryCheckpointCacheSteadyState(t, mode)
 		})
@@ -581,19 +581,6 @@ func testComplexQueryCheckpointCacheSteadyState(t *testing.T, mode optimizerMode
 	}
 	require.Zero(t, total,
 		"a warm read-only checkpoint must not rebuild any cache entry: every rebuild is a storage scan plus a transaction, and the freshness model says a warmed key stays fresh until a write touches it")
-}
-
-func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {
-	b.Run("materialized", func(b *testing.B) {
-		options := DefaultPlannerOptions()
-		options.EnableStreamingJoins = false
-		benchmarkComplexQueryCheckpoint(b, &options)
-	})
-	b.Run("streaming", func(b *testing.B) {
-		options := DefaultPlannerOptions()
-		options.EnableStreamingJoins = true
-		benchmarkComplexQueryCheckpoint(b, &options)
-	})
 }
 
 // BenchmarkComplexQueryBackends runs the checkpoint query on every backend.

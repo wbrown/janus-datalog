@@ -83,7 +83,7 @@ func TestCardinalityOneBehavior(t *testing.T) {
 			t.Logf("After tx.Add: %d lore value(s): %v", len(loreValues2), loreValues2)
 			assert.Len(t, loreValues2, 1, "LWW semantics: only latest value returned")
 			assert.Equal(t, "A detailed description.", loreValues2[0][0], "Latest value should be returned")
-		})
+		}, fusionOption)
 	})
 
 	t.Run("SaveStruct properly handles cardinality-one upserts", func(t *testing.T) {
@@ -118,7 +118,7 @@ func TestCardinalityOneBehavior(t *testing.T) {
 			t.Logf("After SaveStruct update: %d lore value(s): %v", len(loreValues), loreValues)
 			require.Len(t, loreValues, 1, "SaveStruct should maintain cardinality-one")
 			assert.Equal(t, "A detailed description.", loreValues[0][0])
-		})
+		}, fusionOption)
 	})
 
 	t.Run("Correct update pattern: load, modify, SaveStruct", func(t *testing.T) {
@@ -159,7 +159,7 @@ func TestCardinalityOneBehavior(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, loreValues, 1)
 			assert.Equal(t, "Updated lore", loreValues[0][0])
-		})
+		}, fusionOption)
 	})
 }
 
@@ -192,5 +192,5 @@ func TestEmptyStringsAreSaved(t *testing.T) {
 
 		t.Log("Note: There is no omitempty equivalent for datalog struct tags.")
 		t.Log("Empty strings ARE persisted. Consider using *string for truly optional fields.")
-	})
+	}, fusionOption)
 }

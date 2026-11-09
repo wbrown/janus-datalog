@@ -150,7 +150,7 @@ func TestSetWritesEachValueAsAddWritesIt(t *testing.T) {
 		{"undeclared", kw(":set-admission/undeclared"), false},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, collection := range collections {
 			for _, c := range setAdmissionSlices {
 				want := c.wantUntyped

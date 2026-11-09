@@ -43,7 +43,7 @@ func collectByteSet(t *testing.T, db *Database, e datalog.Identity) [][]byte {
 // TestCardinalityManySet_ByteValues_NoPanic: a plain Set of byte members must
 // not panic and must persist the set.
 func TestCardinalityManySet_ByteValues_NoPanic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, e, a := newBytesManyDB(t, mode)
 
@@ -66,7 +66,7 @@ func TestCardinalityManySet_ByteValues_NoPanic(t *testing.T) {
 // TestCardinalityManySet_ByteValues_ReplacesExistingSet: a second Set replaces
 // the committed set (add-wins diff against current membership of []byte values).
 func TestCardinalityManySet_ByteValues_ReplacesExistingSet(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, e, a := newBytesManyDB(t, mode)
 
@@ -96,7 +96,7 @@ func TestCardinalityManySet_ByteValues_ReplacesExistingSet(t *testing.T) {
 // pendingRemoves maps, which use the same direct-[]byte-key pattern as newSet,
 // so a fix that only repairs newSet would still panic here.
 func TestCardinalityManySet_ByteValues_PendingOpsInSameTransaction(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, e, a := newBytesManyDB(t, mode)
 
@@ -121,7 +121,7 @@ func TestCardinalityManySet_ByteValues_PendingOpsInSameTransaction(t *testing.T)
 // TestCardinalityManySet_ByteValues_DuplicateMembersDedupByContent: two byte
 // slices with equal content are the same set member.
 func TestCardinalityManySet_ByteValues_DuplicateMembersDedupByContent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, e, a := newBytesManyDB(t, mode)
 

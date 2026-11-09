@@ -283,7 +283,7 @@ func fixpointCases() []fixpointCase {
 func TestFixpoint_EverySemiNaiveAnswerIsTheNaiveFixpoint(t *testing.T) {
 	fx := newFixpointFixture()
 	for _, tc := range fixpointCases() {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
 				counts := &ruleEventCounts{}
 				var windows atomic.Int64

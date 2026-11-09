@@ -81,7 +81,7 @@ func TestExplain_RefusesARuleBodyAsQueryDoes(t *testing.T) {
 		{"a body inside a branch of a body", `[[(r ?a ?b) [?a :edge ?m] (or-join [[?m] ?b] (p ?m ?b) [?m :edge ?b])] ` + stuckRule + `]`,
 			`[:find ?x ?y :in $ % :where (r ?x ?y)]`, nil},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, newPathGraph().facts())
@@ -136,7 +136,7 @@ func TestExplain_RefusesARuleBodyWhateverThePlanCacheHolds(t *testing.T) {
 			return err
 		}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, g.facts())
@@ -176,7 +176,7 @@ func TestExplain_AcceptsARuleBodyAsQueryDoes(t *testing.T) {
 	const bound = `[:find ?y :in $ % ?x :where (p ?x ?y)]`
 	const free = `[:find ?x ?y :in $ % :where (p ?x ?y)]`
 	g := newPathGraph()
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, g.facts())
@@ -225,7 +225,7 @@ func TestExplain_ExecutingAnExplainedQueryPlansNothing(t *testing.T) {
 		{"an invocation inside a subquery", "[" + closure + "]", `[:find ?x ?y :in $ % :where [?x :edge _] [(q [:find ?y :in $ % ?e :where (p ?e ?y)] $ % ?x) [[?y]]]]`, nil},
 		{"a required predicate derived at its clause inside a body", "[" + required + "]", `[:find ?z :in $ % :where (q #id "a" ?z)]`, nil},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			made := &plansMade{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: made.handle})

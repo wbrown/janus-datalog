@@ -72,7 +72,7 @@ func TestRules_BodyForms(t *testing.T) {
 			`[:find ?a :in $ % ?x ?e :where [?a :type :node] (r ?x ?e)]`, []interface{}{nodeID("a"), nodeID("e")},
 			[]string{"a", "b", "c", "d", "e"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: graphSchema()})
 			spec := diamond()
@@ -120,7 +120,7 @@ func TestRules_RequiredBindingBoundThroughEachBinder(t *testing.T) {
 		{"an input", `[:find ?m :in $ % ?n :where (succ ?n ?m)]`, []interface{}{int64(7)}, []string{"8"}},
 		{"a variable repeated at both positions", `[:find ?v :in $ % :where [?e :val ?v] (succ ?v ?v)]`, nil, nil},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeValues(t, d, 3)
@@ -142,7 +142,7 @@ func TestRules_PlanCacheServesEachRuleSetItsOwnPlan(t *testing.T) {
 	free := `[[(succ ?n ?m) [?e :val ?n] [(+ ?n 1) ?m]]]`
 	required := `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`
 	want := []string{"1>2", "2>3", "3>4"}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeValues(t, d, 3)
@@ -205,7 +205,7 @@ func TestRules_BoundsAtTheirBoundaries(t *testing.T) {
 		{"whole", closureQuery, nil, 0},
 		{"bound to the head", `[:find ?x ?y :in $ % ?x :where (reach ?x ?y)]`, []interface{}{nodeID("n1")}, 1},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		for _, q := range queries {
 			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
 				totals := &stratumTotals{}
@@ -302,7 +302,7 @@ func TestRules_GroundInsideAnOrBranchBesideTheRecursion(t *testing.T) {
 	}
 	g := markedCycle()
 	pair := func(a, b int64) string { return fmt.Sprintf("%d>%d", a, b) }
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeIntGraph(t, d, g)
@@ -368,7 +368,7 @@ func TestRules_RuleOrderDoesNotChangeWhatIsDerived(t *testing.T) {
 		{"one forwarding rule", `[[(mr ?a) [(ground 1) ?a]] [(mr ?b) (mr ?a) (ae ?a ?b)] [(me ?a) (mr ?a)] [(ae ?a ?b) (me ?a) [?x :edge/from ?a] [?x :edge/to ?b]]]`},
 	}
 	g := markedCycle()
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeIntGraph(t, d, g)

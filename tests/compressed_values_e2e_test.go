@@ -190,7 +190,7 @@ func TestE2E_CompressedQuery_StrStartsWith(t *testing.T) {
 func TestE2E_CompressedExportImportQuery(t *testing.T) {
 	for _, backend := range storage.AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(fusionOption) {
 				t.Run(mode.name, func(t *testing.T) {
 					db1 := createBackendModeDB(t, backend, mode, compressedOptions(nil))
 
@@ -364,7 +364,7 @@ func TestE2E_Tier3_JoinOnValue(t *testing.T) {
 func TestE2E_Tier3_ExportImportQuery(t *testing.T) {
 	for _, backend := range storage.AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(fusionOption) {
 				t.Run(mode.name, func(t *testing.T) {
 					db1 := createBackendModeDB(t, backend, mode, compressedOptions(nil))
 

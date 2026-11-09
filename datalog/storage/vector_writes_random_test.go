@@ -105,7 +105,7 @@ func TestVectorWritesOnRandomRunsReadBackAsTheReference(t *testing.T) {
 			txs := generateVectorRun(rand.New(rand.NewSource(seed)), targets)
 			want := modelAnswers(targets, txs)
 			t.Logf("transactions %v, vectors %q", txs, want)
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes) {
 				for _, cache := range vectorWritesCaches {
 					t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
 						d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, DisableCache: cache.disable})

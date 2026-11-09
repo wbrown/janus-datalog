@@ -80,7 +80,7 @@ func TestEntityFromIdentityIgnoresInternedDisplayString(t *testing.T) {
 
 // Cache Test 1: Add, Remove, PullInto → attribute absent
 func TestCacheRemove_PullInto_RoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -117,7 +117,7 @@ func TestCacheRemove_PullInto_RoundTrip(t *testing.T) {
 
 // Cache Test 2: Add, overwrite, Remove → attribute absent via PullInto
 func TestCacheRemove_PullInto_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -152,7 +152,7 @@ func TestCacheRemove_PullInto_AfterOverwrite(t *testing.T) {
 
 // Cache Test 3: Add, Remove, Add again → latest Add wins via PullInto
 func TestCacheRemove_PullInto_ThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -188,7 +188,7 @@ func TestCacheRemove_PullInto_ThenReAdd(t *testing.T) {
 
 // Cache Test 4: Remove before any Add, then Add → value exists via PullInto
 func TestCacheRemove_PullInto_BeforeAnyAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -218,7 +218,7 @@ func TestCacheRemove_PullInto_BeforeAnyAdd(t *testing.T) {
 
 // Cache Test 5: V is irrelevant for CardinalityOne remove via PullInto
 func TestCacheRemove_PullInto_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -248,7 +248,7 @@ func TestCacheRemove_PullInto_VIsIrrelevant(t *testing.T) {
 
 // Cache Test 6: Multiple entities, remove one, PullInto both
 func TestCacheRemove_PullInto_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -289,7 +289,7 @@ func TestCacheRemove_PullInto_MultipleEntities(t *testing.T) {
 
 // Cache Test 7: Add, Remove, Pull("*") → attribute absent from result map
 func TestCacheRemove_Pull_RoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -336,7 +336,7 @@ func TestCacheRemove_Pull_RoundTrip(t *testing.T) {
 
 // Cache Test 8: Add name+city, Remove name, multi-clause query → name absent
 func TestCacheRemove_JoinBoundE_RoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -375,7 +375,7 @@ func TestCacheRemove_JoinBoundE_RoundTrip(t *testing.T) {
 
 // Cache Test 9: Add, Remove, re-Add → latest wins via join-bound query
 func TestCacheRemove_JoinBoundE_ThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -412,7 +412,7 @@ func TestCacheRemove_JoinBoundE_ThenReAdd(t *testing.T) {
 
 // Cache Test 10: Multiple entities, remove one, join-bound query
 func TestCacheRemove_JoinBoundE_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -449,7 +449,7 @@ func TestCacheRemove_JoinBoundE_MultipleEntities(t *testing.T) {
 
 // Cache Test 11: V-irrelevant Remove via join-bound query
 func TestCacheRemove_JoinBoundE_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -488,7 +488,7 @@ func TestCacheRemove_JoinBoundE_VIsIrrelevant(t *testing.T) {
 
 // Cache Test 12: ResolveLWW returns nil after Remove
 func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -530,7 +530,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 
 // Cache Test 13: Cache rebuild after Remove returns nil
 func TestCacheRemove_CacheRebuild(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -581,7 +581,7 @@ func TestCacheRemove_CacheRebuild(t *testing.T) {
 
 // Cache Test 14: Warm cache → Remove → query again → absent
 func TestCacheRemove_StaleInvalidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -633,7 +633,7 @@ func TestCacheRemove_StaleInvalidation(t *testing.T) {
 
 // Cache Test 15: Set() then Remove() via PullInto
 func TestCacheRemove_PullInto_SetThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -669,7 +669,7 @@ func TestCacheRemove_PullInto_SetThenRemove(t *testing.T) {
 
 // Cache Test 16: Set() then Remove() via join-bound query
 func TestCacheRemove_JoinBoundE_SetThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -700,7 +700,7 @@ func TestCacheRemove_JoinBoundE_SetThenRemove(t *testing.T) {
 
 // Cache Test 17: Set() then Remove() via ResolveLWW direct
 func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -739,7 +739,7 @@ func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
 
 // Cache Test 18: Add → Add → Remove via join-bound query
 func TestCacheRemove_JoinBoundE_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -776,7 +776,7 @@ func TestCacheRemove_JoinBoundE_AfterOverwrite(t *testing.T) {
 
 // Cache Test 19: Remove → Add via join-bound query
 func TestCacheRemove_JoinBoundE_BeforeAnyAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -816,7 +816,7 @@ func TestCacheRemove_JoinBoundE_BeforeAnyAdd(t *testing.T) {
 
 // Cache Test 20: After Remove, ResolveLWW returns (nil, non-zero ElementID, nil)
 func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -855,7 +855,7 @@ func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
 // =============================================================================
 
 func TestCacheRemove_Pull_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -886,7 +886,7 @@ func TestCacheRemove_Pull_AfterOverwrite(t *testing.T) {
 }
 
 func TestCacheRemove_Pull_ThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -916,7 +916,7 @@ func TestCacheRemove_Pull_ThenReAdd(t *testing.T) {
 }
 
 func TestCacheRemove_Pull_BeforeAnyAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -941,7 +941,7 @@ func TestCacheRemove_Pull_BeforeAnyAdd(t *testing.T) {
 }
 
 func TestCacheRemove_Pull_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -967,7 +967,7 @@ func TestCacheRemove_Pull_VIsIrrelevant(t *testing.T) {
 }
 
 func TestCacheRemove_Pull_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -999,7 +999,7 @@ func TestCacheRemove_Pull_MultipleEntities(t *testing.T) {
 }
 
 func TestCacheRemove_Pull_SetThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1049,7 +1049,7 @@ func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keywor
 }
 
 func TestCacheRemove_ResolveLWW_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1078,7 +1078,7 @@ func TestCacheRemove_ResolveLWW_AfterOverwrite(t *testing.T) {
 }
 
 func TestCacheRemove_ResolveLWW_ThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1107,7 +1107,7 @@ func TestCacheRemove_ResolveLWW_ThenReAdd(t *testing.T) {
 }
 
 func TestCacheRemove_ResolveLWW_BeforeAnyAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1131,7 +1131,7 @@ func TestCacheRemove_ResolveLWW_BeforeAnyAdd(t *testing.T) {
 }
 
 func TestCacheRemove_ResolveLWW_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1155,7 +1155,7 @@ func TestCacheRemove_ResolveLWW_VIsIrrelevant(t *testing.T) {
 }
 
 func TestCacheRemove_ResolveLWW_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1203,7 +1203,7 @@ func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a data
 }
 
 func TestCacheRemove_CacheRebuild_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1232,7 +1232,7 @@ func TestCacheRemove_CacheRebuild_AfterOverwrite(t *testing.T) {
 }
 
 func TestCacheRemove_CacheRebuild_ThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1261,7 +1261,7 @@ func TestCacheRemove_CacheRebuild_ThenReAdd(t *testing.T) {
 }
 
 func TestCacheRemove_CacheRebuild_BeforeAnyAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1285,7 +1285,7 @@ func TestCacheRemove_CacheRebuild_BeforeAnyAdd(t *testing.T) {
 }
 
 func TestCacheRemove_CacheRebuild_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1309,7 +1309,7 @@ func TestCacheRemove_CacheRebuild_VIsIrrelevant(t *testing.T) {
 }
 
 func TestCacheRemove_CacheRebuild_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1338,7 +1338,7 @@ func TestCacheRemove_CacheRebuild_MultipleEntities(t *testing.T) {
 }
 
 func TestCacheRemove_CacheRebuild_SetThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1374,7 +1374,7 @@ func warmCachePullIntoName(t *testing.T, db *Database, e datalog.Identity) *stri
 }
 
 func TestCacheRemove_StaleInvalidation_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1409,7 +1409,7 @@ func TestCacheRemove_StaleInvalidation_AfterOverwrite(t *testing.T) {
 }
 
 func TestCacheRemove_StaleInvalidation_ThenReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1446,7 +1446,7 @@ func TestCacheRemove_StaleInvalidation_ThenReAdd(t *testing.T) {
 }
 
 func TestCacheRemove_StaleInvalidation_BeforeAnyAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1477,7 +1477,7 @@ func TestCacheRemove_StaleInvalidation_BeforeAnyAdd(t *testing.T) {
 }
 
 func TestCacheRemove_StaleInvalidation_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1507,7 +1507,7 @@ func TestCacheRemove_StaleInvalidation_VIsIrrelevant(t *testing.T) {
 }
 
 func TestCacheRemove_StaleInvalidation_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 
@@ -1544,7 +1544,7 @@ func TestCacheRemove_StaleInvalidation_MultipleEntities(t *testing.T) {
 }
 
 func TestCacheRemove_StaleInvalidation_SetThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheRemoveTestDB(t, mode)
 

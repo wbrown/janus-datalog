@@ -64,7 +64,7 @@ func TestQueryRunsAKeywordThroughEveryShapeOfReach(t *testing.T) {
 		{"a relation input into an invocation in a subquery body", `[:find ?e :in $ % [[?a]] :where [?h :t/string _] [(q [:find ?x :in $ % ?y :where (has ?x ?y)] $ % ?a) [[?e]]]]`, `[[(has ?e ?a) [?e ?a _]]]`, []interface{}{[][]interface{}{{typo}}}, nil},
 		{"a constant through a rule's or-default-join header", `[:find ?e ?x :in $ % :where (has :t/strnig ?e ?x)]`, `[[(has [?a] ?e ?x) [?e :t/string _] (or-default-join [[?e ?a] ?x] [?e ?a ?x] [(ground "none") ?x])]]`, nil, [][]interface{}{{h, "none"}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := refusingStringDB(t, mode)
@@ -110,7 +110,7 @@ func TestQueryRunsAKeywordAtAValuePosition(t *testing.T) {
 		{"a rule head variable a branch local shadows", `[:find ?e :in $ % :where (has :t/strnig ?e)]`, `[[(has [?a] ?e) [?e :t/keyword ?a] (or-join [?e] [?e ?a _])]]`, nil, justH},
 		{"an input a subquery's own scope shadows", `[:find ?e :in $ ?a :where [?h :t/keyword ?a] [(q [:find ?x :where [?x ?a _]] $) [[?e]]]]`, "", []interface{}{typo}, unconstrained},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := refusingStringDB(t, mode)

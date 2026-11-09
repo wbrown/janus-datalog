@@ -42,7 +42,7 @@ func TestFallbackSurfacesTheSubjectsFailureUnderTheEAArm(t *testing.T) {
 		{"read", 200, 0, errInjectedScanFault, seventhWindow},
 		{"close", subjectSize + 1, 200, errInjectedCloseFault, seventhWindow + eighthWindow + ninthWindow},
 	}
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.prefetch && !m.fusion }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, allOptions...), func(m optimizerMode) bool { return m.prefetch && !m.fusion }) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				var mu sync.Mutex

@@ -37,7 +37,7 @@ func TestQuery_RefusesTheShapesTheParserRefuses(t *testing.T) {
 			&query.Query{Find: find, Where: []query.Clause{first}, Limit: &limit},
 			":limit must be non-negative, got -1"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, []fact{{named("e1"), ":t/n", int64(1)}, {named("e1"), ":t/m", int64(2)}})

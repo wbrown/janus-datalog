@@ -24,7 +24,7 @@ func longAttrName() string {
 // TestStorage_LongAttributeNameRejectedOnWrite: every write entry point rejects
 // an over-length attribute instead of truncating it.
 func TestStorage_LongAttributeNameRejectedOnWrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -54,7 +54,7 @@ func TestSchema_LongAttributeDefinitionRejected(t *testing.T) {
 // accepted and round-trips (guards against an off-by-one that would reject
 // valid names).
 func TestStorage_MaxLengthAttributeNameAccepted(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

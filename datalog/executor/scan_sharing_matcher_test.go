@@ -453,7 +453,7 @@ func TestScanSharingMatcherPreservesAndRemapsProperties(t *testing.T) {
 		query.Constant{Value: datalog.NewKeyword(":item/value")},
 		query.Variable{Name: renamedValue},
 	}}
-	options := ExecutorOptions{EnableTrueStreaming: true}
+	options := ExecutorOptions{EnableScanSharing: true}
 	inner := &fixedMatcher{
 		tuples:  []Tuple{{"e1", int64(1)}},
 		symbols: first.Symbols(),

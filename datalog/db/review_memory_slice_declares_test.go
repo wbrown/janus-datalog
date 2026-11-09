@@ -33,7 +33,7 @@ func TestReviewMemory_ASliceSourceAnswersOnlyTheSlicesFacts(t *testing.T) {
 			[]reviewMemoryRule{{Key: "a", DependsOn: []string{"x", "z"}}, {Key: "b", DependsOn: []string{"y"}}},
 			[][]interface{}{{slice0, key, "a"}, {slice0, dependsOn, "x"}, {slice0, dependsOn, "z"}, {slice1, key, "b"}, {slice1, dependsOn, "y"}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				source, err := db.NewSliceSource(c.rules, db.AttributeSchema[reviewMemoryRule]{
@@ -67,7 +67,7 @@ func TestReviewMemory_AWildcardPullOnASliceSourceAnswersEveryAttribute(t *testin
 		{"another item holds two elements",
 			[]reviewMemoryRule{{Key: "a", DependsOn: []string{"x", "z"}}, {Key: "b", DependsOn: []string{"y"}}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, allOptions...) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				source, err := db.NewSliceSource(c.rules, db.AttributeSchema[reviewMemoryRule]{

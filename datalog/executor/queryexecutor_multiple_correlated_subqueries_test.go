@@ -136,7 +136,7 @@ func TestQueryExecutorMultipleCorrelatedSubqueries(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms) // Shared read-only matcher across modes
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			t.Run("QueryExecutor", func(t *testing.T) {
 				opts := mode.ZeroPlannerOptions()

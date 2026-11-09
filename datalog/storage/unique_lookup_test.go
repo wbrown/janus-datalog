@@ -66,7 +66,7 @@ func setupUniqueIdentityTestDB(t *testing.T, mode optimizerMode) *Database {
 
 // TestLookupByUnique_NoOwner: nobody has claimed the value.
 func TestLookupByUnique_NoOwner(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -80,7 +80,7 @@ func TestLookupByUnique_NoOwner(t *testing.T) {
 
 // TestLookupByUnique_SingleOwner: one entity claims the value.
 func TestLookupByUnique_SingleOwner(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -111,7 +111,7 @@ func TestLookupByUnique_SingleOwner(t *testing.T) {
 // and reporting it as "nothing found" makes it indistinguishable from a value
 // nobody ever wrote, which costs nothing at all.
 func TestUniqueLookupReportsItsFunnel(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// One collector for the whole test: only LookupByUnique emits
 			// ScanUniqueLookup, and each subtest reads the last one, which is its own.
@@ -193,7 +193,7 @@ func TestUniqueLookupReportsItsFunnel(t *testing.T) {
 // TestLookupByUnique_UniqueIdentity: UniqueIdentity supports lookup the
 // same way as UniqueValue (Position 2).
 func TestLookupByUnique_UniqueIdentity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueIdentityTestDB(t, mode)
 
@@ -220,7 +220,7 @@ func TestLookupByUnique_UniqueIdentity(t *testing.T) {
 // TestLookupByUnique_MultiClaimant_HighestTxWins: two entities both claim
 // the same value in sequence. The second (higher Tx) wins.
 func TestLookupByUnique_MultiClaimant_HighestTxWins(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -252,7 +252,7 @@ func TestLookupByUnique_MultiClaimant_HighestTxWins(t *testing.T) {
 // TestLookupByUnique_MultiClaimant_ReverseOrder: bob claims first, then
 // alice. Alice should win because she has the higher Tx.
 func TestLookupByUnique_MultiClaimant_ReverseOrder(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -284,7 +284,7 @@ func TestLookupByUnique_MultiClaimant_ReverseOrder(t *testing.T) {
 // TestLookupByUnique_CandidateMovedOn: alice once claimed V, then moved
 // to a different value. She is no longer a claimant for V.
 func TestLookupByUnique_CandidateMovedOn(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -318,7 +318,7 @@ func TestLookupByUnique_CandidateMovedOn(t *testing.T) {
 // TestLookupByUnique_TombstonedClaimant: alice claimed V, then removed it.
 // She is no longer a claimant.
 func TestLookupByUnique_TombstonedClaimant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -345,7 +345,7 @@ func TestLookupByUnique_TombstonedClaimant(t *testing.T) {
 // TestLookupByUnique_OneMovedOneClaiming: alice moved to V2; bob claims V.
 // V's owner is bob only.
 func TestLookupByUnique_OneMovedOneClaiming(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -386,7 +386,7 @@ func TestLookupByUnique_OneMovedOneClaiming(t *testing.T) {
 // TestLookupByUnique_NonUniqueAttribute: calling on a non-unique attribute
 // is an error.
 func TestLookupByUnique_NonUniqueAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -401,7 +401,7 @@ func TestLookupByUnique_NonUniqueAttribute(t *testing.T) {
 
 // TestLookupByUnique_UnknownAttribute: attribute not in schema.
 func TestLookupByUnique_UnknownAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -415,7 +415,7 @@ func TestLookupByUnique_UnknownAttribute(t *testing.T) {
 // TestLookupByUnique_NoSchema: database without any schema — uniqueness
 // is not declared for anything, so LookupByUnique cannot operate.
 func TestLookupByUnique_NoSchema(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -434,7 +434,7 @@ func TestLookupByUnique_NoSchema(t *testing.T) {
 // attribute with multiple claimants returns exactly the (A, V)-LWW winner,
 // not all claimants.
 func TestVBoundQuery_MultiClaimant_SingleWinner(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -483,7 +483,7 @@ func TestVBoundQuery_MultiClaimant_SingleWinner(t *testing.T) {
 // With :user/name declared cardinality-one but not unique, two entities
 // can both have name="Alice" and both should appear in a V-bound query.
 func TestVBoundQuery_NonUnique_ReturnsAll(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 

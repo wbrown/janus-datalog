@@ -20,7 +20,7 @@ import (
 const nodesQuery = `[:find ?n :where [?n :type :node]]`
 
 func TestQueryCancelled_BeforeExecution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeGraph(t, d, chain(3))
@@ -43,7 +43,7 @@ func TestQueryCancelled_BeforeExecution(t *testing.T) {
 }
 
 func TestExplainAcceptsContextOption(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			ctx, cancel := context.WithCancel(context.Background())
@@ -69,7 +69,7 @@ func TestExplainAcceptsContextOption(t *testing.T) {
 }
 
 func TestRuleEvaluationCancelled_WithinOneIteration(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

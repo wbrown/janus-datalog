@@ -180,7 +180,7 @@ func TestRelationInput_DuplicateInputTuplesAnswerTheExactSet(t *testing.T) {
 		"[Carol 2020 40]",
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
@@ -221,7 +221,7 @@ func TestRelationInput_PropagatesMatcherError(t *testing.T) {
 		},
 	)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Fail on the very first Match() call.
 			fm := &failingMatcher{
@@ -323,7 +323,7 @@ func TestRelationInput_PropagatesDeferredIteratorError(t *testing.T) {
 		},
 	)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			dm := &deferredFailMatcher{
 				Database:   delegate,
@@ -368,7 +368,7 @@ func TestRelationInput_NoGoroutineLeak(t *testing.T) {
 		},
 	)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -466,7 +466,7 @@ func TestRelationInput_AStreamingInputReusingItsWorkspaceAnswersAsAMaterializedO
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// newReusingWorkspaceStream wraps a single-use streaming iterator, so
 			// it must be rebuilt fresh per mode rather than shared like the
@@ -538,7 +538,7 @@ func TestRelationInput_ConcurrentQueriesAnswerAlike(t *testing.T) {
 		},
 	)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// The expected tuples, from one query run alone.
 			expected, err := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions()).

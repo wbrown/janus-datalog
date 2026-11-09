@@ -50,7 +50,7 @@ func TestABoundPatternAnswersWhatTheUnboundPatternAnswersUnderTheBinding(t *test
 		{"an entity written under the written unique attribute, another entity's code bound", []int{v}, bindingTuples{{{e, x}, {a, kw(":code")}, {v, "y's"}}}, []int{e, a}},
 		{"an entity written under the written unique attribute, its own code bound", []int{v}, bindingTuples{{{e, x}, {a, kw(":code")}, {v, "x's"}}}, []int{e, a}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s := schema.NewBuilder().
 				Attribute(":tags").Type(schema.TypeLong).Vector().Add().

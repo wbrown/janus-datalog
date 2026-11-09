@@ -40,7 +40,7 @@ func TestStreamingOuterIsReadOnce(t *testing.T) {
 		OutputVars:   []query.Symbol{value},
 		Branches:     [][]query.Clause{{pattern(itemValue)}, {pattern(itemOther)}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
@@ -80,7 +80,7 @@ func TestAFindConsumingNothingIsAVerdictOverEveryGroup(t *testing.T) {
 			}}},
 		}
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, mode.PlannerOptions())
 			plan, err := exec.GetPlanner().PlanQuery(finding(itemValue), query.Bindings{}, nil)
@@ -150,7 +150,7 @@ func TestFormReportsItsExecution(t *testing.T) {
 			inputs: subject(),
 		},
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		for _, form := range forms {
 			t.Run(mode.Name()+"/"+form.name, func(t *testing.T) {
 				var events []annotations.Event
@@ -237,7 +237,7 @@ func TestScopeRunReportsNoPhase(t *testing.T) {
 			},
 		},
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var begins, completes int
 			opts := mode.PlannerOptions()
@@ -312,7 +312,7 @@ func TestSubqueryOverAFormReadsTheSubjectOnce(t *testing.T) {
 			Binding: query.RelationBinding{Variables: []query.Symbol{count}},
 		},
 	}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
@@ -364,7 +364,7 @@ func TestNotJoinOverAStreamingSubjectReadsItOnce(t *testing.T) {
 			query.Variable{Name: entity}, query.Constant{Value: itemOther}, query.Variable{Name: value},
 		}}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
@@ -426,7 +426,7 @@ func TestNotJoinBodyIsBuiltOncePerWindowOverTheKeysNotYetRun(t *testing.T) {
 			query.Variable{Name: entity}, query.Constant{Value: itemOther}, query.Variable{Name: value},
 		}}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
@@ -509,7 +509,7 @@ func TestNotJoinBodyHoldingAnInvocationIsContinuedAcrossTheWindows(t *testing.T)
 		require.Equal(t, want, got, "the items the predicate derives are dropped, the rest kept in the subject's order")
 		return c
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			single := mode.PlannerOptions()
 			single.ScopeWindowCap = 1
@@ -556,7 +556,7 @@ func TestSubqueryOverAStreamingSubjectReadsItOnce(t *testing.T) {
 		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Variable{Name: entity}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{value}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
@@ -795,7 +795,7 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 		return groups[0], db.pulls, c
 	}
 	const withAnOutput = `[:find ?a ?c :in $ % :where [?a :page/kind _] (follows ?a ?c)]`
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name()+"/with an output", func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8

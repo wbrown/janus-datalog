@@ -11,11 +11,8 @@ import (
 
 func TestStreamingIntegration(t *testing.T) {
 	t.Run("FullStreamingPipeline", func(t *testing.T) {
-		// Create options with all streaming features enabled
-		opts := ExecutorOptions{
-			EnableTrueStreaming:     true,
-			EnableSymmetricHashJoin: true,
-		}
+		// The symmetric hash join answers before either stream is read to its end
+		opts := ExecutorOptions{EnableSymmetricHashJoin: true}
 
 		// Create test data for left relation
 		leftTuples := []Tuple{
@@ -116,12 +113,6 @@ func TestStreamingIntegration(t *testing.T) {
 	})
 
 	t.Run("MixedStreamingAndMaterialized", func(t *testing.T) {
-		// Create options with streaming features (no symmetric hash join for mixed)
-		opts := ExecutorOptions{
-			EnableTrueStreaming:     true,
-			EnableSymmetricHashJoin: false,
-		}
-
 		// Create streaming relation
 		streamTuples := []Tuple{
 			{1, "alice"},
@@ -129,14 +120,14 @@ func TestStreamingIntegration(t *testing.T) {
 			{3, "charlie"},
 		}
 		streamIter := &sliceIterator{tuples: streamTuples, pos: -1}
-		streamRel := NewStreamingRelationWithOptions([]query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}, streamIter, opts)
+		streamRel := NewStreamingRelation([]query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}, streamIter)
 
-		// Create materialized relation with options
+		// Create materialized relation
 		matTuples := []Tuple{
 			{"alice", 100},
 			{"bob", 200},
 		}
-		matRel := NewMaterializedRelationWithOptions([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?value")}, matTuples, opts)
+		matRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?value")}, matTuples)
 
 		// Join streaming with materialized
 		joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
@@ -158,11 +149,6 @@ func TestStreamingIntegration(t *testing.T) {
 	})
 
 	t.Run("StreamingWithPredicates", func(t *testing.T) {
-		// Create options with streaming features
-		opts := ExecutorOptions{
-			EnableTrueStreaming: true,
-		}
-
 		tuples := []Tuple{
 			{10, 20},
 			{30, 40},
@@ -172,7 +158,7 @@ func TestStreamingIntegration(t *testing.T) {
 		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 		source := &sliceIterator{tuples: tuples, pos: -1}
-		rel := NewStreamingRelationWithOptions(symbols, source, opts)
+		rel := NewStreamingRelation(symbols, source)
 
 		// Apply predicate filter (x > 30)
 		pred := &query.Comparison{
@@ -204,11 +190,6 @@ func TestStreamingIntegration(t *testing.T) {
 	})
 
 	t.Run("StreamingWithFunctions", func(t *testing.T) {
-		// Create options with streaming features
-		opts := ExecutorOptions{
-			EnableTrueStreaming: true,
-		}
-
 		tuples := []Tuple{
 			{10, 20},
 			{30, 40},
@@ -216,7 +197,7 @@ func TestStreamingIntegration(t *testing.T) {
 		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 		source := &sliceIterator{tuples: tuples, pos: -1}
-		rel := NewStreamingRelationWithOptions(symbols, source, opts)
+		rel := NewStreamingRelation(symbols, source)
 
 		// Apply function evaluation (x + y)
 		fn := query.ArithmeticFunction{
@@ -253,11 +234,6 @@ func TestStreamingIntegration(t *testing.T) {
 	})
 
 	t.Run("StreamingPerformanceCharacteristics", func(t *testing.T) {
-		// Create options with streaming features
-		opts := ExecutorOptions{
-			EnableTrueStreaming: true,
-		}
-
 		// Create a large dataset
 		var largeTuples []Tuple
 		for i := 0; i < 1000; i++ {
@@ -268,7 +244,7 @@ func TestStreamingIntegration(t *testing.T) {
 		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 		source := &sliceIterator{tuples: largeTuples, pos: -1}
-		rel := NewStreamingRelationWithOptions(symbols, source, opts)
+		rel := NewStreamingRelation(symbols, source)
 
 		// Apply aggressive filter (only 1% pass, every 100th tuple)
 		filtered := rel.FilterWithPredicate(&query.Comparison{
@@ -311,11 +287,9 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 	b.Run("Materialized", func(b *testing.B) {
-		opts := ExecutorOptions{}
-
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			rel := NewMaterializedRelationWithOptions(symbols, tuples, opts)
+			rel := NewMaterializedRelation(symbols, tuples)
 
 			// Filter to 1% (every 100th tuple)
 			filtered := rel.FilterWithPredicate(&query.Comparison{
@@ -337,43 +311,10 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 	})
 
 	b.Run("Streaming", func(b *testing.B) {
-		opts := ExecutorOptions{
-			EnableTrueStreaming: true,
-		}
-
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			source := &sliceIterator{tuples: tuples, pos: -1}
-			rel := NewStreamingRelationWithOptions(symbols, source, opts)
-
-			// Filter to 1% (every 100th tuple)
-			filtered := rel.FilterWithPredicate(&query.Comparison{
-				Op:    datalog.SymEQ,
-				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
-				Right: query.ConstantTerm{Value: int64(0)},
-			})
-
-			// Project
-			projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})
-
-			// Consume
-			it := projected.Iterator()
-			for it.Next() {
-				_ = it.Tuple()
-			}
-			it.Close()
-		}
-	})
-
-	b.Run("StreamingWithoutTrueStreaming", func(b *testing.B) {
-		// Composed iterators with EnableTrueStreaming off: the streaming
-		// pipeline that still allows re-iteration through caching.
-		opts := ExecutorOptions{}
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			source := &sliceIterator{tuples: tuples, pos: -1}
-			rel := NewStreamingRelationWithOptions(symbols, source, opts)
+			rel := NewStreamingRelation(symbols, source)
 
 			// Filter to 1% (every 100th tuple)
 			filtered := rel.FilterWithPredicate(&query.Comparison{

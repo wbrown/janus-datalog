@@ -8,11 +8,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/schema"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
-	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // refuteGateEntry is one public entry point a rule set's get-else reaches its
@@ -80,7 +80,7 @@ func TestRefuteGate_ACacheServedRuleBodyAnswersAsTheUnoptimizedPathOnEveryEntryP
 		for _, e := range entries {
 			reference := buildGateReviewHistory(t, c, referenceMode)
 			want, wantErr := e.second(reference.db, e.text, e.rules)
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 				key := mode.name + " / " + e.name
 				leg := buildGateReviewHistory(t, c, mode)
 				if e.first {
@@ -106,7 +106,7 @@ func TestRefuteGate_ACacheServedRuleBodyAnswersAsTheUnoptimizedPathOnEveryEntryP
 		}
 		asOfReference := buildGateReviewHistory(t, c, referenceMode)
 		want, wantErr := refuteGateQueryOn(refuteGateLastAsOf(asOfReference))(asOfReference.db, boundText, bound)
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 			asOf := buildGateReviewHistory(t, c, mode)
 			rs, err := parser.ParseRules(bound)
 			require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestRefuteGate_ABoundRuleBodyAnswersAlikeAfterSetSchemaWithAndWithoutAnEarl
 				return got
 			}
 			want := answer(referenceMode)
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 				require.Equal(t, want, answer(mode), "%s answers otherwise than the reference leg", mode.name)
 			}
 		})
@@ -181,7 +181,7 @@ func TestRefuteGate_TheRewriteAppliesToEachInvocationShapesBody(t *testing.T) {
 		{"required head from a free invocation", `[:find ?e ?v :in $ % :where (top ?e ?v)]`, `[[(top ?e ?v) [?e :t/name _] (gb ?e ?v)] [(gb [?e] ?v) [(get-else $ ?e :t/a "none") ?v]]]`},
 		{"free invocation", `[:find ?e ?v :in $ % :where (ga ?e ?v)]`, `[[(ga ?e ?v) [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]]`},
 	}
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption), func(m optimizerMode) bool { return m.algebra }) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				applied := 0
@@ -238,7 +238,7 @@ func TestRefuteGate_EachRuleBodyRouteAnswersAlikeAfterSetSchemaBetweenRuns(t *te
 				return second
 			}
 			want := secondRun(referenceMode)
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption) {
 				require.Equal(t, want, secondRun(mode), "%s answers the second run otherwise than the reference leg", mode.name)
 			}
 		})
@@ -287,7 +287,7 @@ func TestRefuteGate_QueryIntoOnTheHistoryHandleAnswersAlikeAfterAQueryRanTheText
 				return vs
 			}
 			want := values(referenceMode)
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 				require.Equal(t, want, values(mode), "%s answers otherwise than the reference leg", mode.name)
 			}
 		})

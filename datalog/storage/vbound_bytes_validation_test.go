@@ -63,7 +63,7 @@ func queryByHash(t *testing.T, db *Database, v []byte) []datalog.Identity {
 // TestVBoundCardinalityOneBytes_NoPanic: a V-bound query on a byte attribute
 // must not panic and must return the matching entity.
 func TestVBoundCardinalityOneBytes_NoPanic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
@@ -90,7 +90,7 @@ func TestVBoundCardinalityOneBytes_NoPanic(t *testing.T) {
 // TestVBoundCardinalityOneBytes_MatchesByContent: a different slice instance
 // with identical content must still match (byte-content equality).
 func TestVBoundCardinalityOneBytes_MatchesByContent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
@@ -118,7 +118,7 @@ func TestVBoundCardinalityOneBytes_MatchesByContent(t *testing.T) {
 // value still has an AVET candidate entry, but the EATV winner differs. The
 // candidate must be rejected (and rejection must compare by content, not panic).
 func TestVBoundCardinalityOneBytes_RejectsStaleCandidate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
@@ -150,7 +150,7 @@ func TestVBoundCardinalityOneBytes_RejectsStaleCandidate(t *testing.T) {
 // TestVBoundCardinalityOneBytes_AfterOverwrite: querying the current value after
 // an overwrite returns the entity.
 func TestVBoundCardinalityOneBytes_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
@@ -185,7 +185,7 @@ func TestVBoundCardinalityOneBytes_AfterOverwrite(t *testing.T) {
 // not match. (The Op==Remove check precedes the == comparison, so this is a
 // contract test that complements the panic reproductions above.)
 func TestVBoundCardinalityOneBytes_AfterRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
@@ -217,7 +217,7 @@ func TestVBoundCardinalityOneBytes_AfterRemove(t *testing.T) {
 // annotation trail so the failure under -race can be diagnosed: it shows whether
 // the candidate scan found a candidate and what the EATV winner comparison saw.
 func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// This handler accumulates, and the engine serializes no handler,
 			// so it holds its own lock.
@@ -264,7 +264,7 @@ func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 // not on its path: the axis is pinned to one algebra leg. The backend is not
 // pinned — the matcher is exactly what differs across stores.
 func TestVBoundCardinalityOneBytes_DirectMatcher(t *testing.T) {
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.algebra }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption), func(m optimizerMode) bool { return !m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testVBoundCardinalityOneBytesDirectMatcher(t, mode)
 		})

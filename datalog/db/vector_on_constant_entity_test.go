@@ -49,7 +49,7 @@ func TestAVectorUnderAnOpenAttributeOnAConstantEntityAnswersThatEntityAlone(t *t
 		{tagged, built, []datalog.Keyword{itemTags}},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":item/name").Type(schema.TypeString).Add().

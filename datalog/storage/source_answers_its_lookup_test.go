@@ -38,7 +38,7 @@ func TestASchemalessDatabaseAnswersWhetherAMatchAnswersItsLookup(t *testing.T) {
 		disableCache bool
 	}
 	var configurations []configuration
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		for _, disableCache := range []bool{false, true} {
 			configurations = append(configurations, configuration{
 				name:         fmt.Sprintf("%s/cache_disabled_%t", mode.name, disableCache),

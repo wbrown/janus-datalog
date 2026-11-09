@@ -30,7 +30,7 @@ func TestOrJoinBranchSeesOnlyItsHeader(t *testing.T) {
 		{e3, ":t/n", int64(3)},
 	}
 	clauses := []string{`[?e :t/n ?x]`, `(or-join [?e] [?e :t/a ?x] [?e :t/b ?x])`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -49,7 +49,7 @@ func TestInvocationInABranchSeesTheBranchBindingsBeforeIt(t *testing.T) {
 		{e1, ":t/n", int64(1)},
 		{e2, ":t/n", int64(5)}, {e2, ":t/fixed", int64(9)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -72,7 +72,7 @@ func TestOrJoinOutputIsJoinedWithTheOuter(t *testing.T) {
 		{e3, ":t/q", int64(4)},
 	}
 	clauses := []string{`[?e :t/q ?q]`, `(or-join [?e ?q] [?e :t/a ?q] [?e :t/b ?q])`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -89,7 +89,7 @@ func TestOrJoinOutputIsJoinedWithTheOuter(t *testing.T) {
 func TestFallbackOverAFanningTupleSpelledSubqueryClaimsNoKey(t *testing.T) {
 	e1, e2, e3 := named("e1"), named("e2"), named("e3")
 	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(1)}, {e3, ":t/n", int64(2)}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -107,7 +107,7 @@ func TestFallbackOverAFanningTupleSpelledSubqueryClaimsNoKey(t *testing.T) {
 func TestRelationGroundBindsOneTuplePerInnerVector(t *testing.T) {
 	e1, e2 := named("e1"), named("e2")
 	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(3)}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -127,7 +127,7 @@ func TestRelationGroundBindsOneTuplePerInnerVector(t *testing.T) {
 func TestCollectionGroundBindsOneTuplePerElement(t *testing.T) {
 	e1, e2 := named("e1"), named("e2")
 	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(3)}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -151,7 +151,7 @@ func TestOutputTheEnvironmentBindsIsJoinedWithItsTuple(t *testing.T) {
 		{e2, ":t/n", int64(2)}, {e2, ":t/a", int64(3)},
 		{e3, ":t/n", int64(3)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -167,7 +167,7 @@ func TestOutputTheEnvironmentBindsIsJoinedWithItsTuple(t *testing.T) {
 // carries the input's value in every tuple, so the branch grounding ?z to 2
 // meets the given ?z of 1 and keeps no tuple, and the default answers.
 func TestFallbackBranchProvidingAnEnvironmentBoundRequiredVariableMeetsItsValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			rel, err := d.Query(`[:find ?v :in $ ?z :where (or-default-join [[?z] ?v] (and [(ground 2) ?z] [(ground 7) ?v]) [(ground 0) ?v])]`, int64(1))
@@ -188,7 +188,7 @@ func TestUnionBranchReadingNothingUnderARequiredOnlyHeaderIsAVerdict(t *testing.
 		{e2, ":t/n", int64(2)},
 		{e3, ":t/b", int64(3)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -208,7 +208,7 @@ func TestOrDefaultJoinFallsBackPerRequiredGroup(t *testing.T) {
 		{e3, ":t/n", int64(3)}, {e3, ":t/a", int64(30)},
 	}
 	clauses := []string{`[?e :t/n _]`, `(or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -234,7 +234,7 @@ func TestNotJoinAntiJoinsOnItsHeader(t *testing.T) {
 		{`(not-join [?e] [?e :t/a _])`, []string{"e2"}},
 		{`(not-join [?e ?x] [?e :t/a ?x])`, []string{"e2", "e3"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -254,7 +254,7 @@ func TestScopePlanIsServedFromTheCache(t *testing.T) {
 		{e2, ":t/n", int64(2)}, {e2, ":t/b", int64(2)},
 	}
 	const text = `[:find ?e :where [?e :t/n _] (or-join [?e] [?e :t/a _] [?e :t/b _])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -279,7 +279,7 @@ func TestScopePlanIsServedFromTheCache(t *testing.T) {
 // the rule's own predicate derives the closure of the chain.
 func TestScopeInsideABodySeesTheStratum(t *testing.T) {
 	const rules = `[[(reach ?x ?z) [?x :type :node] (or-join [[?x] ?z] [?x :edge ?z] (and [?x :edge ?y] (reach ?y ?z)))]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(4))
@@ -302,7 +302,7 @@ func TestFallbackDecisionReadsTheBranchBeforeTheCarriedOutputFilter(t *testing.T
 		{e3, ":t/n", int64(3)}, {e3, ":t/want", int64(7)}, {e3, ":t/a", int64(7)},
 	}
 	clauses := []string{`[?e :t/n _]`, `[?e :t/want ?v]`, `(or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -339,7 +339,7 @@ func TestEveryWindowSizeAnswersTheSameTuples(t *testing.T) {
 		{"fallback", `[:find ?n ?m :in $ % :where [?n :type :node] (or-default-join [[?n] ?m] (reach ?n ?m) [(ground :dead-end) ?m])]`, underFallback},
 		{"union", `[:find ?n ?m :in $ % :where [?n :type :node] (or-join [[?n] ?m] (reach ?n ?m) [(ground :self) ?m])]`, underUnion},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		for windowCap := 1; windowCap <= nodes; windowCap++ {
 			for _, form := range forms {
 				t.Run(mode.name+"/"+form.name+"/"+windowCapNames[windowCap], func(t *testing.T) {
@@ -384,7 +384,7 @@ func TestEveryWindowSizeAnswersTheSameTuples(t *testing.T) {
 // than one window under the default cap, so a build per window is told from
 // a build once.
 func TestBranchIsEvaluatedOncePerWindowAndProbedPerTuple(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var invocationBuilds, groundBuilds, outerTuples, windows atomic.Int64
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: func(e annotations.Event) {
@@ -427,7 +427,7 @@ func TestOuterTupleEventFiresPerSubjectTuple(t *testing.T) {
 		{e4, ":t/n", int64(4)}, {e4, ":t/a", int64(4)},
 	}
 	const subjectSize = 4
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for windowCap := 1; windowCap <= subjectSize; windowCap++ {
 			t.Run(mode.name+"/"+windowCapNames[windowCap], func(t *testing.T) {
 				var outerTuples, cacheBuilds, windows atomic.Int64
@@ -464,7 +464,7 @@ func TestFlatOrJoinKeepsItsSubjectsPropertiesAndReplacesItsGroups(t *testing.T) 
 		{e2, ":t/n", int64(2)}, {e2, ":t/b", int64(2)},
 		{e3, ":t/n", int64(3)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			var replaced atomic.Int64
 			var events []annotations.Event
@@ -528,7 +528,7 @@ func TestFlatHeaderOrDefaultJoinDecidesOnce(t *testing.T) {
 		{e2, ":t/n", int64(2)},
 	}
 	clauses := []string{`[?e :t/n _]`, `(or-default-join [?v] [?x :t/a ?v] [(ground 0) ?v])`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -548,7 +548,7 @@ func TestOneFormWhereWithNothingBindingItsRequiredRunIsRefused(t *testing.T) {
 		{"(not-join", `[:find ?x :where (not-join [?x] [?x :t/a _])]`},
 	}
 	stalls := map[string][]string{}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			for _, form := range forms {
@@ -600,7 +600,7 @@ func TestNoOrderRefusalIsOneTextOnBothPathsForEveryStallShape(t *testing.T) {
 	for _, shape := range shapes {
 		t.Run(shape.name, func(t *testing.T) {
 			var stalls []string
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 				commitFacts(t, d, facts)
 				var inputs []interface{}
@@ -639,7 +639,7 @@ func TestPreparationEventCarriesThePreparedQueryAndWhetherItWasRewritten(t *test
 		{"a headerless not inside a subquery", `[:find ?e ?c :where [?e :t/n ?v] [(q [:find (count ?x) :in $ ?v :where [?x :t/n ?v] (not [?x :t/a 1])] $ ?v) [[?c]]]]`, "(not-join [?x] [?x :t/a 1])", true},
 		{"a query of no form", `[:find ?e :where [?e :t/n 1]]`, "[?e :t/n 1]", false},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var events []annotations.Event
@@ -722,7 +722,7 @@ func TestEntityPrefetchOffRunsNoPrefetch(t *testing.T) {
 		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(1)},
 		{e2, ":t/n", int64(2)}, {e2, ":t/a", int64(2)},
 	}
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.prefetch }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, prefetchOption), func(m optimizerMode) bool { return !m.prefetch }) {
 		t.Run(mode.name, func(t *testing.T) {
 			var triggers, populated atomic.Int64
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: func(e annotations.Event) {
@@ -764,7 +764,7 @@ func TestFallbackPrefetchAnswersAsTheScanPath(t *testing.T) {
 		want = append(want, fmt.Sprintf("%s %d", e.name, i))
 	}
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, prefetchOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var triggersMu sync.Mutex
 			var triggers []annotations.Event
@@ -826,7 +826,7 @@ func TestFallbackPrefetchAnswersAsTheScanPathForARequiredValue(t *testing.T) {
 		}
 	}
 	const text = `[:find ?e ?v :where [?e :t/n ?v] (or-default-join [[?e ?v]] [?e :t/a ?v] [?e :t/b ?v])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, prefetchOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var triggersMu sync.Mutex
 			var triggers []annotations.Event
@@ -882,7 +882,7 @@ func TestSubqueryAfterAFormAnswersOverItsStreamingResult(t *testing.T) {
 		`[(q [:find (count ?s) :in $ ?e :where [?s :t/s ?e]] $ ?e) [[?n] ...]]`,
 		`(or-join [[?y] ?e] [?e :t/p ?m] [?y :t/q ?e])`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -899,7 +899,7 @@ func TestSubqueryAfterAFormAnswersOverItsStreamingResult(t *testing.T) {
 // nodes it reaches, grouped by the input; the sink, reaching none, takes no
 // tuple.
 func TestSubqueryHoldingAnInvocationIsBuiltOncePerWindow(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			counts := &ruleEventCounts{}
 			var builds, windows atomic.Int64
@@ -935,7 +935,7 @@ func TestSubqueryHoldingAnInvocationIsBuiltOncePerWindow(t *testing.T) {
 func TestSubqueryBodyIsOrderedByThePlanner(t *testing.T) {
 	e1, e2 := named("e1"), named("e2")
 	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(5)}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -959,7 +959,7 @@ func TestSubqueryOverItsCombinationsGivesThePerCombinationTuples(t *testing.T) {
 		{m2, ":t/in", int64(1)}, {m2, ":t/v", "b"},
 	}
 	clauses := []string{`[?e :t/g ?g]`, `[(q [:find ?v :in $ ?g :where [?m :t/in ?g] [?m :t/v ?v]] $ ?g) [[?v] ...]]`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -973,7 +973,7 @@ func TestSubqueryOverItsCombinationsGivesThePerCombinationTuples(t *testing.T) {
 func TestPureAggregateOverACombinationMatchingNothingBindsNoTuple(t *testing.T) {
 	e1, e2 := named("e1"), named("e2")
 	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(2)}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -996,7 +996,7 @@ func TestAggregateNotReadingTheInputIsPairedWithEveryRunTuple(t *testing.T) {
 		{s2, ":t/s", int64(2)},
 		{s3, ":t/s", int64(3)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1024,7 +1024,7 @@ func TestSubqueryInputsSpanningTwoGroupsAreReadAsTheirProduct(t *testing.T) {
 		`[?b :t/y ?y]`,
 		`[(q [:find ?h :in $ ?x ?y :where [(+ ?x ?y) ?s] [?h :t/sum ?s]] $ ?x ?y) [[?h] ...]]`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1051,7 +1051,7 @@ func TestSubqueryBindingSymbolTheScopeBindsIsJoined(t *testing.T) {
 		{"non-aggregating", []string{`[?e :t/n ?c]`, `[(q [:find ?c :in $ ?e :where [?e :t/m ?c]] $ ?e) [[?c] ...]]`}},
 		{"aggregating", []string{`[?e :t/n ?c]`, `[(q [:find (count ?s) :in $ ?e :where [?s :t/s ?e]] $ ?e) [[?c] ...]]`}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption, aggregationOption) {
 		for _, q := range inner {
 			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -1067,7 +1067,7 @@ func TestSubqueryBindingSymbolTheScopeBindsIsJoined(t *testing.T) {
 // query answers no tuple and no error.
 func TestSubqueryOverAnEmptyCombinationRelationYieldsNothing(t *testing.T) {
 	facts := []fact{{named("e1"), ":t/n", int64(1)}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1097,7 +1097,7 @@ func TestSubqueryAnswersUnderTheEnclosingNamesWhateverTheInnerNames(t *testing.T
 		{"names of its own", []string{`[?e :t/n _]`, `[(q [:find ?v :in $ ?x :where [?x :t/m ?v]] $ ?e) [[?c] ...]]`}},
 		{"the enclosing names in other roles", []string{`[?e :t/n _]`, `[(q [:find ?e :in $ ?c :where [?c :t/m ?e]] $ ?e) [[?c] ...]]`}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		for _, q := range inner {
 			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -1118,7 +1118,7 @@ func TestSubqueryPassingOneVariableAtTwoPlacesEquatesThem(t *testing.T) {
 		{e2, ":t/a", int64(2)}, {e2, ":t/b", int64(3)},
 	}
 	clauses := []string{`[?e :t/a _]`, `[(q [:find ?v :in $ ?x ?y :where [?x :t/a ?v] [?y :t/b ?v]] $ ?e ?e) [[?v] ...]]`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1134,7 +1134,7 @@ func TestSubqueryWithAConstantArgumentSelectsOnItsValue(t *testing.T) {
 	e1, e2 := named("e1"), named("e2")
 	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(2)}}
 	clauses := []string{`[?e :t/n _]`, `[(q [:find ?h :in $ ?k :where [?h :t/n ?k]] $ 2) [[?e] ...]]`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1157,7 +1157,7 @@ func TestSubqueryRepeatedCombinationIsReadFromTheIndexNotRun(t *testing.T) {
 		{m1, ":t/in", int64(1)}, {m1, ":t/v", "a"},
 		{m2, ":t/in", int64(2)}, {m2, ":t/v", "b"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var builds, windows atomic.Int64
 			opts := mode.plannerOptions()
@@ -1193,7 +1193,7 @@ func TestSubqueryCollectionBindingAnswersTheRelationOverItsSymbol(t *testing.T) 
 		{e2, ":t/n", int64(2)}, {e2, ":t/m", int64(20)},
 	}
 	clauses := []string{`[?e :t/n _]`, `[(q [:find ?v :in $ ?x :where [?x :t/m ?v]] $ ?e) [?c ...]]`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1216,7 +1216,7 @@ func TestSubqueryInsideABranchRunsOverTheBranchsWindow(t *testing.T) {
 		{p3, ":product/category", c3},
 	}
 	const text = `[:find ?category ?count :where [?c :category/name ?category] (or-default [(q [:find (count ?p) :in $ ?c :where [?p :product/category ?c]] $ ?c) [[?count] ...]] [(ground 0) ?count])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, aggregationOption) {
 		for windowCap := 1; windowCap <= 3; windowCap++ {
 			t.Run(mode.name+"/"+windowCapNames[windowCap], func(t *testing.T) {
 				opts := mode.plannerOptions()
@@ -1252,7 +1252,7 @@ func TestSubqueryInsideAUnionBranchUnderACarriedOutputReadsTheSubjectOnce(t *tes
 		`[(ground :t/q) ?a]`,
 		`(or (and [(ground :t/r) ?a] [(q [:find (count ?s) :in $ ?e :where [?s :t/p ?e]] $ ?e) [[?c] ...]]) (and [?l :t/p ?e] [?e ?a ?m]))`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1278,7 +1278,7 @@ func TestANotThenAnOrOverTheSameGroupsReadEachSubjectOnce(t *testing.T) {
 		`(not [(identity ?x) ?y] [(ground :t/p) ?a])`,
 		`(or [?m ?a ?l] (and [?m ?a ?x] [?e :t/p ?x]))`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1304,7 +1304,7 @@ func TestBranchReadingARequiredVariableAfterAnUncorrelatedSubqueryRunsPerTuple(t
 		`[?e :t/n _]`,
 		`(or-join [[?e]] (and [(q [:find ?y (count ?s) :in $ :where [?s :t/q ?y]] $) [[?y ?c] ...]] [(= ?y ?e)]) [?e :t/flag true])`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1325,7 +1325,7 @@ func TestCollectionInputBindsItsMembersAsAGroup(t *testing.T) {
 		{h2, ":t/string", "b"},
 		{h3, ":t/string", "c"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
 			names := commitFacts(t, d, facts)
@@ -1354,7 +1354,7 @@ func TestSubqueryBindingNamesAnInputTheFindAlsoNames(t *testing.T) {
 		{h2, ":t/holds", int64(2)},
 		{h3, ":t/holds", int64(2)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name+"/scalar input", func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1394,7 +1394,7 @@ func TestSubqueryBindingNamingOneVariableTwiceSelectsOnEquality(t *testing.T) {
 		{e1, ":t/n", int64(1)}, {e1, ":t/also", int64(1)},
 		{e2, ":t/n", int64(2)}, {e2, ":t/also", int64(3)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1426,7 +1426,7 @@ func TestFormsOverTwoGroupsSharingNoSymbolAnswerInEveryOrder(t *testing.T) {
 		`(or (and [?x ?a ?l] [(q [:find (count ?s) :in $ ?x :where [?s :q ?x]] $ ?x) [[?c]]]) (and [?e :p _] [?x :r ?n]))`,
 		`(or-join [?e] [?l :q ?e] (and [?e :r ?n] [(ground :r) ?a]))`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -1453,7 +1453,7 @@ func TestInvocationWhoseArgumentsTwoGroupsBindRunsOverTheirProduct(t *testing.T)
 	}
 	clauses := []string{`[?x :l 1]`, `[?y :r 1]`, `(reach ?x ?y)`}
 	want := []string{"e1 e2", "e1 e3", "e1 e4", "e2 e3", "e2 e4"}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var windows atomic.Int32
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: func(e annotations.Event) {
@@ -1497,7 +1497,7 @@ func TestBranchNoOrderRunsUnderTheRequiredRunIsRefused(t *testing.T) {
 		{"a branch run per tuple", `[:find ?e :where [?e :t/n ?r] (or-join [[?r] ?e] (and [(identity ?m) ?e] [(identity ?e) ?m] [(> ?r 0)]) [?e :t/p ?m])]`},
 		{"the headerless spelling", `[:find ?e :where [?e :t/n ?r] (or (and [(identity ?m) ?e] [(identity ?e) ?m] [(> ?r 0)]) [?e :t/p ?m])]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, q := range queries {
 			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})

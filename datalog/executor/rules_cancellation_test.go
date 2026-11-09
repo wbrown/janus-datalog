@@ -16,7 +16,7 @@ func TestEvaluateRules_CancelledAtIteration(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(5))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

@@ -18,7 +18,7 @@ import (
 func TestRelationInputOverStorage(t *testing.T) {
 	for _, backend := range storage.AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor() {
 				t.Run(mode.name, func(t *testing.T) {
 					testRelationInputOverStorage(t, backend, mode)
 				})

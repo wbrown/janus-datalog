@@ -12,13 +12,9 @@ import "github.com/wbrown/janus-datalog/datalog/annotations"
 // construction has no other route to one: it is built in one call and consumed
 // in another, long after any context went out of scope.
 type ExecutorOptions struct {
-	// Streaming options - control memory vs performance tradeoffs
-	EnableTrueStreaming     bool
-	EnableSymmetricHashJoin bool
-
 	// Join options
-	EnableStreamingJoins bool
-	DefaultHashTableSize int // Default hash table size for streaming relations (Size() = -1). If 0, uses 256.
+	EnableSymmetricHashJoin bool
+	DefaultHashTableSize    int // Default hash table size for streaming relations (Size() = -1). If 0, uses 256.
 
 	// Aggregation options
 	EnableStreamingAggregation bool
@@ -98,9 +94,7 @@ func (o ExecutorOptions) windowGrowth() int {
 // cannot be compared with ==, nil field or not. TestExecutorOptionsPopulated
 // pins this against a field being added to the struct and not accounted for here.
 func (o ExecutorOptions) populated() bool {
-	return o.EnableTrueStreaming ||
-		o.EnableSymmetricHashJoin ||
-		o.EnableStreamingJoins ||
+	return o.EnableSymmetricHashJoin ||
 		o.DefaultHashTableSize != 0 ||
 		o.EnableStreamingAggregation ||
 		o.EnableScanSharing ||

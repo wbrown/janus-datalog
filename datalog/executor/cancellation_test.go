@@ -17,7 +17,7 @@ import (
 func TestExecuteWithRelations_RefusedWhenContextDone(t *testing.T) {
 	var matcher PatternMatcher
 	q := mustParse(t, `[:find ?p :where [?p :page/kind "leaf"]]`)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()

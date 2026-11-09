@@ -19,7 +19,7 @@ func TestCorrelatedNotJoinPredicateInputMatchesUnoptimizedExecution(t *testing.T
 			[?termEvent :event/type ?termType]
 			[(!= ?termType ?goalSet)])]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, retained := openCorrelatedNotJoinDatabase(t, mode)
 			got, err := executor.CollectTuples(db.Query(source))
@@ -40,7 +40,7 @@ func TestCorrelatedNotPredicateInputExecutesWithAlgebra(t *testing.T) {
 			[?termEvent :event/type ?termType]
 			[(!= ?termType ?goalSet)])]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, retained := openCorrelatedNotJoinDatabase(t, mode)
 			got, err := executor.CollectTuples(db.Query(source))
@@ -65,7 +65,7 @@ func TestCorrelatedOrJoinAllBranchesBindHeaderMatchesUnoptimizedExecution(t *tes
 				(not [?e :x/flag true]))
 			[?e :x/flag true])]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -144,7 +144,7 @@ func TestCorrelatedOrJoinWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
 				(not [?e :x/flag true]))
 			[?e :x/b ?v])]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openCorrelatedOrOutputsDatabase(t, mode)
 			got, err := executor.CollectTuples(db.Query(source))
@@ -166,7 +166,7 @@ func TestCorrelatedOrWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
 				(not [?e :x/flag true]))
 			[?e :x/b ?v])]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openCorrelatedOrOutputsDatabase(t, mode)
 			got, err := executor.CollectTuples(db.Query(source))
@@ -188,7 +188,7 @@ func TestFullyDisjointNotRejectedAtQueryOutset(t *testing.T) {
 		[?goal :entity/type :type/goal]
 		(not [?x :sys/killswitch true])]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, _ := openCorrelatedNotJoinDatabase(t, mode)
 			_, err := db.Query(source)
@@ -210,7 +210,7 @@ func TestCorrelatedNotJoinRequiresOuterInputsInHeader(t *testing.T) {
 			[?termEvent :event/type ?termType]
 			[(!= ?termType ?goalSet)])]`
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, _ := openCorrelatedNotJoinDatabase(t, mode)
 			_, err := db.Query(source)

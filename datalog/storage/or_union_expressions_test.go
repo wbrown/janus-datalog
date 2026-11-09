@@ -58,7 +58,7 @@ func addChildrenTypesAndFriends(t *testing.T, db *Database, e1, e2, e3 datalog.I
 
 func TestOrUnionWithExpressionBranches(t *testing.T) {
 	t.Run("or_join_union_with_ground_default", func(t *testing.T) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 			t.Run(mode.name, func(t *testing.T) {
 				db, _, _, _ := setupBaseEntities(t, mode)
 
@@ -85,7 +85,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	})
 
 	t.Run("or_union_with_ground_default", func(t *testing.T) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 			t.Run(mode.name, func(t *testing.T) {
 				db, _, _, _ := setupBaseEntities(t, mode)
 
@@ -111,7 +111,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	})
 
 	t.Run("not_branch_standalone", func(t *testing.T) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 			t.Run(mode.name, func(t *testing.T) {
 				db, e1, e2, e3 := setupBaseEntities(t, mode)
 				addChildrenTypesAndFriends(t, db, e1, e2, e3)
@@ -129,7 +129,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	})
 
 	t.Run("nested_or_join_in_and_branches", func(t *testing.T) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 			t.Run(mode.name, func(t *testing.T) {
 				db, e1, e2, e3 := setupBaseEntities(t, mode)
 				addChildrenTypesAndFriends(t, db, e1, e2, e3)
@@ -169,7 +169,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	//   gamma: related by co-location (or location itself)
 	//   delta: related by link OR parent link chain
 	t.Run("deeply_nested_or_join_4_branches_generic", func(t *testing.T) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 			t.Run(mode.name, func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -272,7 +272,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	})
 
 	t.Run("ground_rebinding_existing_symbol", func(t *testing.T) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 			t.Run(mode.name, func(t *testing.T) {
 				db, e1, e2, e3 := setupBaseEntities(t, mode)
 				addChildrenTypesAndFriends(t, db, e1, e2, e3)
@@ -294,7 +294,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	})
 
 	t.Run("or_join_decorrelated_subquery_with_default", func(t *testing.T) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 			t.Run(mode.name, func(t *testing.T) {
 				db, e1, e2, e3 := setupBaseEntities(t, mode)
 				addChildrenTypesAndFriends(t, db, e1, e2, e3)
@@ -335,7 +335,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 // the collection), causing identity to return wrong types (string, bool
 // instead of Identity).
 func TestOrCorrelatedUnionWithNestedOrExpression_E2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

@@ -62,7 +62,7 @@ func TestQuery_AValueThatIsNotAQueryIsRefusedUnderTheShippedFormatter(t *testing
 		{"an AsOf handle's Query given an integer", func(d *Database, asOf datalog.ElementID) error { _, err := d.AsOf(asOf).Query(42); return err }},
 		{"a History handle's Query given an integer", func(d *Database, _ datalog.ElementID) error { _, err := d.History().Query(42); return err }},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			var rendered bytes.Buffer
 			formatter := annotations.NewOutputFormatter(&rendered)
@@ -104,7 +104,7 @@ func TestQuery_AQueryWhoseContextIsDoneReachesTheHandlerAsACompletedQuery(t *tes
 			return err
 		}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var events []annotations.Event
@@ -161,7 +161,7 @@ func TestQueryInto_ADestinationItRefusesCompletesTheQuery(t *testing.T) {
 		{"a struct tagged with a symbol the find lacks", func(d *Database) error { return d.QueryInto(&structs, text) }, "?m"},
 		{"a scalar destination for two find elements", func(d *Database) error { return d.QueryInto(&scalars, text) }, "exactly 1 find element"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var events []annotations.Event

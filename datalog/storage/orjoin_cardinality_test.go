@@ -25,7 +25,7 @@ func TestOrJoinContainerItemCardinality(t *testing.T) {
 	kw := datalog.NewKeyword
 
 	t.Run("without_schema_lww_loses_item1", func(t *testing.T) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			t.Run(mode.name, func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -50,7 +50,7 @@ func TestOrJoinContainerItemCardinality(t *testing.T) {
 			Attribute(":container/item").Type(schema.TypeRef).Many().Add().
 			MustBuild()
 
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			t.Run(mode.name, func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 

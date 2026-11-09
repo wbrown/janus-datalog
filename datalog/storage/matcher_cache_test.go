@@ -21,7 +21,7 @@ func createMatcherCacheTestDatabase(t *testing.T, mode optimizerMode) *Database 
 }
 
 func TestMatcherCacheCardinalityOne(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -61,7 +61,7 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 }
 
 func TestMatcherCacheCardinalityMany(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -106,7 +106,7 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 }
 
 func TestMatcherCacheCardinalityVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -148,7 +148,7 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 }
 
 func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -188,7 +188,7 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 }
 
 func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -233,7 +233,7 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 }
 
 func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -265,7 +265,7 @@ func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
 }
 
 func TestMatcherCacheLWWResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -311,7 +311,7 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 }
 
 func TestMatcherCacheAddWinsResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 

@@ -14,7 +14,7 @@ import (
 // carrying it, under a sort on a :where-bound key too, where the sorted
 // result is stripped to the find before the pulls render.
 func TestFindPull_RendersAtItsOwnPositionBesideThePlainVariable(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().Attribute(":t/name").Type(schema.TypeString).Add().Build()
 			require.NoError(t, err)

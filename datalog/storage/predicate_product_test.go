@@ -86,7 +86,7 @@ func collectStrings(results [][]interface{}) []string {
 // The scalar ?self only appears in the predicate, not in any data pattern,
 // so the planner should mark it as constant-bindable.
 func TestScalarInput_InequalityPredicate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -119,7 +119,7 @@ func TestScalarInput_InequalityPredicate(t *testing.T) {
 // TestScalarInput_ComparisonPredicate tests a scalar threshold bridging via >.
 // ?min-age only appears in the predicate, not in any data pattern.
 func TestScalarInput_ComparisonPredicate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -154,7 +154,7 @@ func TestScalarInput_ComparisonPredicate(t *testing.T) {
 // ?target-team is used in [?e :person/team ?target-team], so it is NOT
 // constant-bindable — it joins normally via the pattern.
 func TestScalarInput_EqualityPredicate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -187,7 +187,7 @@ func TestScalarInput_EqualityPredicate(t *testing.T) {
 // TestScalarInput_MultipleBridgingPredicates tests two scalar inputs, each
 // bridging a separate predicate. Both ?self and ?min-age are constant-bindable.
 func TestScalarInput_MultipleBridgingPredicates(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -223,7 +223,7 @@ func TestScalarInput_MultipleBridgingPredicates(t *testing.T) {
 // TestScalarInput_ExpressionBridge tests a scalar input bridging via an expression.
 // ?bonus only appears in the expression [(+ ?age ?bonus) ?adjusted], not in data patterns.
 func TestScalarInput_ExpressionBridge(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -270,7 +270,7 @@ func TestScalarInput_ExpressionBridge(t *testing.T) {
 // a data pattern is NOT treated as constant-bindable. ?target-name is used in
 // [?e :person/name ?target-name] to find the person, then we find teammates.
 func TestScalarInput_InPatternNotConstantBindable(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -316,7 +316,7 @@ func TestScalarInput_InPatternNotConstantBindable(t *testing.T) {
 // This is NOT "find names not in the exclusion set". For that semantics,
 // you'd need a NOT clause with a subquery pattern.
 func TestCollectionInput_BridgingPredicate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -352,7 +352,7 @@ func TestCollectionInput_BridgingPredicate(t *testing.T) {
 // against ages. The theta-join produces all valid (person, threshold) combinations,
 // then projection to :find symbols deduplicates.
 func TestCollectionInput_ComparisonBridge(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -413,7 +413,7 @@ func TestCollectionInput_ComparisonBridge(t *testing.T) {
 // groups (no shared variables, no inputs) bridged only by a predicate.
 // This is the pure theta-join case — no constant optimization possible.
 func TestDisjointPatterns_BridgedByPredicate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -460,7 +460,7 @@ func TestDisjointPatterns_BridgedByPredicate(t *testing.T) {
 // TestDisjointGroups_ExpressionBridge tests an expression that requires symbols
 // from two disjoint pattern groups, forcing a cross-join.
 func TestDisjointGroups_ExpressionBridge(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -508,7 +508,7 @@ func TestDisjointGroups_ExpressionBridge(t *testing.T) {
 // TestScalarInput_AllExcluded tests that a scalar threshold that excludes
 // all entities returns 0 results.
 func TestScalarInput_AllExcluded(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tdb := setupBridgeTestDB(t, mode)
 
@@ -535,7 +535,7 @@ func TestScalarInput_AllExcluded(t *testing.T) {
 // TestScalarInput_SingleEntitySelfExclusion tests self-exclusion when the
 // database contains only one entity.
 func TestScalarInput_SingleEntitySelfExclusion(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -571,7 +571,7 @@ func TestScalarInput_SingleEntitySelfExclusion(t *testing.T) {
 // TestPlanner_ConstantBindableDetection verifies the planner preserves scalar
 // input semantics for values used only by predicates.
 func TestPlanner_ConstantBindableDetection(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testPlannerConstantBindableDetection(t, mode)
 		})
@@ -615,7 +615,7 @@ func testPlannerConstantBindableDetection(t *testing.T, mode optimizerMode) {
 // TestPlanner_ScalarInPatternNotConstantBindable verifies the planner does NOT
 // preserve a scalar input as constant-only when it appears in a data pattern.
 func TestPlanner_ScalarInPatternNotConstantBindable(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testPlannerScalarInPatternNotConstantBindable(t, mode)
 		})

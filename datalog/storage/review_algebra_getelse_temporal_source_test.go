@@ -36,7 +36,7 @@ func TestReviewAlgebra_GetElseOnATemporalSourceAnswersAlikeUnderBothOptimizerPat
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			outcomes := map[bool]outcome{}
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 				tx := d.NewTransaction()
 				require.NoError(t, tx.Add(one, kw(":t/name"), "one"))

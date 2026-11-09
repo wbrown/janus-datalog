@@ -71,7 +71,7 @@ func TestSubqueryRelationBinding_ScalesWithInputSize(t *testing.T) {
 				)
 			}
 
-			for _, mode := range OptimizerModes {
+			for _, mode := range LegsFor(t, AllOptions...) {
 				t.Run(mode.Name(), func(t *testing.T) {
 					got := runExecute(t, datoms, buildQuery(), mode.Algebra())
 					assert.Len(t, got, numPeople,

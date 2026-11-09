@@ -241,7 +241,7 @@ func TestTransactionWritersCompareAgainstTheTransactionsView(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		for _, disableCache := range []bool{false, true} {
 			cacheName := "cache_on"
 			if disableCache {

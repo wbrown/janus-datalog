@@ -74,7 +74,7 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Create executor with decorrelation enabled
 			executor := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())

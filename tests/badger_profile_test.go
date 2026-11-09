@@ -94,7 +94,7 @@ func TestBadgerRelationInputProfile(t *testing.T) {
 	}
 	inputRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(allOptions...) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Profile the query
 			f, err := os.Create("badger_relation_input.prof")

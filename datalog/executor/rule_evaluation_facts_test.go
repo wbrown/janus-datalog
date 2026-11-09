@@ -68,7 +68,7 @@ func pairsFrom(from, n int) map[[2]datalog.Identity]bool {
 // pairs its keys reach that the sets do not hold enter a delta once, and a
 // window whose keys the sets already hold runs no iteration.
 func TestRuleEvaluation_ALaterSeedDerivesTheNewKeysAlone(t *testing.T) {
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
@@ -141,7 +141,7 @@ func TestRunStratum_ADeltaCopySeeksItsPatternOnTheDeltasKeys(t *testing.T) {
 	b := datalog.NewSymbol("?b")
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			matcher := &edgeKeysMatcher{Database: factsDatabase(t, ChainDatoms(6)), keys: map[query.Symbol]int{}}
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
@@ -163,7 +163,7 @@ func TestRunStratum_ACopyMatchesItsPatternUnderTheWholeDelta(t *testing.T) {
 	b := datalog.NewSymbol("?b")
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
@@ -200,7 +200,7 @@ func TestRuleEvaluation_ABodysInvocationBesideAValueConstantPatternDerivesWhatTh
 	follows := datalog.NewSymbol("follows")
 	rs := MustRules(t, leafwardRulesText)
 	q := MustParse(t, `[:find ?x :in $ % :where (leafward #id "page1" ?x)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
@@ -234,7 +234,7 @@ func TestRunStratum_ACopysJoinIntoAHeldPredicateProbesTheDeltaAlone(t *testing.T
 	                     [(reach ?x ?y) (step ?x ?y)]
 	                     [(reach ?x ?z) (reach ?x ?y) (step ?y ?z)]]`)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (reach ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
@@ -288,7 +288,7 @@ func TestRunStratum_APassCarriesAChainOfDerivations(t *testing.T) {
 	                     [(c ?x ?y) (b ?x ?y)]
 	                     [(a ?x ?z) (c ?x ?y) [?y :page/next ?z]]]`)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (a ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
@@ -365,7 +365,7 @@ func TestRuleEvaluation_ALaterWindowReadsALowerStratumsNewTuplesAlone(t *testing
 // evaluation completes, each with its iterations summed over the windows and
 // its sets' tuples; completing again reports nothing.
 func TestRuleEvaluation_CompleteReportsEachStratumOnce(t *testing.T) {
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
@@ -402,7 +402,7 @@ func TestRuleEvaluation_CompleteReportsEachStratumOnce(t *testing.T) {
 // the first window, and a later window runs no stratum.
 func TestRuleEvaluation_AWholeEvaluationRunsOnce(t *testing.T) {
 	follows := datalog.NewSymbol("follows")
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
@@ -433,7 +433,7 @@ func TestRuleEvaluation_AWholeEvaluationRunsOnce(t *testing.T) {
 // delta and returns the tuples the window added, nothing for a seed the set
 // holds.
 func TestRuleEvaluation_RunStratumReturnsWhatTheWindowAdded(t *testing.T) {
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec, planned, ctx := boundClosure(t, FollowsRulesText, factsDatabase(t, ChainDatoms(6)), mode.PlannerOptions())
 			rules, seed := planned.Magic.Rules, planned.Magic.Seed
@@ -468,7 +468,7 @@ func TestDeriveInvocation_ContinuesTheClausesEvaluationUnderContinuations(t *tes
 		}
 		return []Relation{NewMaterializedRelation([]query.Symbol{x}, tuples)}
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
@@ -515,7 +515,7 @@ func TestFormInsideAFormContinuesOneEvaluationAcrossTheOuterWindows(t *testing.T
 	matcher := factsDatabase(t, ChainDatoms(pages))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where [?x :page/kind "leaf"] (or-join [[?x] ?y] (or-default-join [[?x] ?y] (follows ?x ?y) [(ground :end) ?y]) [(ground :none) ?y])]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
@@ -549,7 +549,7 @@ func TestOrFallbackIteratorClosedBeforeExhaustionCompletesItsEvaluations(t *test
 	for i := 1; i <= pages; i++ {
 		subjects = append(subjects, Tuple{Page(i)})
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()

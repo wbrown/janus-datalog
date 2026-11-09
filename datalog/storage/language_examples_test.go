@@ -24,7 +24,7 @@ func TestExplain_PlanIsTheExecutedPlanUnderTheInputsBoundSymbols(t *testing.T) {
 		{"a collection input", `[:find ?n :in $ [?x ...] :where [?e :a ?x] [?e :b ?f] [?f :c ?n] [?g :b ?f] [?g :a ?k]]`, []interface{}{int64(1)}},
 		{"a scalar input beside a subquery", `[:find (count ?n) :in $ ?x :where [?e :a ?x] [?e :b ?f] [?f :c ?n] [(q [:find (max ?w) :in $ ?f :where [?f :c ?w]] $ ?f) [[?mx]]]]`, int64(1)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -82,7 +82,7 @@ func TestQueryBuilderSubqueries_RenderReparseAndAnswerAsTheirText(t *testing.T) 
 			return qb.Query().Find(e, c).Where(qb.Pat(e, qb.Kw(":n"), v), qb.Pat(e, qb.Kw(":m"), w), qb.Subquery(inner, v, w).BindCollection(c))
 		}, [][]interface{}{{a, a}, {b, b}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -127,7 +127,7 @@ func TestRepeatedSymbols_UnifyAndAnUnboundRequiredPositionIsRefused(t *testing.T
 		{"two patterns closing a cycle", `[:find ?e :where [?e :b ?v] [?v :b ?e]]`, [][]interface{}{{a}}},
 		{"a relation ground naming a symbol twice", `[:find ?x :where [?x :b ?y] [(ground [[1 1] [1 2]]) [[?p ?p]]]]`, [][]interface{}{{a}, {b}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -170,7 +170,7 @@ func TestBytesAndInstantConstants_AnswerFromTheBuiltQueryAndItsRendering(t *test
 		{"an instant", kw(":b/t"), at},
 		{"a whole-valued float", kw(":b/f"), float64(3)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -202,7 +202,7 @@ func TestBytesAndInstantConstants_AnswerFromTheBuiltQueryAndItsRendering(t *test
 // (docs/reference/QUERY_BUILDER.md, the subquery section).
 func TestSubqueryOverAnInnerQueryWithNoIn_IsPassedTheDefaultSource(t *testing.T) {
 	p := datalog.NewIdentity("p1")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -230,7 +230,7 @@ func TestSubquery_ACallsSourceArgumentIsTheInnerSource(t *testing.T) {
 		{"an inner :in $t given $", `[:find ?n :in $ $other :where [(q [:find ?n :in $t :where [$t ?e :p/name ?n]] $) [[?n]]]]`, "home"},
 		{"an inner call passing its $t onward", `[:find ?n :in $ $other :where [(q [:find ?n :in $t :where [(q [:find ?n :in $u :where [$u ?e :p/name ?n]] $t) [[?n]]]] $other) [[?n]]]]`, "away"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			home := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			away := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -268,7 +268,7 @@ func TestExplain_RendersAnInvocationWithTheArgumentsThePhaseBindsBeforeIt(t *tes
 		{"a first position an or's output binds", `[:find ?x ?y :in $ % :where (or [?x :edge ?z] [?z :edge ?x]) (reach ?x ?y)]`, closureRules, datalog.NewSymbol("?x"), chainClosure(4)},
 		{"a first position a pattern binds", `[:find ?x ?y :in $ % :where [?x :type :node] (reach ?x ?y)]`, closureRules, datalog.NewSymbol("?x"), chainClosure(4)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, c := range cases {
 				t.Run(c.name, func(t *testing.T) {

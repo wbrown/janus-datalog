@@ -14,7 +14,7 @@ import (
 func TestJoinCopyAnnotationE2E(t *testing.T) {
 	// On the legs without attribute-fetch fusion the department pattern runs
 	// as the join whose build-copy annotation the test reads.
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.fusion }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 			// The recording flag scopes collection to the query below; the
 			// handler is registered at open because everything the database

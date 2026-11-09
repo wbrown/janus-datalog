@@ -84,12 +84,12 @@ func TestNewMaterializedRelationFromSetPreservesProofs(t *testing.T) {
 	relation := newMaterializedRelationFromSet(
 		[]query.Symbol{entity, name},
 		tuples,
-		ExecutorOptions{EnableTrueStreaming: true},
+		ExecutorOptions{EnableSymmetricHashJoin: true},
 		properties,
 	)
 	require.Equal(t, tuples, relation.tuples)
 	require.Equal(t, properties, relation.Properties())
-	require.Equal(t, true, relation.Options().EnableTrueStreaming)
+	require.True(t, relation.Options().EnableSymmetricHashJoin)
 }
 
 func TestRelationPropertyPropagation(t *testing.T) {
@@ -336,9 +336,7 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	id := datalog.NewSymbol("?id")
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
-	opts := ExecutorOptions{
-		EnableStreamingJoins: true,
-	}
+	opts := ExecutorOptions{}
 
 	leftBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, leftValue},
@@ -403,9 +401,7 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	id := datalog.NewSymbol("?id")
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
-	opts := ExecutorOptions{
-		EnableStreamingJoins: true,
-	}
+	opts := ExecutorOptions{}
 
 	leftBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, leftValue},
@@ -446,9 +442,7 @@ func TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey(t *testing.T) {
 	id := datalog.NewSymbol("?id")
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
-	opts := ExecutorOptions{
-		EnableStreamingJoins: true,
-	}
+	opts := ExecutorOptions{}
 
 	left := NewMaterializedRelationWithProperties(
 		[]query.Symbol{id, leftValue},
@@ -543,10 +537,8 @@ func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
 	require.Equal(t, properties, materializedJoin.Properties())
 
 	opts := ExecutorOptions{
-		EnableStreamingJoins:    true,
 		EnableSymmetricHashJoin: true,
 		DefaultHashTableSize:    16,
-		EnableTrueStreaming:     true,
 	}
 	streamingLeftBase := NewMaterializedRelationFromSet(leftSymbols, leftTuples, ExecutorOptions{}, RelationProperties{})
 	streamingRightBase := NewMaterializedRelationFromSet(rightSymbols, rightTuples, ExecutorOptions{}, RelationProperties{})

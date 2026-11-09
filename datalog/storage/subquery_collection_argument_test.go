@@ -37,7 +37,7 @@ const countOverCollection = `[:find ?k ?c :where [?z :t/k ?k] [(ground %s) ?ns] 
 // the members 1, 2 and 3 are held by four entities, so each :t/k is answered
 // beside 4.
 func TestSubquery_ACollectionArgumentAggregatesOverItsMembers(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, holderFacts())
@@ -51,7 +51,7 @@ func TestSubquery_ACollectionArgumentAggregatesOverItsMembers(t *testing.T) {
 // An empty collection argument binds nothing, so the subquery clause answers
 // no tuple and the query answers none, without a panic.
 func TestSubquery_AnEmptyCollectionArgumentAnswersNothing(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, holderFacts())
@@ -70,7 +70,7 @@ func TestSubquery_AnEmptyCollectionArgumentAnswersNothing(t *testing.T) {
 // members 1, 1 and 2 are held by three entities, so each :t/k is answered
 // beside 3, without a panic.
 func TestSubquery_ACollectionArgumentNamingAMemberTwiceCountsItOnce(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, holderFacts())

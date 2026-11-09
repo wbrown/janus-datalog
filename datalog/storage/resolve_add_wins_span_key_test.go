@@ -71,7 +71,7 @@ func TestResolveAddWinsSet_HoldsASpanObservedMemberUnderItsMemberKey(t *testing.
 		{blob, []interface{}{longBytes, letters, noise}},
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: declared, CompressionThreshold: 512})
 			tx := db.NewTransaction()

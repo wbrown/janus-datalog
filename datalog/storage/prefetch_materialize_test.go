@@ -16,7 +16,7 @@ import (
 // The query has two patterns sharing a variable — the second pattern triggers
 // materializeRelationsForPattern on the first pattern's result.
 func TestPrefetchDoesNotBreakMaterialize(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

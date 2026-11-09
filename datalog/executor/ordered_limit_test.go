@@ -30,7 +30,7 @@ func TestOrderedLimitWithNonProjectedKeyRetainsFullSortSemantics(t *testing.T) {
 	require.NoError(t, err)
 
 	matcher := factsDatabase(t, datoms)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := exec.Execute(q)
@@ -59,7 +59,7 @@ func TestOrderedLimitAfterAggregationUsesGlobalTopN(t *testing.T) {
 	require.NoError(t, err)
 
 	matcher := factsDatabase(t, datoms)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := exec.Execute(q)

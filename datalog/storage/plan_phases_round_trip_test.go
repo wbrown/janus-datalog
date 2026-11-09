@@ -38,7 +38,7 @@ func TestPlan_PhasesOfRuleQueriesParseBackToThemselves(t *testing.T) {
 		{"the same nested subquery spelled without %", `[:find ?x ?n :in $ :where [?x :edge _] [(q [:find (count ?y) :in $ ?x :where [?x :edge _] [(q [:find ?y :in $ ?x :where [?x :edge ?y]] $ ?x) [[?y] ...]]] $ ?x) [[?n]]]]`, false},
 	}
 	spec := chain(5)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeGraph(t, d, spec)

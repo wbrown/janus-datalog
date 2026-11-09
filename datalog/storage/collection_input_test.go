@@ -22,7 +22,7 @@ import (
 
 // TestCollectionInput_SingleCollection verifies a single [?e ...] input works.
 func TestCollectionInput_SingleCollection(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -58,7 +58,7 @@ func TestCollectionInput_SingleCollection(t *testing.T) {
 
 // TestCollectionInput_SingleElement verifies collection with one element works.
 func TestCollectionInput_SingleElement(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -82,7 +82,7 @@ func TestCollectionInput_SingleElement(t *testing.T) {
 
 // TestCollectionInput_EmptyCollection verifies empty collection returns no results.
 func TestCollectionInput_EmptyCollection(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -109,7 +109,7 @@ func TestCollectionInput_EmptyCollection(t *testing.T) {
 
 // TestCollectionInput_TwoCollections verifies two [?x ...] inputs produce cross-product.
 func TestCollectionInput_TwoCollections(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
 
@@ -163,7 +163,7 @@ func TestCollectionInput_TwoCollections(t *testing.T) {
 
 // TestCollectionInput_ThreeCollections verifies three collections produce full cross-product.
 func TestCollectionInput_ThreeCollections(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -216,7 +216,7 @@ func TestCollectionInput_ThreeCollections(t *testing.T) {
 
 // TestCollectionInput_ScalarPlusCollection verifies scalar and collection inputs work together.
 func TestCollectionInput_ScalarPlusCollection(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -252,7 +252,7 @@ func TestCollectionInput_ScalarPlusCollection(t *testing.T) {
 
 // TestCollectionInput_CollectionPlusScalar verifies collection then scalar order works.
 func TestCollectionInput_CollectionPlusScalar(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -286,7 +286,7 @@ func TestCollectionInput_CollectionPlusScalar(t *testing.T) {
 
 // TestCollectionInput_KeywordCollection verifies collection of keywords works.
 func TestCollectionInput_KeywordCollection(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -320,7 +320,7 @@ func TestCollectionInput_KeywordCollection(t *testing.T) {
 
 // TestCollectionInput_IntCollection verifies collection of integers works.
 func TestCollectionInput_IntCollection(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -355,7 +355,7 @@ func TestCollectionInput_IntCollection(t *testing.T) {
 
 // TestCollectionInput_StringCollection verifies collection of strings works.
 func TestCollectionInput_StringCollection(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

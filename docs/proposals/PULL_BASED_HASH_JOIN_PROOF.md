@@ -58,7 +58,7 @@ Every name below is the code's, given a symbol for the proof.
   - The materialized arm pulls each probe tuple once, builds one combined tuple per index match through `combineTuplesIndexed`, appends it to a results slice sized from the build count, and constructs through `newMaterializedRelationFromSet`.
   - The streaming arm answers a `StreamingRelation` over the join's iterator. Its `Next` pulls each probe tuple once, copies it when the probe side says copy, and builds one combined tuple per index match through `combineTuplesIndexed` as the consumer pulls. Its `Tuple` answers that tuple. Its `RequiresCopy` answers false.
   - L2 of `JOIN_OUTPUT_IS_A_SET_PROOF.md` states that both arms enumerate each matching pair once, and T1 there that the tuples are a set.
-  - `ExecutorOptions.EnableStreamingJoins` selects the arm. `findOuterRelation` forces it true for its fold. `DefaultPlannerOptions` sets it false.
+  - `ExecutorOptions.EnableStreamingJoins` selects the arm. `findOuterRelation` forces it true for its fold, and `DefaultPlannerOptions` sets it false. The option is removed with the arm it selects (§6).
 - **P2 (the iterator contract and its readers).** `Iterator.Next` advances to the next tuple and `Iterator.Tuple` answers the current one. Every consumer that keeps a tuple past the next pull reads the copy answer or copies regardless.
   - Readers that read the answer and copy when it is true:
     - `collectTuplesInto`, and through it `requiredRun`, `materialized` in scope.go, `materializePhaseBoundary` and `OrFallbackRelation.Materialize`
@@ -120,7 +120,7 @@ Every name below is the code's, given a symbol for the proof.
   - `Database.Query` answers the executor's final relation as it is, under its stated contract: the caller iterates through `Iterator` and closes the iterator.
   - `Relation` and `Iterator` state the copy answer a caller keeping a tuple reads.
   - `ExecuteRealized` reads the final relation once, through `Sort`, `TopNRelation`, a streaming `Project`, `NewLimitRelation` or `applyFindPulls`, each of which copies what it keeps.
-  - `DefaultPlannerOptions` sets `EnableTrueStreaming` true, so a query ending in a scan answers a stream, its final relation answers -1 for its size, and a caller that counts iterates.
+  - A query ending in a scan answers a stream, its final relation answers -1 for its size, and a caller that counts iterates.
 - **P9 (the expression clause).**
   - `executeExpression` evaluates a clause over the group holding its inputs through `evaluateExpressionWithLookup`. Over several groups it calls `crossJoinWithExpression`, which calls `evaluateExpressionWithLookup` over the groups' lazy product or over their join at the clause (P12).
   - An expression whose symbols no group carries, a ground expression or one the environment alone binds, extends every group through `evaluateExpressionWithLookup`. With no group it stands over the executor's unit relation.
@@ -178,7 +178,7 @@ Every name below is the code's, given a symbol for the proof.
 
 ## 3. Theorems
 
-**T1 (the answers).** For L and R sets, in every setting of the options, the join's iterator yields exactly the combined tuples of the join of L and R on J, one per pair. The tuple `Tuple` hands back at each pull is E-equal to that pull's combined tuple.
+**T1 (the answers).** For L and R sets, whatever the executor's options, the join's iterator yields exactly the combined tuples of the join of L and R on J, one per pair. The tuple `Tuple` hands back at each pull is E-equal to that pull's combined tuple.
 
 **T2 (every consumer).** With `BindQueryInputs` answering a held relation, every consumer of a join result reads it once or materializes it first, and every consumer that keeps a tuple past the next pull copies it. So the tuples every query answers are unchanged.
 
@@ -319,7 +319,7 @@ Where the form answers none, its clause holds at no assignment extending the tup
 The change carries these tests, each pinning the theorem named, mapped to the record's mandatory gates.
 
 - Gate 1, the semantic differential:
-  - `TestAJoinOfTwoSetsAnswersEachPairOnce` (executor), run with `EnableStreamingJoins` true and false, asserts the same pair set as a nested loop computes, each pair once, in every arm (T1, T6).
+  - `TestAJoinOfTwoSetsAnswersEachPairOnce` (executor), run over materialized sides and over a streaming probe, asserts the same pair set as a nested loop computes, each pair once, in every arm (T1, T6).
   - `TestQueriesAnswerAlikeUnderBothOptimizerModes` and `TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation` (storage) are the differentials over real queries and rule evaluation, run unchanged (T2).
 - Gate 2, the shapes: the same test's cases for an empty side, one tuple on each side, a key repeated on one side, on both, and a large input (T1).
 - Gate 3, iterator and close errors:
@@ -346,7 +346,7 @@ The change carries these tests, each pinning the theorem named, mapped to the re
   - `TestSemiAndAntiJoinsCopyWorkspaceReusingLeftInput`, run unchanged.
 - Gate 5, keys: `TestJoinPropertiesDeriveTheCompositeOfEachSidesKeys` and the key-preservation tests of `relation_properties_test.go`, run unchanged. The change touches no property.
 - Gate 6, the physical path: the new assertions read the join's events.
-  - The `JoinStrategy` event reports the streaming mode under both option settings (T6).
+  - The `JoinStrategy` event reports the streaming mode for every hash join (T6).
   - The `JoinProbe` event's result count equals the pair count (T1).
   - For an empty build over a stream probe, the `JoinProbe` event reports no probe tuple, and the probe stream's iterator was not called (T5).
   - The `JoinBuildCopy` and `JoinBuild` events are unchanged.
@@ -425,7 +425,7 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 ## 6. The change the proof licenses
 
 - `join.go`, `HashJoinWithOptions`:
-  - answers the streaming relation over the join's iterator in every setting of `EnableStreamingJoins` when the build holds a tuple
+  - answers the streaming relation over the join's iterator whenever the build holds a tuple
   - loses the materialized arm, its results slice, its probe-consumed check and its probe event
   - reports the streaming mode in the `JoinStrategy` event
   - when the index is empty after the build, answers the empty relation over the result's symbols and properties through `newMaterializedRelationFromSet` and emits the `JoinProbe` event with no probe tuple
@@ -443,7 +443,7 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - `symmetric_hash_join.go`, `symmetricHashJoinIterator`: records whether each side yielded a tuple, and its `Error` answers `joinFailure` over the two sides (T5).
 - `executor_utils.go`: `BindQueryInputs` collects its fold through `collectTuplesInto` into a proven-set materialized relation before answering it.
 - `tuple_key.go`: `NewTupleKeyMapWithCapacity`'s doc states that a negative size, a stream's size answer, starts the map empty. The code is unchanged, since `make` reads a negative hint so. Withdrawn: `ONE_TUPLE_TABLE_PROOF.md` replaced the key map with the one table, and `NewTupleSet`'s doc states that it sizes the set at its first add for a capacity above zero.
-- `datalog/storage/database.go`: `DefaultPlannerOptions`'s comment on `EnableStreamingJoins` says the option selects nothing in the hash join.
+- `EnableStreamingJoins` is removed from `ExecutorOptions` and `PlannerOptions`, with its copy in `ExecutorOptionsFromPlanner`, its defaults and `findOuterRelation`'s write. With the materialized arm gone it selects nothing.
 - Tests: the new assertions and tests of §5. The cases of `TestAJoinOfTwoSetsAnswersEachPairOnce` that assert the materialized arm's probe event mode assert the streaming mode.
 - `docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md`: the completed changes gain this one.
 - `relation_ops.go`, `evaluateExpressionWithLookup`: answers the stream over a `FunctionEvaluatorIterator`, with the properties it answered before and no error result. Its callers, `executeExpression` and `crossJoinWithExpression` (`theta_join.go`), take the relation (T8).
@@ -495,7 +495,6 @@ The change carries these tests, each pinning the theorem named, mapped to the re
 - `crossProduct`, reached by `Join` on sides sharing no symbol. It opens its right side once per left tuple and so cannot take a stream as its right side. No consumer in the enumeration hands it a join result as its right side: `Collapse` joins only groups sharing a symbol, and `findOuterRelation` joins under the common symbols, empty or not, through the hash join.
 - The cost of the windowed route against the matcher's route for a pattern after a join, which this proof does not bound.
 - `reportJoin`'s size reads of the left and right sides, which it makes of every side that is not a `StreamingRelation`. The record lists annotation realization among its remaining opportunities.
-- Whether `EnableStreamingJoins` is retired from `ExecutorOptions` and `PlannerOptions`. It selects nothing in the hash join under this change and stays where it is.
 - A windowed form whose body holds a database function over an identity symbol. `executeSubquery`, `executeNotJoinClause`, `NewOrFallbackRelation` and `executeBoundInvocation` judge their bodies through `canFailOnAValue`, which reads no identity symbols, so such a form carries the mark.
 - A get-some's pair under a tuple form of two variables, over an identity symbol. The pair always destructures, and `expressionFailsOnNoValueOver` exempts the scalar form alone, so the evaluation carries the mark.
 - A database function reading no symbol of its source, on a named source that a commit changes during the execution. P9 states one snapshot for `$` alone, and the iterator's one evaluation answers every tuple (L9).

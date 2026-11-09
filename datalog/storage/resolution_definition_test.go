@@ -43,7 +43,7 @@ func TestAValueBoundMatchOverEveryAttributeResolvesEachCandidateUnderItsAttribut
 		_, err = tx2.Commit()
 		require.NoError(t, err)
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			assertVBoundEquivalent(t, mode, thingSchema(), apply, expectedSet(member, held), true,
 				`[:find ?e :where [?e ?a "room"]]`)
@@ -105,7 +105,7 @@ func TestEachResolvedGroupResolvesUnderItsOwnAttributesDefinition(t *testing.T) 
 			want:  [][]interface{}{{first, "c1"}, {second, "c2"}},
 		},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, cacheMode := range cacheTestModes {
 			t.Run(mode.name+"/"+cacheMode.name, func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: thingSchema(), DisableCache: cacheMode.disableCache})

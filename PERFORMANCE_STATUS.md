@@ -342,7 +342,6 @@ exec := executor.NewExecutorWithOptions(matcher, opts)
 **Configuration**: Enabled by default:
 ```go
 EnableIteratorComposition: true  // Lazy evaluation (default)
-EnableTrueStreaming: true        // No auto-materialization (default)
 ```
 
 ### 1. In-Memory Indexing (COMPLETE - PERVASIVE OPTIMIZATION, SUPERSEDED)
@@ -1974,7 +1973,6 @@ d, _ := db.Open("path/to/db", db.WithSchema(s))
 opts := storage.DefaultPlannerOptions()
 // opts.EnableAlgebraOptimizer     == true   // decorrelation + predicate pushdown
 // opts.EnableIteratorComposition  == true   // lazy evaluation
-// opts.EnableTrueStreaming        == true   // streaming, no auto-materialization
 // (EnableParallelSubqueries, once listed here, is gone: entry 17)
 // opts.EnableStreamingAggregation == true   // streaming aggregation
 

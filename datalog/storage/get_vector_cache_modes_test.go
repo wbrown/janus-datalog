@@ -54,7 +54,7 @@ func eachCacheMode(t *testing.T, fn func(t *testing.T, disableCache bool)) {
 
 func TestGetVectorNth_BothCacheModes(t *testing.T) {
 	skills := datalog.NewKeyword(":character/skills")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			eachCacheMode(t, func(t *testing.T, disable bool) {
 				db, e := newVectorAccessorDB(t, mode, disable)
@@ -77,7 +77,7 @@ func TestGetVectorNth_BothCacheModes(t *testing.T) {
 
 func TestGetVectorLength_BothCacheModes(t *testing.T) {
 	skills := datalog.NewKeyword(":character/skills")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			eachCacheMode(t, func(t *testing.T, disable bool) {
 				db, e := newVectorAccessorDB(t, mode, disable)
@@ -92,7 +92,7 @@ func TestGetVectorLength_BothCacheModes(t *testing.T) {
 
 func TestGetVector_MissingVector_BothCacheModes(t *testing.T) {
 	skills := datalog.NewKeyword(":character/skills")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			eachCacheMode(t, func(t *testing.T, disable bool) {
 				db, _ := newVectorAccessorDB(t, mode, disable)
@@ -114,7 +114,7 @@ func TestGetVector_MissingVector_BothCacheModes(t *testing.T) {
 
 func TestGetVector_NonVectorAttribute_BothCacheModes(t *testing.T) {
 	name := datalog.NewKeyword(":character/name")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			eachCacheMode(t, func(t *testing.T, disable bool) {
 				db, e := newVectorAccessorDB(t, mode, disable)

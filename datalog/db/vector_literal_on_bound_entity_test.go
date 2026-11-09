@@ -31,7 +31,7 @@ func TestAVectorLiteralOnABoundEntityAnswersItsResolvedCollection(t *testing.T) 
 		{x, true, nil},
 		{tagged, true, nil},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":item/name").Type(schema.TypeString).Add().

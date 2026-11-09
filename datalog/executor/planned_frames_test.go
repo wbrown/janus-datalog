@@ -38,7 +38,7 @@ func TestAWindowedClauseReadsItsFrameFromThePlan(t *testing.T) {
 		{"a pattern after a join", `[:find ?x ?z :in $ % :where [?x :page/kind "leaf"] [?x :page/next ?y] [?y :page/next ?z]]`},
 		{"an invocation after a join", `[:find ?x ?z :in $ % :where [?x :page/kind "leaf"] [?x :page/next ?y] (follows ?y ?z)]`},
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		for _, c := range cases {
 			t.Run(mode.Name()+"/"+c.name, func(t *testing.T) {
 				made := &plansMade{recording: true}

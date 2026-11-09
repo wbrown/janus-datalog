@@ -110,7 +110,7 @@ func TestQueryWithOrderBy(t *testing.T) {
 		},
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -201,7 +201,7 @@ func TestSortingEdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			matcher := factsDatabase(t, tt.datoms)
 
-			for _, mode := range OptimizerModes {
+			for _, mode := range LegsFor(t, FusionOption) {
 				t.Run(mode.Name(), func(t *testing.T) {
 					executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -287,7 +287,7 @@ func TestOrderByNonProjectedVariable(t *testing.T) {
 		},
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -358,7 +358,7 @@ func TestOrderByMixedProjectedAndNonProjectedKeys(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -396,7 +396,7 @@ func TestOrderByMixedProjectedAndNonProjectedKeys(t *testing.T) {
 func TestOrderByNonProjectedVariableWithLimit(t *testing.T) {
 	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -434,7 +434,7 @@ func TestOrderByNonProjectedVariableWithLimit(t *testing.T) {
 func TestOrderByUnboundVariableIsError(t *testing.T) {
 	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -495,7 +495,7 @@ func statusUserDatoms() []datalog.Datom {
 func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
 	matcher := factsDatabase(t, statusUserDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -541,7 +541,7 @@ func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
 func TestOrderByScalarConstantKeyThenRealKey(t *testing.T) {
 	matcher := factsDatabase(t, statusUserDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -608,7 +608,7 @@ func TestOrderByCollectionInputBoundVariable(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -670,7 +670,7 @@ func TestOrderByRelationInputSymbolAcrossUnion(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -720,7 +720,7 @@ func TestOrderByAggregateGroupKey(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -761,7 +761,7 @@ func TestOrderByAggregateGroupKey(t *testing.T) {
 func TestOrderByAggregateNonFindVariableIsError(t *testing.T) {
 	matcher := factsDatabase(t, statusUserDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -802,7 +802,7 @@ func TestOrderByNonProjectedPreservesDuplicates(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -840,7 +840,7 @@ func TestOrderByNonProjectedPreservesDuplicates(t *testing.T) {
 func TestOrderByProjectedKeyWithPull(t *testing.T) {
 	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -876,7 +876,7 @@ func TestOrderByProjectedKeyWithPull(t *testing.T) {
 func TestOrderByNonProjectedWithPull(t *testing.T) {
 	matcher := factsDatabase(t, nonProjectedSortDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -930,7 +930,7 @@ func TestOrderByProjectedKeyDeduplicates(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1018,7 +1018,7 @@ func TestOrderByPullWithTiedSortKeys(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1093,7 +1093,7 @@ func TestSortingWithNulls(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 

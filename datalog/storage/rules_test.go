@@ -164,7 +164,7 @@ func (g graph) render(rel executor.Relation) ([]string, error) {
 }
 
 func TestRules_TransitiveClosureOnChain(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(10))
@@ -176,7 +176,7 @@ func TestRules_TransitiveClosureOnChain(t *testing.T) {
 }
 
 func TestRules_TransitiveClosureOnCycle(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, cycle(10))
@@ -193,7 +193,7 @@ func TestRules_StratifiedNegation(t *testing.T) {
 	                [(unreached ?n) [?n :type :node] (not (reach _ ?n))]]`
 	spec := chain(5)
 	spec.nodes = append(spec.nodes, "n6", "n7")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, spec)
@@ -208,7 +208,7 @@ func TestRules_InvocationInsideSubquery(t *testing.T) {
 	const text = `[:find ?x ?n :in $ %
 	               :where [?x :edge _]
 	                      [(q [:find (count ?y) :in $ % ?x :where (reach ?x ?y)] $ % ?x) [[?n]]]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(5))
@@ -224,7 +224,7 @@ func TestRules_InvocationInsideSubquery(t *testing.T) {
 // through the required run (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.2).
 func TestRules_InvocationInsideOrJoinBranch(t *testing.T) {
 	const text = `[:find ?y :in $ % ?s :where (or-join [[?s] ?y] (reach ?s ?y) [?y :edge ?s])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(5))
@@ -240,7 +240,7 @@ func TestRules_InvocationInsideOrJoinBranch(t *testing.T) {
 // the nodes n3 reaches and the node whose edge reaches n3.
 func TestRules_InvocationInsideOrBranch(t *testing.T) {
 	const text = `[:find ?y :in $ % ?s :where (or (reach ?s ?y) [?y :edge ?s])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(5))
@@ -255,7 +255,7 @@ func TestRules_InvocationUnderNotJoin(t *testing.T) {
 	const text = `[:find ?n :in $ % :where [?n :type :node] (not-join [?n] (reach _ ?n))]`
 	spec := chain(5)
 	spec.nodes = append(spec.nodes, "n6")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, spec)
@@ -267,7 +267,7 @@ func TestRules_InvocationUnderNotJoin(t *testing.T) {
 }
 
 func TestRules_BoundArgumentThroughInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(5))
@@ -283,7 +283,7 @@ func TestRules_BoundArgumentThroughInput(t *testing.T) {
 // between one chain's closure and the graph's: the invocation derives the
 // chain its start reaches and nothing of the other nine.
 func TestRules_BoundInvocationDerivesOnlyWhatItReaches(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			opts := mode.plannerOptions()
 			opts.MaxDerivedTuples = 100
@@ -312,7 +312,7 @@ func TestRules_InvocationInsideABranchBoundByTheBranchsClauseDerivesWhatItReache
 	}
 	for _, shape := range shapes {
 		t.Run(shape.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, fusionOption) {
 				t.Run(mode.name, func(t *testing.T) {
 					opts := mode.plannerOptions()
 					opts.MaxDerivedTuples = 100
@@ -330,7 +330,7 @@ func TestRules_InvocationInsideABranchBoundByTheBranchsClauseDerivesWhatItReache
 // TestRules_BoundInvocationByConstantDerivesOnlyWhatItReaches is the same
 // contract with the start a constant argument of the invocation.
 func TestRules_BoundInvocationByConstantDerivesOnlyWhatItReaches(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			opts := mode.plannerOptions()
 			opts.MaxDerivedTuples = 100
@@ -350,7 +350,7 @@ func TestRules_BoundInvocationByConstantDerivesOnlyWhatItReaches(t *testing.T) {
 func TestRules_RequiredBinding(t *testing.T) {
 	const rules = `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`
 	const text = `[:find ?m :in $ % :where (succ ?n ?m) [(ground 5) ?n]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			rs := mustRuleSet(t, rules)
@@ -389,7 +389,7 @@ func TestRules_RequiredBinding(t *testing.T) {
 }
 
 func TestRules_ConstantAndBlankArguments(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(5))
@@ -407,7 +407,7 @@ func TestRules_ConstantAndBlankArguments(t *testing.T) {
 }
 
 func TestRules_RulesInputAsText(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(4))
@@ -421,7 +421,7 @@ func TestRules_RulesInputAsText(t *testing.T) {
 // TestRules_RulesTextResolvesOnce: rule text given at % is parsed once per
 // text.
 func TestRules_RulesTextResolvesOnce(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			q, err := parser.ParseQuery(closureQuery)
@@ -439,7 +439,7 @@ func TestRules_RulesTextResolvesOnce(t *testing.T) {
 // input, and neither rule set given is read.
 func TestRules_SecondRulesInputRefused(t *testing.T) {
 	const other = `[[(reach ?a ?b) [?a :type ?b]]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeGraph(t, d, chain(3))
@@ -451,7 +451,7 @@ func TestRules_SecondRulesInputRefused(t *testing.T) {
 }
 
 func TestRules_RulesInputOfAnotherTypeRefused(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, err := d.Query(closureQuery, 42)
@@ -462,7 +462,7 @@ func TestRules_RulesInputOfAnotherTypeRefused(t *testing.T) {
 }
 
 func TestRules_BodyAttributeRefused(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
 			rules := mustRuleSet(t, `[[(held ?e ?v) [?e :t/strnig ?v]]]`)
@@ -473,7 +473,7 @@ func TestRules_BodyAttributeRefused(t *testing.T) {
 }
 
 func TestRules_IterationLimit(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			opts := mode.plannerOptions()
 			opts.MaxRuleIterations = 2
@@ -490,7 +490,7 @@ func TestRules_IterationLimit(t *testing.T) {
 }
 
 func TestRules_DerivedTupleLimit(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			opts := mode.plannerOptions()
 			opts.MaxDerivedTuples = 7
@@ -507,7 +507,7 @@ func TestRules_DerivedTupleLimit(t *testing.T) {
 }
 
 func TestRules_UnknownRuleNamed(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, err := d.Query(`[:find ?x ?y :in $ % :where (reahc ?x ?y)]`, mustRuleSet(t, closureRules))
@@ -520,7 +520,7 @@ func TestRules_UnknownRuleNamed(t *testing.T) {
 }
 
 func TestRules_ArityMismatchNamed(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, err := d.Query(`[:find ?x :in $ % :where (reach ?x)]`, mustRuleSet(t, closureRules))
@@ -539,7 +539,7 @@ func TestRules_ArityMismatchNamed(t *testing.T) {
 func TestRules_EvaluatesUnderOneSnapshot(t *testing.T) {
 	spec := chain(5)
 	spec.nodes = append(spec.nodes, "n6")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			var d *Database
 			var once sync.Once
@@ -577,7 +577,7 @@ func TestRules_EvaluatesUnderOneSnapshot(t *testing.T) {
 // one binds nothing inside the body: the invocation's arguments are the only
 // way the query's bindings reach a rule.
 func TestRules_QueryInputSharingARuleVariableNameBindsNothingInTheBody(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(5))
@@ -606,7 +606,7 @@ func TestRules_RecursionInsideAnOrBranchDerivesTheOtherBranch(t *testing.T) {
 		{"or-join", `[[(r ?a ?c) (or-join [?a ?c] [?a :edge ?c] (and [?a :edge ?b] (r ?b ?c)))]]`},
 	}
 	for _, set := range sets {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 			t.Run(set.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 				g := writeGraph(t, d, chain(4))
@@ -634,7 +634,7 @@ func TestRules_OrJoinWithARequiredRunInARecursiveBody(t *testing.T) {
 	                        [(r ?a ?c) [?a :edge ?b] (or-join [[?b] ?c] (and [(identity ?b) ?k] (r ?k ?c)) [?b :edge ?c])]]`
 	const passingTheEnd = `[[(r ?a ?b) [?a :edge ?b]]
 	                        [(r ?a ?c) [?a :edge ?b] (or-join [[?b] ?c] (r ?b ?c) [?b :edge ?c])]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(4))
@@ -661,7 +661,7 @@ func TestRules_OrJoinWithARequiredRunInARecursiveBody(t *testing.T) {
 func TestRules_BoundInvocationKeepsWhatOnlyTheRecursiveRulesOtherBranchProduces(t *testing.T) {
 	const rules = `[[(reach ?a ?b) [?a :edge ?b]]
 	                [(reach ?a ?c) [?a :edge ?b] (or (reach ?b ?c) (and [?b :marked true] [(ground :end) ?c]))]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(4))
@@ -814,7 +814,7 @@ func TestRules_BoundInvocationRunsWhereverTheWholeInvocationRuns(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 			t.Run(c.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 				g := writeGraph(t, d, chain(4))
@@ -877,7 +877,7 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 		},
 	}
 	for _, c := range cases {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 			t.Run(c.name+"/"+mode.name, func(t *testing.T) {
 				adorned := &rewriteAdornments{}
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})
@@ -911,7 +911,7 @@ func TestFreeInvocationRewritesTheRequiredPredicatesOfItsStratum(t *testing.T) {
 	const mutual = `[[(hop [?x] ?y) [?x :edge ?y]]
 	                 [(hop [?x] ?y) [?x :edge ?m] (walk ?m ?y)]
 	                 [(walk ?a ?b) [?a :edge _] (hop ?a ?b)]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			adorned := &rewriteAdornments{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})
@@ -932,7 +932,7 @@ func TestRules_EveryPhaseParsesBackToItself(t *testing.T) {
 		`[:find ?x ?n :in $ % :where [?x :edge _] [(q [:find (count ?y) :in $ % ?x :where [?x :edge _] (reach ?x ?y)] $ % ?x) [[?n]]]]`,
 		`[:find ?y :in $ % :where [?x :type :node] (reach ?x ?y) [?y :type ?t]]`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeGraph(t, d, chain(4))
@@ -960,7 +960,7 @@ func TestRules_ExplainBoundNamesAnArgumentAnOrBinds(t *testing.T) {
 		{"or-join", `[:find ?x ?y :in $ % :where (or-join [?x ?z] [?x :edge ?z] [?z :edge ?x]) (reach ?x ?y)]`},
 	}
 	for _, q := range queries {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			t.Run(q.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 				writeGraph(t, d, chain(3))
@@ -1094,7 +1094,7 @@ func TestRules_InvocationUnderAFormEvaluatesOncePerQuery(t *testing.T) {
 		{"subquery in a branch", `[:find ?x ?k :in $ % ?s :where [?x :type :node] (or-default [(q [:find (count ?y) :in $ % ?x ?s :where (reach ?x ?s) [?x :edge ?y]] $ % ?x ?s) [[?k]]] [(ground 0) ?k])]`, boundAtBoth, append(chainReachingWith(10, ">1"), "n10>0")},
 	}
 	for _, form := range forms {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption, aggregationOption) {
 			t.Run(form.name+"/"+mode.name, func(t *testing.T) {
 				counts := &ruleEventCounts{}
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: counts.handle})
@@ -1145,7 +1145,7 @@ func chainReachingWith(n int, suffix string) []string {
 func TestRules_InvocationOfTheOwnStratumInsideANonAggregatingSubqueryDerivesTheClosure(t *testing.T) {
 	const rules = `[[(reach ?x ?y) [?x :edge ?y]]
 	                [(reach ?x ?z) [?x :edge ?y] [(q [:find ?w :in $ % ?y :where (reach ?y ?w)] $ % ?y) [[?z] ...]]]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(4))
@@ -1165,7 +1165,7 @@ func TestRules_InvocationOfTheOwnStratumInsideANonAggregatingSubqueryDerivesTheC
 // six, n5 and n2 both reach n6, and n2 is not reached from n5, so a not over
 // both invocations excludes the pair.
 func TestRules_TwoInvocationsUnderAFormKeepTheirOwnSeeds(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			g := writeGraph(t, d, chain(6))
@@ -1190,7 +1190,7 @@ func TestRules_InvocationInsideOrDefaultBranch(t *testing.T) {
 	}
 	want := append(chainClosure(3), "n3>:dead-end")
 	for _, q := range queries {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, fusionOption) {
 			t.Run(q.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 				g := writeGraph(t, d, chain(3))

@@ -41,7 +41,7 @@ func setupResolveDisableCacheDB(t *testing.T, optMode optimizerMode, disableCach
 // of cache mode. Includes an LWW scenario (two writes, latest wins) to
 // exercise cache-less CRDT resolution.
 func TestResolveEntityAttributes_BothCacheModes_CardinalityOne(t *testing.T) {
-	for _, optMode := range optimizerModes {
+	for _, optMode := range legsFor(optimizerModes) {
 		t.Run(optMode.name, func(t *testing.T) {
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestResolveEntityAttributes_BothCacheModes_CardinalityOne(t *testing.T) {
 // TestResolveEntityAttributes_BothCacheModes_CardinalityMany verifies
 // add-wins resolution returns the full set under both cache modes.
 func TestResolveEntityAttributes_BothCacheModes_CardinalityMany(t *testing.T) {
-	for _, optMode := range optimizerModes {
+	for _, optMode := range legsFor(optimizerModes) {
 		t.Run(optMode.name, func(t *testing.T) {
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
@@ -130,7 +130,7 @@ func TestResolveEntityAttributes_BothCacheModes_CardinalityMany(t *testing.T) {
 // TestResolveEntityAttributes_BothCacheModes_CardinalityVector verifies
 // RGA-resolved vector values under both cache modes.
 func TestResolveEntityAttributes_BothCacheModes_CardinalityVector(t *testing.T) {
-	for _, optMode := range optimizerModes {
+	for _, optMode := range legsFor(optimizerModes) {
 		t.Run(optMode.name, func(t *testing.T) {
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
@@ -181,7 +181,7 @@ func TestResolveEntityAttributes_BothCacheModes_CardinalityVector(t *testing.T) 
 // TestResolveEntityAttributes_BothCacheModes_MissingAttribute verifies
 // that missing attributes are simply absent from the result map (not an error).
 func TestResolveEntityAttributes_BothCacheModes_MissingAttribute(t *testing.T) {
-	for _, optMode := range optimizerModes {
+	for _, optMode := range legsFor(optimizerModes) {
 		t.Run(optMode.name, func(t *testing.T) {
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
@@ -219,7 +219,7 @@ func TestResolveEntityAttributes_BothCacheModes_MissingAttribute(t *testing.T) {
 // TestResolveAllAttributes_BothCacheModes_WithSchema verifies the
 // schema-driven path of ResolveAllAttributes works under both cache modes.
 func TestResolveAllAttributes_BothCacheModes_WithSchema(t *testing.T) {
-	for _, optMode := range optimizerModes {
+	for _, optMode := range legsFor(optimizerModes) {
 		t.Run(optMode.name, func(t *testing.T) {
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
@@ -261,7 +261,7 @@ func TestResolveAllAttributes_BothCacheModes_WithSchema(t *testing.T) {
 // TestResolveAllAttributes_BothCacheModes_NoSchema verifies the EAVT-discovery
 // path of ResolveAllAttributes works under both cache modes.
 func TestResolveAllAttributes_BothCacheModes_NoSchema(t *testing.T) {
-	for _, optMode := range optimizerModes {
+	for _, optMode := range legsFor(optimizerModes) {
 		t.Run(optMode.name, func(t *testing.T) {
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {

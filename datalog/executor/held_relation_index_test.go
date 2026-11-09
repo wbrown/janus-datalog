@@ -71,7 +71,7 @@ func TestDerivedSet_AJoinIntoItsRelationLeavesTheSetAsItWas(t *testing.T) {
 	e, l, r := datalog.NewSymbol("?e"), datalog.NewSymbol("?l"), datalog.NewSymbol("?r")
 	setTuples := []Tuple{{int64(1), "a"}, {int64(2), "b"}, {int64(2), "c"}}
 	groupTuples := []Tuple{{int64(2), "x"}, {int64(3), "y"}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			set := newDerivedSet([]query.Symbol{e, r})
 			_, err := set.absorb(NewMaterializedRelation([]query.Symbol{e, r}, setTuples))
@@ -194,7 +194,7 @@ func TestHashJoinWithSet_AHeldRelationIsProbedAndNeverDrained(t *testing.T) {
 		{"the relation renamed, a materialized group", false, true},
 		{"the relation renamed, a streaming group", true, true},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				var events []annotations.Event

@@ -65,7 +65,7 @@ func TestSetEntryEncodeDecode(t *testing.T) {
 
 // TestSetEntryStorageRoundTrip verifies SetEntry values survive storage and retrieval
 func TestSetEntryStorageRoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -156,7 +156,7 @@ func TestSetEntryStorageRoundTrip(t *testing.T) {
 
 // TestResolveAddWinsSetDirect tests the resolveAddWinsSet function directly
 func TestResolveAddWinsSetDirect(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -206,7 +206,7 @@ func TestResolveAddWinsSetDirect(t *testing.T) {
 
 // TestResolveAddWinsSameLamport tests add-wins when Add and Remove have same Lamport
 func TestResolveAddWinsSameLamport(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -257,7 +257,7 @@ func TestResolveAddWinsSameLamport(t *testing.T) {
 
 // TestCheckSetMembershipDirect tests the checkSetMembership function directly
 func TestCheckSetMembershipDirect(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -335,7 +335,7 @@ func TestCheckSetMembershipDirect(t *testing.T) {
 
 // TestCardinalityManyAddRemove verifies basic add/remove operations work
 func TestCardinalityManyAddRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -451,7 +451,7 @@ func TestCardinalityManyAddRemove(t *testing.T) {
 
 // TestCardinalityManyAddWins verifies add-wins semantics at same Lamport
 func TestCardinalityManyAddWins(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -540,7 +540,7 @@ func TestCardinalityManyAddWins(t *testing.T) {
 
 // TestCardinalityManyReplicaIDTiebreaker verifies ReplicaID tiebreaker for add-wins
 func TestCardinalityManyReplicaIDTiebreaker(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -621,7 +621,7 @@ func TestCardinalityManyReplicaIDTiebreaker(t *testing.T) {
 
 // TestCardinalityManyAddThenRemove verifies: add at T1, remove at T2 (T2 > T1) → not in set
 func TestCardinalityManyAddThenRemove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -692,7 +692,7 @@ func TestCardinalityManyAddThenRemove(t *testing.T) {
 
 // TestCardinalityManyRemoveThenAdd verifies: remove at T1, add at T2 (T2 > T1) → in set
 func TestCardinalityManyRemoveThenAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -773,7 +773,7 @@ func TestCardinalityManyRemoveThenAdd(t *testing.T) {
 
 // TestCardinalityManyMultipleValues verifies independent add/remove of different values
 func TestCardinalityManyMultipleValues(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -851,7 +851,7 @@ func TestCardinalityManyMultipleValues(t *testing.T) {
 
 // TestCardinalityManyEmptySet verifies that removing all values results in empty set
 func TestCardinalityManyEmptySet(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -917,7 +917,7 @@ func TestCardinalityManyEmptySet(t *testing.T) {
 
 // TestCardinalityManyHistory verifies all operations are preserved in history
 func TestCardinalityManyHistory(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -993,7 +993,7 @@ func TestCardinalityManyHistory(t *testing.T) {
 
 // TestCardinalityManyMembership verifies querying specific value membership
 func TestCardinalityManyMembership(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1075,7 +1075,7 @@ func TestCardinalityManyMembership(t *testing.T) {
 
 // TestCardinalityManyReplaceSet verifies Set() replaces entire set
 func TestCardinalityManyReplaceSet(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1166,7 +1166,7 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 // TestAddSchemaAware verifies Add() is schema-aware and works for all cardinalities
 // Add() uses LWW semantics for cardinality-one, add-wins for cardinality-many
 func TestAddSchemaAware(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1242,7 +1242,7 @@ func TestAddSchemaAware(t *testing.T) {
 // TestRemoveCardinalityValidation verifies Remove() works for all cardinalities.
 // Remove writes OpCRDTRemove regardless of cardinality.
 func TestRemoveCardinalityValidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1295,7 +1295,7 @@ func TestRemoveCardinalityValidation(t *testing.T) {
 // TestCardinalityManySetSeesPendingOps verifies that Set() sees Add/Remove ops
 // from earlier in the same transaction (Bug #3 fix)
 func TestCardinalityManySetSeesPendingOps(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1373,7 +1373,7 @@ func TestCardinalityManySetSeesPendingOps(t *testing.T) {
 // TestCardinalityManySetSeesCommittedAndPending verifies that Set() correctly
 // handles both committed state and pending ops
 func TestCardinalityManySetSeesCommittedAndPending(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1469,7 +1469,7 @@ func TestCardinalityManySetSeesCommittedAndPending(t *testing.T) {
 // TestCardinalityManyUnboundEWithValue tests [?e :attr "value"] patterns
 // where E is unbound and V is bound - finds all entities with specific value in set
 func TestCardinalityManyUnboundEWithValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1551,7 +1551,7 @@ func TestCardinalityManyUnboundEWithValue(t *testing.T) {
 // TestCardinalityManyUnboundEUnboundV tests [?e :attr ?v] patterns
 // where both E and V are unbound - returns all entity/value pairs
 func TestCardinalityManyUnboundEUnboundV(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1640,7 +1640,7 @@ func TestCardinalityManyUnboundEUnboundV(t *testing.T) {
 
 // TestCardinalityManySetWithDuplicates tests Set() with duplicate values in slice
 func TestCardinalityManySetWithDuplicates(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1710,7 +1710,7 @@ func TestCardinalityManySetWithDuplicates(t *testing.T) {
 // TestCardinalityManyUnboundEWithRemovedValue tests that removed values
 // don't appear in [?e :attr "value"] query results
 func TestCardinalityManyUnboundEWithRemovedValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1792,7 +1792,7 @@ func TestCardinalityManyUnboundEWithRemovedValue(t *testing.T) {
 // use the AVET index for O(k) performance where k = datoms with value,
 // instead of O(n) where n = all entities with attribute.
 func TestAVETOptimizationForCardinalityMany(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1882,7 +1882,7 @@ func TestAVETOptimizationForCardinalityMany(t *testing.T) {
 // TestAVETAddWinsResolution tests that the AVET-based iterator correctly
 // applies add-wins resolution per entity.
 func TestAVETAddWinsResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1973,7 +1973,7 @@ func TestAVETAddWinsResolution(t *testing.T) {
 // TestHistoryModeCardinalityMany verifies that db.History() returns raw
 // datoms including Remove operations, bypassing add-wins CRDT resolution.
 func TestHistoryModeCardinalityMany(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -2090,7 +2090,7 @@ func TestHistoryModeCardinalityMany(t *testing.T) {
 // attribute. []byte members must resolve through add-wins like any other
 // value type.
 func TestLookupAttributeManyBytesMembers(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

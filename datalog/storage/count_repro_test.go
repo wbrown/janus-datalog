@@ -10,7 +10,7 @@ import (
 )
 
 func TestCountRepro_WithVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Registered at open: everything the database builds is constructed
 			// with it. The loop below filters by event name and only logs, so the

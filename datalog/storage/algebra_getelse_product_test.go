@@ -101,7 +101,7 @@ func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
 	              [(get-else $ ?p :project/opt-a "") ?a]
 	              [(get-else $ ?p :project/opt-b "") ?b]
 	              [(get-else $ ?p :project/opt-c "") ?c]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseTestDB(t, mode, nil)
 			got, err := executor.CollectTuples(db.Query(q))
@@ -125,7 +125,7 @@ func TestGetElseMultiple_CorrectValues(t *testing.T) {
 		{"Beta", "a2", "default-b", "default-c"},
 		{"Gamma", "default-a", "default-b", "default-c"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseTestDB(t, mode, nil)
 			got, err := executor.CollectTuples(db.Query(q))
@@ -144,7 +144,7 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 	              [(get-else $ ?p :project/name "") ?name]
 	              [(get-else $ ?p :project/opt-a "") ?a]
 	              [(get-else $ ?p :project/opt-b "") ?b]]`
-	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption, fusionOption), func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			maxGroups := 0
 			replacements := 0
@@ -417,7 +417,7 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 	q := buildComplexQuery_OrClause(t)
 	want, err := executor.CollectTuples(setupGetElseWithItemsDB(t, referenceMode).Query(q))
 	require.NoError(t, err)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 
@@ -452,7 +452,7 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 // Both branches contribute tuples when both match. This is correct union behavior, not a bug.
 // Use (or-default ...) for fallback semantics (2 tuples).
 func TestGetElseComplex_ParsedOr(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 			runComplexQueryTest(t, db, parsedComplexQuery_Or, "parsed (or)", 9)
@@ -463,7 +463,7 @@ func TestGetElseComplex_ParsedOr(t *testing.T) {
 // TestGetElseComplex_ParsedOrDefault tests with parsed (or-default ...).
 // Fallback semantics: one tuple per project.
 func TestGetElseComplex_ParsedOrDefault(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 			runComplexQueryTest(t, db, parsedComplexQuery_OrDefault, "parsed (or-default)", 2)
@@ -474,7 +474,7 @@ func TestGetElseComplex_ParsedOrDefault(t *testing.T) {
 // TestGetElseComplex_QBOr tests with qb.Or() → *query.OrClause.
 // Same union semantics as parsed (or ...): 9 tuples.
 func TestGetElseComplex_QBOr(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 			q := buildComplexQuery_OrClause(t)
@@ -487,7 +487,7 @@ func TestGetElseComplex_QBOr(t *testing.T) {
 // TestGetElseComplex_QBOrDefault tests with qb.OrDefault() → *query.OrDefaultClause.
 // Fallback semantics: 2 tuples.
 func TestGetElseComplex_QBOrDefault(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 			q := buildComplexQuery_OrDefaultClause(t)

@@ -35,7 +35,7 @@ import (
 // where a CardinalityOne attribute query returns all historical values instead of
 // the LWW-resolved single value.
 func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -106,7 +106,7 @@ func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.
 // the bug where a CardinalityMany attribute query returns all ever-added values
 // instead of the current set (with tombstoned values excluded).
 func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -184,7 +184,7 @@ func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *te
 // TestDirectMatch_VsExecuteQuery_CRDTResolution checks that a direct Match and
 // a query both resolve a cardinality-one attribute to its last write.
 func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -247,7 +247,7 @@ func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 // TestSchemaAwareness_InQueryExecution verifies the schema is accessible
 // during query execution.
 func TestSchemaAwareness_InQueryExecution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -282,7 +282,7 @@ func TestSchemaAwareness_InQueryExecution(t *testing.T) {
 // TestAllQueryMethods_CRDTResolution checks that every read surface resolves
 // a cardinality-one attribute written three times to its last write.
 func TestAllQueryMethods_CRDTResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testAllQueryMethodsCRDTResolution(t, mode)
 		})

@@ -47,7 +47,7 @@ func TestCustomFunctionQueryEndToEnd(t *testing.T) {
 			t.Fatalf("parse: %v", err)
 		}
 
-		for _, mode := range OptimizerModes {
+		for _, mode := range LegsFor(t, FusionOption) {
 			t.Run(mode.Name(), func(t *testing.T) {
 				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 				result, err := exec.Execute(q)
@@ -77,7 +77,7 @@ func TestCustomFunctionQueryEndToEnd(t *testing.T) {
 			t.Fatalf("parse: %v", err)
 		}
 
-		for _, mode := range OptimizerModes {
+		for _, mode := range LegsFor(t, FusionOption) {
 			t.Run(mode.Name(), func(t *testing.T) {
 				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 				result, err := exec.Execute(q)

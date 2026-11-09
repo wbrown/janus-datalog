@@ -31,7 +31,7 @@ import (
 // inside the option, not anything the caller supplies — a test whose callback
 // touched shared state would pin the caller's mistake rather than the engine's.
 func TestVerboseHandlerIsSafeUnderParallelEmission(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, err := db.OpenMemory(
 				db.WithPlannerOptions(mode.plannerOptions()),

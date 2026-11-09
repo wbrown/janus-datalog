@@ -864,12 +864,8 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableScanSharing:      true,  // Share unbound scan results across subqueries via LazySeq
 		EnableEntityPrefetch:   false, // Prefetch a fallback window's entities into the EA cache before its branches are built, above the threshold (benchmarked: performance-neutral)
 
-		// Executor streaming options
-		EnableTrueStreaming:     true,  // No auto-materialization
-		EnableSymmetricHashJoin: false, // Conservative for now
-
-		// Other executor options
-		EnableStreamingJoins:       false, // Selects nothing in the hash join, which streams in every setting
+		// Executor join and aggregation options
+		EnableSymmetricHashJoin:    false, // Conservative for now
 		EnableStreamingAggregation: true,  // Streaming aggregation
 
 		// Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple

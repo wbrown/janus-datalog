@@ -16,7 +16,7 @@ import (
 // bar for a symbol instead of filtering by date at the storage layer, so
 // each per-day lookup pulls the whole dataset and filters in memory.
 func TestProductionQueryPattern(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			store := db.store
@@ -307,7 +307,7 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

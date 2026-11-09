@@ -88,7 +88,7 @@ func parsedQuery(t *testing.T, text string) *query.Query {
 func TestRelationInputs_TwoAreJoined(t *testing.T) {
 	datoms, names := bindingEntities()
 	matcher := factsDatabase(t, datoms)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			first := relationOver([]string{"?j", "?v"}, Tuple{int64(1), int64(10)}, Tuple{int64(2), int64(20)})
@@ -118,7 +118,7 @@ func TestRelationInputs_TwoAreJoined(t *testing.T) {
 func TestInput_ARepeatedSymbolUnifies(t *testing.T) {
 	datoms, names := bindingEntities()
 	matcher := factsDatabase(t, datoms)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			tupleQuery := parsedQuery(t, `[:find ?x :in $ [?w ?w] :where [?x :a ?w]]`)
@@ -153,7 +153,7 @@ func TestInput_ARepeatedSymbolUnifies(t *testing.T) {
 func TestExecuteWithRelations_BindsARelationByItsSymbols(t *testing.T) {
 	datoms, names := bindingEntities()
 	matcher := factsDatabase(t, datoms)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			permuted := relationOver([]string{"?q", "?p"}, Tuple{int64(10), int64(1)})
@@ -192,7 +192,7 @@ func TestExpressionBinding_ARepeatedSymbolUnifies(t *testing.T) {
 		{"inside a subquery, differing", `[:find ?x ?a :where [?x :a _] [(q [:find ?v :where [(ground [1 2]) [?v ?v]]] $) [[?a] ...]]]`, nil},
 		{"inside a subquery, agreeing", `[:find ?x ?a :where [?x :a _] [(q [:find ?v :where [(ground [1 1]) [?v ?v]]] $) [[?a] ...]]]`, []string{"x 1", "y 1"}},
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			for _, shape := range shapes {
@@ -233,7 +233,7 @@ func TestInput_AScalarOrATupleEntryBindsOneTuple(t *testing.T) {
 		{"a relation entry given three tuples, sorted on its first symbol", `[:find ?p ?q ?x :in $ [[?p ?q]] :where [?x :a 1] :order-by [[?p :desc]]]`, relationOver([]string{"?p", "?q"}, three...), "", []string{"3 b x", "2 c x", "1 a x"}},
 		{"a collection entry given three tuples, sorted on it", `[:find ?p ?x :in $ [?p ...] :where [?x :a 1] :order-by [[?p :desc]]]`, relationOver([]string{"?p"}, Tuple{int64(1)}, Tuple{int64(3)}, Tuple{int64(2)}), "", []string{"3 x", "2 x", "1 x"}},
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			for _, c := range cases {

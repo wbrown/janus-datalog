@@ -16,7 +16,7 @@ import (
 // on the leg's path: streaming on the legs with streaming aggregation, over
 // 500 tuples against a threshold of 100, and batch on the others.
 func TestStorageBackedPureAggregation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

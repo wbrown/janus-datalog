@@ -37,7 +37,7 @@ func createPullIntoCRDTTestDB(t *testing.T, mode optimizerMode) *Database {
 // TestPullInto_CardinalityOne_LWW verifies that PullInto returns the
 // LWW-resolved value for cardinality-one attributes, not all historical values.
 func TestPullInto_CardinalityOne_LWW(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createPullIntoCRDTTestDB(t, mode)
 
@@ -91,7 +91,7 @@ func TestPullInto_CardinalityOne_LWW(t *testing.T) {
 // TestPullInto_CardinalityMany_AddWins verifies that PullInto returns
 // the add-wins resolved set for cardinality-many attributes.
 func TestPullInto_CardinalityMany_AddWins(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createPullIntoCRDTTestDB(t, mode)
 
@@ -146,7 +146,7 @@ func TestPullInto_CardinalityMany_AddWins(t *testing.T) {
 // TestPullInto_CardinalityVector_RGA verifies that PullInto returns
 // the RGA-resolved ordered list for cardinality-vector attributes.
 func TestPullInto_CardinalityVector_RGA(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createPullIntoCRDTTestDB(t, mode)
 
@@ -190,7 +190,7 @@ func TestPullInto_CardinalityVector_RGA(t *testing.T) {
 // TestPull_Wildcard_CRDTResolution verifies that wildcard pulls (*)
 // return CRDT-resolved values, not all historical values.
 func TestPull_Wildcard_CRDTResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createPullIntoCRDTTestDB(t, mode)
 
@@ -246,7 +246,7 @@ func TestPull_Wildcard_CRDTResolution(t *testing.T) {
 // TestPull_Wildcard_CardinalityVector verifies that wildcard pulls
 // return ordered values for cardinality-vector attributes.
 func TestPull_Wildcard_CardinalityVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createPullIntoCRDTTestDB(t, mode)
 
@@ -296,7 +296,7 @@ func TestPull_Wildcard_CardinalityVector(t *testing.T) {
 // field names an attribute the schema does not declare, on a database that
 // accepts unknown attributes.
 func TestPullInto_AfterCacheClear(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createPullIntoCRDTTestDB(t, mode)
 
@@ -343,7 +343,7 @@ type PersonWithAnyFields struct {
 
 // TestPullInto_AnyField verifies that PullInto works with `any` typed fields
 func TestPullInto_AnyField(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createPullIntoCRDTTestDB(t, mode)
 
@@ -385,7 +385,7 @@ func TestPullInto_AnyField(t *testing.T) {
 //
 // See: BUG_PULLINTO_NIL_ENTITY_PANIC.md
 func TestPullInto_NilEntity_NoPanic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createPullIntoCRDTTestDB(t, mode)
 

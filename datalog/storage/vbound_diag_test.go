@@ -44,7 +44,7 @@ func vBoundMatchCountWithAnnotations(t *testing.T, db *Database, a datalog.Keywo
 }
 
 func TestDiag_VBound_AfterOverwrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -96,7 +96,7 @@ func TestDiag_VBound_AfterOverwrite(t *testing.T) {
 }
 
 func TestDiag_VBound_VIsIrrelevant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

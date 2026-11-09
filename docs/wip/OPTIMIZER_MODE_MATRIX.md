@@ -1,4 +1,4 @@
-# Optimizer Mode Matrix — every query test runs both paths
+# Optimizer Mode Matrix — every query test runs the legs its reach needs
 
 **Status**: Ruled 2026-07-19; migration COMPLETE 2026-07-20. The five planned packages — `datalog/storage` (~294 tests, committed `44edd06`), `tests/` (40), `datalog/db` (23), `datalog/qb` (33), `datalog/executor` (117 across three batches) — plus three the plan's list missed, found by a repository-wide sweep for query-executing tests: `datalog/reflect` (32), `cmd/datalog` (8), `datalog/wasmtest` (1). Every other package is exempt (planner/algebra pin plan structure by nature) or executes no queries. The one structural exemption class is CLOSED (owner ruling 2026-07-20): the CLI gained `-optimize` (default true, matching the engine default; `-optimize=false` runs the baseline planner), riding the database's planner options so every CLI query path — `db.Query` with inputs, single-query, interactive — honors it. The six subprocess query tests (`TestCLI_QueryFromEDNDump`, `TestCLI_QueryFromJDZLDump`, `TestCLI_QueryWithScalarInput`, `TestCLI_QueryWithCollectionInput`, `TestCLI_QueryWithStringInput`, `TestCLI_QueryWithMultipleInputs`) now loop the axis via `mode.cliFlag()`; the in-process `openDatabaseOrEDN` tests open with the mode's options and query through `db.NewExecutor()`, the same funnel `main()` uses. This document is the plan of record; the outcome sections below record what each phase surfaced.
 
@@ -89,7 +89,6 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
        sharing     bool
        prefetch    bool
        symmetric   bool
-       streaming   bool
        fusion      bool
        aggregation bool
    }
@@ -101,26 +100,54 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
    }
    ```
 
-   The legs are the pairwise covering design `optionLegs` states: the strength-2 orthogonal array on three bits (a, b, c), with the algebra optimizer at a, scan sharing at c, prefetch at a⊕c, the symmetric hash join at a⊕b⊕c, streaming joins at b, attribute-fetch fusion at b⊕c and streaming aggregation at a⊕b: eight legs, on which every pair of the seven options takes all four settings. The first leg is the reference, every option off, and one leg is `DefaultPlannerOptions`' profile. A leg's `plannerOptions` is the default options with its settings applied, and a mode carries its leg's fields and that method by promotion. `referenceMode` is the reference leg on the engine backend: a test comparing the legs' answers computes the reference's once and compares each leg's with it inside that leg, so a leg run alone compares against the reference. `optimizerModes` is the engine axis, the tree store crossed with the legs, and `backendModes` is the store axis, `AvailableBackends()` crossed with them. A test of the engine loops the first; a test of the store, what it persists or how it reads, loops the second; a test that fixes its own store loops `optionLegs`. Two constructors sit on them:
+   The legs are the pairwise covering design `optionLegs` states: the strength-2 orthogonal array on three bits (a, b, c), with the algebra optimizer at a, scan sharing at c, prefetch at a⊕c, the symmetric hash join at a⊕b⊕c, attribute-fetch fusion at b⊕c and streaming aggregation at a⊕b: eight legs, on which every pair of the six options takes all four settings. The first leg is the reference, every option off, and one leg is `DefaultPlannerOptions`' profile. A leg's `plannerOptions` is the default options with its settings applied, and a mode carries its leg's fields and that method by promotion.
+
+   `referenceMode` is the reference leg on the engine backend: a test comparing the legs' answers computes the reference's once and compares each leg's with it inside that leg, so a leg run alone compares against the reference.
+
+   `optimizerModes` is the engine axis, the tree store crossed with the legs, and `backendModes` is the store axis, `AvailableBackends()` crossed with them.
+
+   A test loops the legs `legsFor` answers over its axis for the options its queries reach. `legsFor(modes, reach...)` answers one leg per setting of the reach the pairwise design needs: two legs for a reach of one option, four for two or three, every leg for four or more, and the default profile alone for a reach of none. The reference leg is always among them, and the default profile wherever a sub-design of that size holds both.
+
+   A test of the engine passes `optimizerModes` and its measured reach. A test of the store, what it persists or how it reads, passes `backendModes` and no reach, one leg per backend, since no optimizer option changes what the store persists or how it reads. A test that fixes its own store loops `optionLegs`.
+
+   Two constructors sit on the axes:
 
    - `createOptimizerModeDB(t, mode, opts)` — the mode's backend and the mode's planner options, threaded through `DatabaseOptions`. This is what a test on either axis uses.
    - `openBackendDB(t, backend, opts)` — a named backend with the caller's `PlannerOptions` left intact, for a test whose own options are the subject of its assertion. The option half of the mode has nothing left to vary there, so it takes a `Backend` rather than a mode; reaching for it drops that half of the axis.
 
+   A test's reach is measured, never read off its text. Under `-reach`, `legsFor` answers every leg, and a recording handler reads each query's events for the option each reaches:
+
+   - `PatternFusedFetch` and `PatternFusedConstraint`: attribute-fetch fusion.
+   - `ScanSharingCacheHit` and `ScanSharingCacheMiss`: scan sharing.
+   - `PrefetchTrigger`: entity prefetch.
+   - `AlgebraDecorrelateApply` and `AlgebraGetElseScanApply`: the algebra optimizer.
+   - `JoinStrategy` with `mode` `symmetric`: the symmetric hash join.
+   - `AggregationStrategy` with `strategy` `streaming`: streaming aggregation.
+
+   The reach is the union over every leg. One all-on leg would hide the symmetric join: a shared scan is a `LazySeqRelation`, so under scan sharing no join takes the symmetric path.
+
+   Where the recorder rides:
+
+   - In `datalog/storage` and `tests/` it wraps the annotation handler of every database the package's constructor opens, so every test opening through the constructor is in the record.
+   - In the other packages the mode carries `recordsReach`, the test's name, which `legsFor` sets under `-reach`, and the mode's planner options carry the recorder as their handler. A database opened under them, or an executor built under them, carries it on.
+
+   Each package's `reach_report_test.go` holds the flag, the record and the report written at the end of the run, and the loops take their reaches from it. A test absent from the report, one that opens its database outside the constructor or builds its executor under a handler of its own, keeps every option.
+
    Two narrowings, each naming what it gives up:
 
-   - `legsWhere(modes, keep)` — the legs of the given axis a predicate admits, for a test pinning one option's mechanism: it runs on the legs that carry the option in place of setting the option, still a leg per backend and per setting of the other options, because pinning one option pins neither a store nor another option.
+   - `legsWhere(modes, keep)` — the legs of the given set a predicate admits. A test pinning one option's mechanism names the option in its reach, so a leg carrying it is among `legsFor`'s legs, and keeps those legs through `legsWhere(legsFor(modes, reach...), keep)` in place of setting the option. That is still a leg per backend and per setting of the other options the reach names, because pinning one option pins neither a store nor another option.
    - `byteKeyBackends(t)` — badger and badger-emulator out of the store axis, not memory-trees. The tree store hands out the datom it already holds, so a property of the encoded index key, or of anything downstream of it such as the Tier-3 blob tier, is not a property it has. The switch has no silent default: a new backend fails there until someone says which side of the line it falls on.
 
-   Packages that cannot import storage's test files carry their own copy of the eight legs, each pinned to the design by its own copies of the pair-coverage, reference-and-default-profile and options-carry tests — the Go-testing reality for cross-package test code:
+   Packages that cannot import storage's test files carry their own copy of the eight legs and of `legsFor`, each pinned to the design by its own copies of the pair-coverage, reference-and-default-profile, options-carry and legs-by-reach tests — the Go-testing reality for cross-package test code:
 
-   - `executor` carries the eight legs and a ninth, fusion with streaming aggregation, the profile `NewExecutor` constructs with, in `datalog/executor/optimizer_modes_test.go`, with `optimizerModesWhere` as its narrowing.
-   - `db` carries both axes, with `referenceMode` and `legsWhere`.
-   - `qb` and `reflect` carry the engine axis alone, threading `mode.backend` into their own constructors.
-   - `tests/` has `createBackendModeDB`, with `eachMode`, `eachModeOpts` and `eachModeWith` on the engine axis and `eachStoreBackendAndModeOpts` on the store axis, and `legsWhere` for a mechanism test. Its mode carries no backend; the selectors cross it with one.
-   - `wasmtest` carries the legs with no backend.
-   - `cmd/datalog` carries the legs with no backend for its in-process tests. A test that runs a query through the built binary loops `cliOptimizeFlags`, the two values of `-optimize`, the one planner option the CLI exposes: a leg of the eight would name options the binary never set.
+   - `executor` carries the eight legs and a ninth, fusion with streaming aggregation, the profile `NewExecutor` constructs with, in `datalog/executor/optimizer_modes_test.go`. Its `legsFor(t, reach...)` answers the ninth leg beside the array's whenever its setting of the reach is one no array leg holds, and `export_test.go` exports `LegsFor`, `Option`, `AllOptions` and the option constants for the external test package.
+   - `db` carries both axes, with `referenceMode`, `legsFor(t, modes, reach...)` and `legsWhere`.
+   - `qb` and `reflect` carry the engine axis alone, `legsFor(t, optimizerModes, reach...)`, threading `mode.backend` into their own constructors.
+   - `tests/` has `createBackendModeDB`, with `eachMode`, `eachModeOpts` and `eachModeWith` on the engine axis, each taking a trailing reach its callers pass and looping `legsFor(reach...)`, `eachStoreBackendAndModeOpts` on the store axis looping `legsFor()`, the default profile per backend, and `legsWhere` over the legs a test is given. Its mode carries no backend; the selectors cross it with one.
+   - `wasmtest` carries the legs with no backend, `legsFor(t, reach...)`.
+   - `cmd/datalog` carries the legs with no backend for its in-process tests, `legsFor(t, reach...)`. A test that runs a query through the built binary loops `cliOptimizeFlags`, the two values of `-optimize`, the one planner option the CLI exposes: a leg of the eight would name options the binary never set.
 
-2. Query-executing tests wrap their query-and-assert body in `for _, mode := range optimizerModes { t.Run(mode.name, ...) }`, **with the database built inside the loop**. A mode loop around a database constructed outside it — or constructed from `Path:`, which is `DefaultBackend()` — runs one backend under N mode names and reads as coverage it does not have. Schema values and other backend-independent fixtures can still be built once above. A loop that builds its planner options from one field of the mode runs every leg under the other options' zero values, the same coverage it does not have; the options a leg runs under are `mode.plannerOptions()`.
+2. Query-executing tests wrap their query-and-assert body in `for _, mode := range legsFor(optimizerModes, <reach>...) { t.Run(mode.name, ...) }`, the reach the report names for the test, **with the database built inside the loop**. A mode loop around a database constructed outside it — or constructed from `Path:`, which is `DefaultBackend()` — runs one backend under N mode names and reads as coverage it does not have. Schema values and other backend-independent fixtures can still be built once above. A loop that builds its planner options from one field of the mode runs every leg under the other options' zero values, the same coverage it does not have; the options a leg runs under are `mode.plannerOptions()`.
 
 3. Where a test already matrixes another axis (cache modes, schemaless vs schema-aware), orthogonal axes cross — the honest matrix is the product. The storage backend is not one of those: it lives inside `optimizerMode`, so a test on the axis gets it without crossing anything.
 
@@ -128,7 +155,7 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
 
    The two cache legs are not worth the same under this axis. `DisableCache: true` sends reads to storage, and storage is now three implementations — so the cache-off legs are where the backends genuinely differ. The EA cache is a `Database` structure rather than a store one, so the cache-on legs run the same cache code with different fill paths and can mask a storage-path divergence on their own. That asymmetry is what the differential shape exists to catch, and the backend axis is what makes it name the store responsible.
 
-4. A test that pins one option's mechanism (a plan shape under the algebra optimizer, a shared scan's completion, a fallback's prefetch) selects the legs that carry the option through `legsWhere` and runs on every leg that does. It sets no option itself: an option set inside a test is absent from the matrix, and a test that needs an option for its answer has let a performance option stand in for correctness. The planner and algebra packages' own unit tests, which plan without executing, declare `EnableAlgebraOptimizer` as the path they pin.
+4. A test that pins one option's mechanism (a plan shape under the algebra optimizer, a shared scan's completion, a fallback's prefetch) names the option in its reach and runs on the legs of `legsFor`'s answer that carry it, kept through `legsWhere`. It sets no option itself: an option set inside a test is absent from the matrix, and a test that needs an option for its answer has let a performance option stand in for correctness. The planner and algebra packages' own unit tests, which plan without executing, declare `EnableAlgebraOptimizer` as the path they pin.
 
 5. A test whose *subject* is one backend names it and says why: the assertion reads a property only that store has, so on the others it would hold vacuously. A table of such tests carries the axis per entry rather than inheriting the global one — `queryBoundaryFaultCase.modes` is the instance, with the injected-fault case on the engine axis and the Tier-3 blob case on `byteKeyBackends`.
 

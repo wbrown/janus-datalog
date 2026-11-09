@@ -88,7 +88,7 @@ func TestAnAggregatingFindAnswersItsElementsInWrittenOrder(t *testing.T) {
 		{"(count ?e)", func(g group) int64 { return g.count }},
 		{"(max ?v)", func(g group) int64 { return g.maxV }},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption, aggregationOption) {
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 		commitFacts(t, d, writtenOrderFacts())
 		for _, order := range orderings(len(elements)) {
@@ -142,7 +142,7 @@ func TestQueryIntoMapsAnAggregateFirstFindByTagAndByPosition(t *testing.T) {
 		K int64
 	}
 	text := `[:find (count ?e) ?k :where [?e :o/k ?k]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, writtenOrderFacts())
@@ -245,7 +245,7 @@ func TestASubqueryAnswersAlikeUnderAPermutationOfItsFindAndBinding(t *testing.T)
 			byKeyGroupedByV},
 	}
 	for _, c := range cases {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, writtenOrderFacts())
 			for _, order := range orderings(len(c.elements)) {
@@ -285,7 +285,7 @@ func TestAPullBesideAnAggregateGroupsByItsEntity(t *testing.T) {
 		{`[:find (count ?m) (pull ?g [:o/name]) :where [?m :o/group ?g]]`,
 			[]string{"1 map[o/name:second]", "2 map[o/name:first]"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 		names := commitFacts(t, d, facts)
 		for _, c := range cases {

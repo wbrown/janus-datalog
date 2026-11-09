@@ -37,7 +37,7 @@ func TestReflect_VectorOrderPreserved(t *testing.T) {
 		t.Fatalf("expected CardinalityVector, got %s", skillsAttr.Cardinality)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -103,7 +103,7 @@ func TestReflect_VectorDuplicatesAllowed(t *testing.T) {
 		t.Fatalf("failed to build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -167,7 +167,7 @@ func TestReflect_VectorUpdatePreservesUnchangedPrefix(t *testing.T) {
 		t.Fatalf("failed to build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -245,7 +245,7 @@ func TestReflect_VectorReplaceMiddleElement(t *testing.T) {
 		t.Fatalf("failed to build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -323,7 +323,7 @@ func TestReflect_VectorRemoveFromMiddle(t *testing.T) {
 		t.Fatalf("failed to build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -398,7 +398,7 @@ func TestReflect_VectorReorder(t *testing.T) {
 		t.Fatalf("failed to build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -473,7 +473,7 @@ func TestReflect_VectorPrepend(t *testing.T) {
 		t.Fatalf("failed to build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -548,7 +548,7 @@ func TestReflect_VectorInsertInMiddle(t *testing.T) {
 		t.Fatalf("failed to build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -623,7 +623,7 @@ func TestReflect_VectorClearAndRepopulate(t *testing.T) {
 		t.Fatalf("failed to build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{

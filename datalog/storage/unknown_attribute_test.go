@@ -42,7 +42,7 @@ func requireUnknown(t *testing.T, err error, attr datalog.Keyword) {
 
 func TestQueryRefusesUnknownAttribute(t *testing.T) {
 	const typo = `[:find ?v :where [?e :t/strnig ?v]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
 			attr := kw(":t/strnig")
@@ -96,7 +96,7 @@ func TestQueryRefusesUnknownAttributeInNestedClauses(t *testing.T) {
 		{"or-default-join", `[:find ?e ?x :where [?e :t/string ?v] (or-default-join [[?e] ?x] [?e :t/strnig ?x] [(ground "none") ?x])]`},
 		{"subquery", `[:find ?e ?n :where [?e :t/string ?v] [(q [:find (count ?x) :in $ ?e :where [?e :t/strnig ?x]] $ ?e) [[?n]]]]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d, _ := refusingDB(t, mode)
@@ -117,7 +117,7 @@ func TestQueryRefusesUnknownAttributeInDatabaseFunctions(t *testing.T) {
 		{"missing? expression", `[:find ?m :where [?e :t/string _] [(missing? $ ?e :t/strnig) ?m]]`},
 		{"missing? predicate", `[:find ?e :where [?e :t/string _] [(missing? $ ?e :t/strnig)]]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d, _ := refusingDB(t, mode)
@@ -147,7 +147,7 @@ func TestQueryRunsAKeywordBoundThroughAnInput(t *testing.T) {
 		{"an identity alias of the input", `[:find ?v :in $ ?in :where [(identity ?in) ?a] [?e ?a ?v]]`, []interface{}{kw(":t/strnig")}},
 		{"an invocation passing the input", `[:find ?e :in $ % ?a :where (has ?e ?a)]`, []interface{}{`[[(has ?e ?a) [?e ?a _]]]`, kw(":t/strnig")}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, c := range texts {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t), RefuseUnknownAttributes: true})
@@ -164,7 +164,7 @@ func TestQueryRunsAKeywordBoundThroughAnInput(t *testing.T) {
 // its own, the input reaches no attribute position, and the query answers
 // every entity the branches admit.
 func TestQueryRunsAnInputSharingABranchLocalsName(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, tagged, untagged := taggedPair(t, mode)
 			requireSameEntities(t, []datalog.Identity{tagged, untagged},
@@ -180,7 +180,7 @@ func TestQueryRunsAnInputSharingABranchLocalsName(t *testing.T) {
 // no definition declares yields no datom, which the fallback answers with
 // zero. The refusal of an attribute the query names is decided at entry.
 func TestKeywordReachingAnAttributePositionThroughASubqueryInputIsData(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":t/tag").Type(schema.TypeKeyword).One().Add().
@@ -209,7 +209,7 @@ func TestKeywordReachingAnAttributePositionThroughASubqueryInputIsData(t *testin
 // the branch's own: a ground in the enclosing query binding a variable of the
 // same name reaches the enclosing query's patterns and not the branch's.
 func TestQueryRunsALocalAttributeVariableBesideAGround(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":t/tag").Type(schema.TypeKeyword).One().Add().
@@ -311,7 +311,7 @@ func TestQueryBindsARequiredPositionInsideABranchFromTheHeader(t *testing.T) {
 	const declared = `[:find ?e :in $ % :where [(ground :t/tag) ?a] [?e :t/n _] (or-join [?e] (has ?a ?e) [?e :t/tag :t/none])]`
 	const typoThroughHeader = `[:find ?e :in $ % :where [(ground :t/strnig) ?a] [?e :t/n _] (or-join [[?a] ?e] (has ?a ?e) [?e :t/tag :t/none])]`
 	const declaredThroughHeader = `[:find ?e :in $ % :where [(ground :t/tag) ?a] [?e :t/n _] (or-join [[?a] ?e] (has ?a ?e) [?e :t/tag :t/none])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name+"/required, typo", func(t *testing.T) {
 			d, _, _ := taggedPair(t, mode)
 			requireSameEntities(t, nil, queriedEntities(t, d, typoThroughHeader, mustRuleSet(t, required)),
@@ -342,7 +342,7 @@ func TestQueryBindsARequiredPositionInsideABranchFromTheHeader(t *testing.T) {
 // value, and the invocation answers the entities carrying it.
 func TestQueryRunsAKeywordPassedToABranchLocalsPosition(t *testing.T) {
 	const rules = `[[(r ?e ?a) [?e :t/tag ?a] (or-join [?e] [?e ?a _] [?e :t/n _])]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, tagged, _ := taggedPair(t, mode)
 			requireSameEntities(t, nil, queriedEntities(t, d, `[:find ?e :in $ % :where (r ?e :t/strnig)]`, mustRuleSet(t, rules)),
@@ -384,7 +384,7 @@ func TestQueryBindsAOneBranchVariableOfAnOrFromTheEnclosingQuery(t *testing.T) {
 			nil,
 		},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name+", declared keyword", func(t *testing.T) {
 				d, tagged, _ := taggedPair(t, mode)
@@ -431,7 +431,7 @@ func TestQueryRunsAKeywordReachingThroughABinding(t *testing.T) {
 		{"ground into an invocation", `[:find ?e :in $ % :where [(ground :t/strnig) ?a] (has ?e ?a)]`, reading},
 		{"ground inside a rule body", `[:find ?e :in $ % :where (typo ?e)]`, grounding},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d, _ := refusingDB(t, mode)
@@ -504,7 +504,7 @@ func typedAccessors() []typedAccessor {
 }
 
 func TestTypedAccessorsRefuseUnknownAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, accessor := range typedAccessors() {
 			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
 				d, entity := refusingDB(t, mode)
@@ -533,7 +533,7 @@ func TestLookupByUniqueRefusesAnUndeclaredAttributeWithItsOwnError(t *testing.T)
 			return createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
 		}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, db := range databases {
 			t.Run(mode.name+"/"+db.name, func(t *testing.T) {
 				d := db.open(t, mode)
@@ -549,7 +549,7 @@ func TestLookupByUniqueRefusesAnUndeclaredAttributeWithItsOwnError(t *testing.T)
 // ResolveEntityAttributes asked several undeclared attributes reports each,
 // joined in order of appearance, as a query naming several is reported.
 func TestResolveEntityAttributesReportsEveryUnknownAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, entity := refusingDB(t, mode)
 			_, err := d.ResolveEntityAttributes(entity, []datalog.Keyword{kw(":t/string"), kw(":t/strnig"), kw(":t/lnog")})
@@ -568,7 +568,7 @@ func TestResolveEntityAttributesReportsEveryUnknownAttribute(t *testing.T) {
 // answers it on a refusing database with no error and no value, where the
 // same accessor refuses an undeclared attribute.
 func TestTypedAccessorsAnswerADeclaredAttributeWithNoDatoms(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, accessor := range typedAccessors() {
 			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
 				d, entity := refusingDB(t, mode)
@@ -586,7 +586,7 @@ func TestTypedAccessorsAnswerADeclaredAttributeWithNoDatoms(t *testing.T) {
 // answers an undeclared attribute with no error and no value, where the same
 // accessor on a refusing database refuses it.
 func TestTypedAccessorsWithoutRefusalOptionAreNotChecked(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, accessor := range typedAccessors() {
 			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
@@ -609,7 +609,7 @@ type pullTypo struct {
 }
 
 func TestPullRefusesUnknownAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, entity := refusingDB(t, mode)
 			attr := kw(":t/strnig")
@@ -636,7 +636,7 @@ func TestPullRefusesUnknownAttribute(t *testing.T) {
 }
 
 func TestQueryReportsEveryUnknownAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
 			_, err := d.Query(`[:find ?v ?w :where [?e :t/strnig ?v] [?e :t/lnog ?w]]`)
@@ -671,7 +671,7 @@ func TestRefusalRequiresSchema(t *testing.T) {
 }
 
 func TestQueryAcceptsDeclaredAttributeWithNoDatoms(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
 			tuples, err := executor.CollectTuples(d.Query(`[:find ?v :where [?e :t/double ?v]]`))
@@ -682,7 +682,7 @@ func TestQueryAcceptsDeclaredAttributeWithNoDatoms(t *testing.T) {
 }
 
 func TestQueryRefusesUndeclaredAttributeWithDatoms(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, entity := refusingDB(t, mode)
 			tx := d.NewTransaction()
@@ -697,7 +697,7 @@ func TestQueryRefusesUndeclaredAttributeWithDatoms(t *testing.T) {
 }
 
 func TestQueryNamedSourcePatternIsNotChecked(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
 			cache := factsDatabase(t, []datalog.Datom{
@@ -716,7 +716,7 @@ func TestQueryNamedSourcePatternIsNotChecked(t *testing.T) {
 
 // A refusing database passed as a named source refuses as it does as $.
 func TestNamedSourceDatabaseRefusesUnknownAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			refusing, _ := refusingDB(t, mode)
 			plain := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -730,7 +730,7 @@ func TestNamedSourceDatabaseRefusesUnknownAttribute(t *testing.T) {
 }
 
 func TestQueryWithoutRefusalOptionIsNotChecked(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
 			tx := d.NewTransaction()
@@ -750,7 +750,7 @@ func TestQueryWithoutRefusalOptionIsNotChecked(t *testing.T) {
 // carries the attributes the text names.
 func TestQueryWithoutRefusalOptionCollectsNoRoster(t *testing.T) {
 	const text = `[:find ?n :where [?e :t/string ?n] (not [?e :t/long _]) [(get-else $ ?e :t/double 0.0) ?w]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			plain := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
 			plan, err := plain.Explain(text)
@@ -800,7 +800,7 @@ func queryExecutionAllocs(t *testing.T, d *Database, text string, inputs ...inte
 // them on a named source, one naming them in a subquery body, and one holding
 // a headerless form, whose preparation rewrites it on every execution.
 func TestQueryWithRefusalOptionCollectsRostersOnce(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			open := func(refuse bool) *Database {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t), RefuseUnknownAttributes: refuse})
@@ -835,7 +835,7 @@ func TestQueryWithRefusalOptionCollectsRostersOnce(t *testing.T) {
 }
 
 func TestAsOfHandleRefusesBySchema(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, entity := refusingDB(t, mode)
 			tx := d.NewTransaction()
@@ -861,7 +861,7 @@ func TestAsOfHandleRefusesBySchema(t *testing.T) {
 }
 
 func TestEngineQueriesRunUnderRefusal(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
 
