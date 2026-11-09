@@ -312,6 +312,11 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 			return failed(err)
 		}
 	}
+	// The registry lists the sites at which the plan reads each shared scan
+	// before any phase runs; the sharing matcher serves those sites alone.
+	if e.options.EnableScanSharing {
+		ctx.ScanRegistry().expect(sharedScanSites(realizedPlan))
+	}
 	result, err := executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
 	if err != nil {
 		return failed(err)

@@ -613,6 +613,10 @@ These are all avoidance disguised as engineering judgment. The correct answer is
 
 ## Query Planning and Execution Architecture
 
+### The Plan States Meaning; the Executor Carries It Out
+
+The planner states what a query means: each scope's phases, each clause's route, the sites it reads, and what each scope is given and what it produces. The executor and the storage beneath it carry that out. The EA cache, entity prefetch, attribute-fetch fusion, scan sharing's sequences and how a relation is held are theirs. They work inside what the plan states, and they never change an answer. When execution disagrees with the plan, the execution detail is fixed to honor the plan, never pulled up into it. A planner rule that reads, predicts or states an executor or storage detail is a second copy of the executor's internals. The tell: a planning rule whose support cites executor or storage code, such as a relation's representation, a size, what a read loads, or which reads a source answers another way. The instances: a group planned as held because the executor held it in memory, a held invocation's argument shape read to predict a rename, prefetch's read planned as a step, and fusion proposed as a planned route.
+
 ### Modern Architecture (October 2025)
 
 #### RealizedPlan & QueryExecutor (Stage B)
@@ -931,6 +935,12 @@ Generate random valid queries and verify no panics or crashes.
 
 ---
 
+### Testing Prefetch
+
+**Entity prefetch never changes what a query answers, as the EA cache never does.** Prefetch only fills the cache, and the cache answers what storage answers. So a query gives the same tuples, or the same error, with prefetch on and off. Prefetch is an executor concern and works inside the route the plan states. It never reads a group the plan reads in windows ahead of the clause that consumes it. Prefetch is an axis of the optimizer matrix, and every engine test answers alike on every leg. A test of prefetch's own mechanism asserts that mechanism on the prefetch-on legs, and its answer alike on every leg. The tell: an answer that holds only with prefetch on, or a prefetch that reads a windowed group whole.
+
+---
+
 ### Testing Query Optimizations
 
 **CRITICAL**: Query optimizations are NOT tested the same way as regular features.
@@ -982,6 +992,9 @@ Test that optimization doesn't break edge cases:
 // Test with nil values, empty relations, single tuples
 // Verify no panics, no data corruption
 ```
+
+#### 6. An Option a Test Enables Is an Axis of the Matrix
+A planner option any test turns on is an axis of the optimizer matrix: `optimizerMode` and `optionLegs` in `datalog/storage`, and the executor's own copy in `datalog/executor/optimizer_modes_test.go`. The legs are a pairwise covering design: every pair of axes takes all four settings on some leg. The first leg is the reference, every option off, and one leg is the default profile. Every engine test then runs on every leg, and every leg answers alike. A test whose subject is the option's own mechanism runs on the legs that carry it, selected through `legsWhere` in storage and `optimizerModesWhere` in the executor, and sets no option itself. An optimization decides how a query runs, never what it answers. A test that needs an optimization for its answer or its precondition has let a performance option stand in for correctness. The tell: an option set inside one test's body and absent from the matrix. The instance: entity prefetch was set inside single tests, and one passed only because prefetch's read decided a route at run time.
 
 ---
 

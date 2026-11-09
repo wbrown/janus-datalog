@@ -62,16 +62,15 @@ func TestIteratorLeak_BuiltinPatternDiscoveredEntity(t *testing.T) {
 	// A leaked iterator is visible here as a Badger WAL file surviving Close,
 	// which makes the backend this test's instrument: an in-memory store leaves
 	// no directory to inspect, so the assertion below would hold whether or not
-	// the iterator leaked. The algebra axis still runs — it decides whether the
-	// get-some / get-else / missing? paths execute at all.
+	// the iterator leaked. The algebra axis still runs, since it decides whether
+	// the get-some / get-else / missing? paths execute at all, and so does the
+	// scan-sharing axis, since a shared scan's iterator is the registry's to
+	// close.
 	badger, err := BackendNamed("badger")
 	if err != nil {
 		t.Fatal(err)
 	}
-	badgerModes := []optimizerMode{
-		{name: "badger/algebra_on", algebra: true, backend: badger},
-		{name: "badger/algebra_off", algebra: false, backend: badger},
-	}
+	badgerModes := buildOptimizerModes([]Backend{badger})
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

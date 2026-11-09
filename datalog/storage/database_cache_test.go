@@ -19,7 +19,9 @@ func TestDatabasePlanCache(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	// On the legs without attribute-fetch fusion the second pattern runs over
+	// the first's streaming group through the window scope the cache holds.
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -38,10 +40,7 @@ func TestDatabasePlanCache(t *testing.T) {
 			}
 
 			// Test 1: Create multiple executors - they should share the cache
-			// Attribute-fetch fusion is off, so the second pattern runs over the
-			// first's streaming group through the window scope the cache holds.
 			planOpts := mode.plannerOptions()
-			planOpts.EnableAttributeFetchFusion = false
 			exec1 := db.NewExecutorWithOptions(planOpts)
 			exec2 := db.NewExecutorWithOptions(planOpts)
 

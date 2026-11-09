@@ -51,19 +51,21 @@ type DefaultQueryExecutor struct {
 
 	// plan is the plan whose phases this executor runs the clauses of. An
 	// invocation clause reads what the plan planned for it
-	// (planner.RealizedPlan.Evaluations).
+	// (planner.RealizedPlan.Evaluations), and a data pattern or an invocation
+	// takes the route the plan states for it (planner.RealizedPlan.Windows).
 	plan *planner.RealizedPlan
 }
 
 // newQueryExecutor builds a clause executor for tests of the executor's
 // internals, over an executor on the default planner profile carrying the
 // options' handler. A query it is given runs clause by clause in the written
-// order, bypassing the planner. A form inside those clauses plans each of its
-// scopes through the executor's planner, and an invocation clause inside a
-// scope reads the scope's plan. An invocation clause at the top level of the
-// query has no plan to read its evaluation from; a test that runs one plans
-// the query. End-to-end and integration tests use NewExecutor or
-// NewExecutorWithOptions, which plan the query.
+// order, bypassing the planner, under the empty plan: no route is planned, so
+// every data pattern and invocation binds through its groups. A form inside
+// those clauses plans each of its scopes through the executor's planner, and
+// an invocation clause inside a scope reads the scope's plan. An invocation
+// clause at the top level of the query has no plan to read its evaluation
+// from; a test that runs one plans the query. End-to-end and integration
+// tests use NewExecutor or NewExecutorWithOptions, which plan the query.
 func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options ExecutorOptions) *DefaultQueryExecutor {
 	plannerOptions := defaultPlannerOptions()
 	plannerOptions.Handler = options.Handler
@@ -74,7 +76,7 @@ func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options E
 		options:        options,
 		unit:           NewUnitRelation(options),
 	}
-	return executor.queryExecutor(nil)
+	return executor.queryExecutor(&planner.RealizedPlan{})
 }
 
 // Execute implements QueryExecutor interface
@@ -110,23 +112,18 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 					fusedCount = count
 				}
 			}
-			if fusedCount == 0 && streamsThrough(c.Symbols(), groups) {
+			// A pattern the plan reads in windows (RealizedPlan.Windows) runs
+			// over its subject's windows, its existence check matched at the
+			// site the query's walk made for it (ScanRegistry.existenceSite);
+			// every other pattern binds through the groups.
+			if fusedCount == 0 && e.plan.Windows[c] {
 				var err error
-				groups, err = e.executeBoundPattern(ctx, c, groups)
+				groups, err = e.executeBoundPattern(ctx, c, ctx.ScanRegistry().existenceSite(c), groups)
 				if err != nil {
 					return nil, fmt.Errorf("clause %d (pattern) failed: %w", i, err)
 				}
 			} else if fusedCount == 0 {
-				patternQuery := &query.Query{
-					Find:  q.Find,
-					In:    q.In,
-					Where: []query.Clause{c},
-				}
-				if len(q.Where) == 1 {
-					patternQuery.OrderBy = q.OrderBy
-					patternQuery.Limit = q.Limit
-				}
-				newRel, err := e.executePattern(patternQuery, c, groups)
+				newRel, err := e.executePattern(patternMatchQuery(q, c), c, groups)
 				if err != nil {
 					return nil, fmt.Errorf("clause %d (pattern) failed: %w", i, err)
 				}
@@ -138,39 +135,6 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 				return []Relation(groups.Collapse(e.options.Handler))
 			}))
 
-			// Prefetch entity attributes into EA cache after first DataPattern.
-			// Subsequent patterns calling Match() with bindings will hit
-			// matchWithBindingsFromCache → GetOrResolve → cache hit (O(1))
-			// instead of cold GetOrResolve → per-(E,A) EATV scan.
-			// Materializes streaming relations to extract entity IDs — this
-			// materialization would happen anyway when the next pattern joins.
-			if e.options.EnableEntityPrefetch && i == 0 && len(groups) > 0 {
-				if prefetcher, ok := e.matcher.(EntityPrefetcher); ok {
-					g := groups[len(groups)-1]
-					if _, isStreaming := g.(*StreamingRelation); isStreaming {
-						g = g.Materialize()
-						groups[len(groups)-1] = g
-					}
-					entities, err := extractEntityIDs(g, g.Symbols())
-					if err != nil {
-						return nil, fmt.Errorf("prefetch entity extraction failed: %w", err)
-					}
-					if len(entities) > prefetchEntityThreshold {
-						if e.options.Handler != nil {
-							e.options.Handler(annotations.Event{
-								Name: annotations.PrefetchTrigger,
-								Data: map[string]interface{}{
-									"entity_count": len(entities),
-									"symbols":      g.Symbols(),
-								},
-							})
-						}
-						if err := prefetcher.PrefetchEntities(entities); err != nil {
-							return nil, fmt.Errorf("entity prefetch failed: %w", err)
-						}
-					}
-				}
-			}
 			if fusedCount > 1 {
 				i += fusedCount - 1
 			}
@@ -203,17 +167,18 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 			}))
 
 		case *query.RuleInvocation:
-			// An invocation deriving its predicate at the clause over a
-			// streaming group binding an argument is read in windows, the
+			// An invocation deriving its predicate at the clause that the plan
+			// reads in windows (RealizedPlan.Windows) is read in windows, the
 			// derivation seeded per window. An invocation of a predicate the
-			// scope holds reads the held relation, and one a group held in
-			// memory seeds through its projection. A rename of a held
+			// scope holds reads the held relation, and any other seeds through
+			// the projection of its groups. A rename of a held
 			// predicate whose set the evaluation keeps joins into the first
 			// group sharing a symbol with it, through the set's index, the
 			// group on the left as the collapse joins it, and nothing is
 			// drained (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md,
 			// T3); every other result joins at the collapse.
-			if _, held := ctx.Derived(c.Name); !held && streamsThrough(c.Variables(), groups) {
+			_, held := ctx.Derived(c.Name)
+			if !held && e.plan.Windows[c] {
 				var err error
 				groups, err = e.executeBoundInvocation(ctx, c, groups)
 				if err != nil {
@@ -621,6 +586,23 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(env Relation, q *query.
 	return groups, nil
 }
 
+// patternMatchQuery is the query a pattern clause of q is matched under: the
+// pattern alone, with q's :find and :in, and with q's :order-by and :limit
+// when the pattern is q's one clause. An order or a limit over several
+// clauses is the phase's, not the pattern's.
+func patternMatchQuery(q *query.Query, pattern *query.DataPattern) *query.Query {
+	match := &query.Query{
+		Find:  q.Find,
+		In:    q.In,
+		Where: []query.Clause{pattern},
+	}
+	if len(q.Where) == 1 {
+		match.OrderBy = q.OrderBy
+		match.Limit = q.Limit
+	}
+	return match
+}
+
 // executePattern executes a data pattern using the PatternMatcher
 // Patterns produce new relations from storage that get joined with existing groups
 func (e *DefaultQueryExecutor) executePattern(
@@ -641,6 +623,7 @@ func (e *DefaultQueryExecutor) executePattern(
 
 type attributeFetchSpec struct {
 	attr         datalog.Keyword
+	lookup       query.AttributeLookup
 	output       query.Symbol
 	expected     interface{}
 	isConstraint bool
@@ -801,6 +784,13 @@ fetchLoop:
 	if len(fetches) == 0 {
 		return nil, 0, nil
 	}
+	for i := range fetches {
+		lookup, err := lookupMatcher.AttributeLookup(fetches[i].attr)
+		if err != nil {
+			return nil, 0, err
+		}
+		fetches[i].lookup = lookup
+	}
 
 	input := groups[entityGroup]
 	inputSymbols := input.Symbols()
@@ -840,7 +830,7 @@ fetchLoop:
 		complete := true
 		for i, fetch := range fetches {
 			inputCounts[i]++
-			value, found, err := lookupMatcher.LookupAttribute(entity, fetch.attr)
+			value, found, err := fetch.lookup(entity)
 			lookupErr = err
 			if lookupErr != nil {
 				complete = false
@@ -965,10 +955,13 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 	}
 
 	// A database function evaluates through the lookup for the source it names.
-	var lookup query.EntityLookup
+	var evaluation query.Evaluation
 	if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
-		var lookupErr error
-		if lookup, lookupErr = e.entityLookup(dbFunc); lookupErr != nil {
+		lookup, lookupErr := e.entityLookup(dbFunc)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if evaluation, lookupErr = dbFunc.EvaluationThrough(lookup); lookupErr != nil {
 			return nil, lookupErr
 		}
 	}
@@ -982,11 +975,11 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 	// contract).
 	if len(relevantRels) == 0 {
 		if len(groups) == 0 {
-			return []Relation{evaluateExpressionWithLookup(e.executor.unit, expr, lookup, env)}, nil
+			return []Relation{evaluateExpressionWithLookup(e.executor.unit, expr, evaluation, env)}, nil
 		}
 		extended := make([]Relation, len(groups))
 		for i, rel := range groups {
-			extended[i] = evaluateExpressionWithLookup(rel, expr, lookup, env)
+			extended[i] = evaluateExpressionWithLookup(rel, expr, evaluation, env)
 		}
 		return extended, nil
 	}
@@ -995,11 +988,11 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 	var err error
 	if len(relevantRels) == 1 {
 		// Single relation — evaluate directly, no join needed
-		result = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, env)
+		result = evaluateExpressionWithLookup(relevantRels[0], expr, evaluation, env)
 	} else {
 		// Multiple disjoint relations — cross-join with expression evaluation
 		// Uses BufferedIterator for inner re-iteration instead of Product()
-		result, err = crossJoinWithExpression(relevantRels, expr, lookup, env, e.options)
+		result, err = crossJoinWithExpression(relevantRels, expr, evaluation, env, e.options)
 	}
 	if err != nil {
 		return nil, err
@@ -1079,14 +1072,17 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 		// held: the find boundary reads such a group for its existence, beside
 		// every other clause (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, the
 		// failure contract).
-		var lookup query.EntityLookup
+		var evaluation query.PredicateEvaluation
 		if dbPred, ok := pred.(*query.DatabaseFunctionPredicate); ok {
-			var lookupErr error
-			if lookup, lookupErr = e.entityLookup(dbPred.Function); lookupErr != nil {
+			lookup, lookupErr := e.entityLookup(dbPred.Function)
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			if evaluation, lookupErr = dbPred.EvaluationThrough(lookup); lookupErr != nil {
 				return nil, lookupErr
 			}
 		}
-		verdict, err := filterWithPredicateAndLookup(e.executor.unit, pred, lookup, env)
+		verdict, err := filterWithPredicateAndLookup(e.executor.unit, pred, evaluation, env)
 		if err != nil {
 			failed := newMaterializedRelationFromSet([]query.Symbol{}, nil, e.options, RelationProperties{})
 			failed.err = err
@@ -1124,10 +1120,13 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 
 	// A database-function predicate evaluates through the lookup for the
 	// source its function names.
-	var lookup query.EntityLookup
+	var evaluation query.PredicateEvaluation
 	if dbPred, ok := pred.(*query.DatabaseFunctionPredicate); ok {
-		var lookupErr error
-		if lookup, lookupErr = e.entityLookup(dbPred.Function); lookupErr != nil {
+		lookup, lookupErr := e.entityLookup(dbPred.Function)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if evaluation, lookupErr = dbPred.EvaluationThrough(lookup); lookupErr != nil {
 			return nil, lookupErr
 		}
 	}
@@ -1136,11 +1135,11 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 	var err error
 	if len(relevantRels) == 1 {
 		// Single relation — filter directly, no join needed
-		result, err = filterWithPredicateAndLookup(relevantRels[0], pred, lookup, env)
+		result, err = filterWithPredicateAndLookup(relevantRels[0], pred, evaluation, env)
 	} else {
 		// Multiple disjoint relations — theta-join with predicate filter
 		// Uses BufferedIterator for inner re-iteration instead of Product()
-		result, err = thetaJoinWithPredicate(relevantRels, pred, lookup, env, e.options)
+		result, err = thetaJoinWithPredicate(relevantRels, pred, evaluation, env, e.options)
 	}
 	if err != nil {
 		return nil, err
@@ -1441,47 +1440,4 @@ func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, g
 		result = HashJoinWithOptions(held, result, CommonSymbols(held, result), streaming)
 	}
 	return result, consumed
-}
-
-// extractEntityIDs extracts datalog.Identity values from the specified symbol
-// bindings of a materialized relation. Used to collect entity IDs for prefetch.
-// A failed scan surfaces as an error and the caller fails the query: an error
-// from the store indicates something wrong with the store, whether or not the
-// operation that hit it was optional.
-func extractEntityIDs(rel Relation, syms []query.Symbol) ([]datalog.Identity, error) {
-	symIdx := make(map[query.Symbol]int)
-	for i, s := range rel.Symbols() {
-		symIdx[s] = i
-	}
-
-	var indices []int
-	for _, s := range syms {
-		if idx, ok := symIdx[s]; ok {
-			indices = append(indices, idx)
-		}
-	}
-	if len(indices) == 0 {
-		return nil, nil
-	}
-
-	seen := make(map[datalog.Identity]bool)
-	var entities []datalog.Identity
-
-	it := rel.Iterator()
-	for it.Next() {
-		t := it.Tuple()
-		for _, idx := range indices {
-			if idx < len(t) {
-				if eid, ok := t[idx].(datalog.Identity); ok && !seen[eid] {
-					seen[eid] = true
-					entities = append(entities, eid)
-				}
-			}
-		}
-	}
-	if scanErr := errjoin.Join(it.Error(), it.Close()); scanErr != nil {
-		return nil, scanErr
-	}
-
-	return entities, nil
 }

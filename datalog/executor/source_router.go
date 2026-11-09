@@ -87,6 +87,18 @@ func (sr *SourceRouter) LookupAttribute(
 	return lookup.LookupAttribute(entity, attr)
 }
 
+// AttributeLookup implements EntityLookupMatcher with the default source's
+// own lookup of attr, so a reader of attr reaches the source with no routing
+// per entity. A default source the router does not hold, or one that cannot
+// look up, is an error, as it is for LookupAttribute.
+func (sr *SourceRouter) AttributeLookup(attr datalog.Keyword) (query.AttributeLookup, error) {
+	lookup, err := sr.LookupSource(datalog.SymDollar)
+	if err != nil {
+		return nil, err
+	}
+	return lookup.AttributeLookup(attr)
+}
+
 // LookupSource implements EntityLookupMatcher with the lookup of the source
 // named, which it gives as its own $, so the get-else, missing? and get-some
 // that name a source read it. A source the router does not hold, or one that

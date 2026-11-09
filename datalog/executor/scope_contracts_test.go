@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -28,7 +29,7 @@ func TestNotJoinBodyScanFailureIsTheQuerysError(t *testing.T) {
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{entity, value}, nil),
 			}
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(nil)
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(&planner.RealizedPlan{})
 			outer := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{datalog.NewIdentity("body-error")}})
 			groups, err := exec.Execute(NewContext(), q, []Relation{outer})
 			require.NoError(t, err, "the anti-join carries the body's failure on its result")
@@ -74,7 +75,7 @@ func TestFormFailureCompletesWithSuccessFalse(t *testing.T) {
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{entity, value}, nil),
 			}
-			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(nil)
+			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(&planner.RealizedPlan{})
 			_, err := exec.Execute(NewContext(), q, nil)
 			require.ErrorIs(t, err, errInjectedIterator, "the union route reads the branch whole, so its failure is Execute's")
 			reported := orClauseEvents(events)
@@ -112,7 +113,7 @@ func TestInvocationOfAHeldPredicateOverAStreamingGroupJoinsAtTheCollapse(t *test
 					windows++
 				}
 			}
-			exec := NewExecutorWithOptions(nil, nil, opts).queryExecutor(nil)
+			exec := NewExecutorWithOptions(nil, nil, opts).queryExecutor(&planner.RealizedPlan{})
 			pulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{a}, []Tuple{{page(1)}, {page(2)}, {page(6)}}).Iterator())
 			subject := NewStreamingRelationWithProperties([]query.Symbol{a}, pulls, exec.options, deduplicatedProperties([]query.Symbol{a}))
 			ctx := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{follows: held})
@@ -158,7 +159,7 @@ func TestSubqueryBodyScanFailureSurfacesWhenTheResultIsDriven(t *testing.T) {
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{item, value}, nil),
 			}
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(nil)
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(&planner.RealizedPlan{})
 			outer := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{datalog.NewIdentity("body-error")}})
 			groups, err := exec.Execute(NewContext(), q, []Relation{outer})
 			require.NoError(t, err, "the form's result carries the body's failure")

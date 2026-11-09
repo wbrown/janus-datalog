@@ -143,9 +143,6 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings query.Bin
 	if p.options.EnableAlgebraOptimizer {
 		options := p.options
 		options.MatchAnswersLookup = asked.answer
-		if len(initialBindings) > 0 {
-			options.EnableJoinProjectInsertion = false
-		}
 		optimized, err := optimizeViaAlgebra(q, bindings, options, handler, expl)
 		if err != nil {
 			return nil, fmt.Errorf("algebra optimization failed: %w", err)
@@ -271,8 +268,9 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings query.Bin
 	// Every form's scopes and every invocation's evaluation are planned here,
 	// as the executor frames and evaluates them, so a scope or a body no
 	// order runs is refused at PlanQuery, and the plan carries the
-	// evaluations for the executor to read.
-	evaluations, err := p.planFormScopes(realizedPhases, bindings, handler)
+	// evaluations, the frames and the windowed clauses for the executor to
+	// read.
+	plans, err := p.planClauses(realizedPhases, bindings, handler)
 	if err != nil {
 		return nil, err
 	}
@@ -280,8 +278,10 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings query.Bin
 	plan := &RealizedPlan{
 		Query:         q,
 		Phases:        realizedPhases,
-		Evaluations:   evaluations,
-		SourceAnswers: append(asked.asked, evaluationAnswers(evaluations)...),
+		Evaluations:   plans.evaluations,
+		Frames:        plans.frames,
+		Windows:       plans.windows,
+		SourceAnswers: append(asked.asked, evaluationAnswers(plans.evaluations)...),
 	}
 	if p.options.CollectRosters {
 		plan.Rosters = query.CollectRosters(q)

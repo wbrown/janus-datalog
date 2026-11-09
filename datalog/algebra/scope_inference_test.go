@@ -270,37 +270,6 @@ func TestDecorrelation_CompilesTheInnerQueryUnderItsCallsRuleSet(t *testing.T) {
 	require.Less(t, pattern, invocation, "the pattern binding ?k precedes the invocation requiring it, got %v", inner)
 }
 
-// TestDecompilerDeclaresPercentByRulesUse: a decompiled subquery whose body
-// passes % to a call of its own declares % and passes it, so the phase text
-// parses back.
-func TestDecompilerDeclaresPercentByRulesUse(t *testing.T) {
-	q, err := parser.ParseQuery(`[:find ?k ?m
-	  :in $ %
-	  :where [?x :t/k ?k]
-	         [(q [:find ?m :in $ % ?k :where [?k :t/n ?m]] $ % ?k) [[?m] ...]]]`)
-	require.NoError(t, err)
-
-	root, err := Compile(q, nil)
-	require.NoError(t, err)
-	k, m := datalog.NewSymbol("?k"), datalog.NewSymbol("?m")
-	project := &Node{Op: RuleProject, Data: &Project{Symbols: []query.Symbol{k, m}}, Children: []*Node{root}}
-	clauses, err := Decompile(project)
-	require.NoError(t, err)
-	require.Len(t, clauses, 1)
-	sp, ok := clauses[0].(*query.SubqueryPattern)
-	require.True(t, ok, "the projection decompiles to a subquery, got %s", clauses[0])
-	require.Contains(t, sp.Query.In, query.InputSpec(query.RulesInput{}))
-	require.True(t, passesRules(sp.Inputs), "the call passes %%, got %v", sp.Inputs)
-
-	phase := &query.Query{
-		Find:  []query.FindElement{query.FindVariable{Symbol: k}, query.FindVariable{Symbol: m}},
-		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}},
-		Where: clauses,
-	}
-	_, err = parser.ParseQuery(phase.String())
-	require.NoError(t, err)
-}
-
 // TestDecompile_UncorrelatedFallbackStatesItsHeader: a plain or-default whose
 // subquery is uncorrelated shares ?count with the find, and both branches
 // bind it, so its header is the flat [?count], the global fallback. It lowers

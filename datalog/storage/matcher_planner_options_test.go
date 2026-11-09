@@ -49,8 +49,8 @@ func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 func testDatabaseMatcherHonorsCustomPlannerOptions(t *testing.T, backend Backend) {
 	custom := DefaultPlannerOptions()
 	custom.EnableTrueStreaming = false // default true
-	custom.EnableScanSharing = true    // default false; dropped by Matcher() pre-fix
-	custom.EnableEntityPrefetch = true // default false; dropped by Matcher() pre-fix
+	custom.EnableScanSharing = false   // default true
+	custom.EnableEntityPrefetch = true // default false
 	// A numeric field as well as booleans: a dropped bool is caught only when
 	// the custom value differs from the default, while a numeric read back as
 	// zero is caught outright.
@@ -75,8 +75,8 @@ func testDatabaseMatcherHonorsCustomPlannerOptions(t *testing.T, backend Backend
 	opts := rel.Options()
 	require.False(t, opts.EnableTrueStreaming,
 		"custom EnableTrueStreaming=false must reach matcher-produced relations")
-	require.True(t, opts.EnableScanSharing,
-		"custom EnableScanSharing=true must reach matcher-produced relations")
+	require.False(t, opts.EnableScanSharing,
+		"custom EnableScanSharing=false must reach matcher-produced relations")
 	require.True(t, opts.EnableEntityPrefetch,
 		"custom EnableEntityPrefetch=true must reach matcher-produced relations")
 	require.Equal(t, 7, opts.MaxRuleIterations,

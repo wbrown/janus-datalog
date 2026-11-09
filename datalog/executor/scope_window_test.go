@@ -114,14 +114,13 @@ func TestKeyAnsweredByAnEarlierWindowIsProbedNotEvaluated(t *testing.T) {
 		OutputVars:   []query.Symbol{value},
 		Branches:     [][]query.Clause{{BranchPattern(entity, value, attr)}},
 	}}}
-	for _, mode := range OptimizerModes {
+	// On the legs without attribute-fetch fusion the branch's pattern is
+	// matched over each window's keys, the seeks the matcher counts.
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return !m.Fusion() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			matcher := &keyCountingMatcher{Database: factsDatabase(t, datoms)}
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			// Attribute-fetch fusion is off, so the branch's pattern is matched
-			// over each window's keys, the seeks the matcher counts.
-			opts.EnableAttributeFetchFusion = false
 			exec := NewExecutorWithOptions(matcher, nil, opts).QueryExecutor(nil)
 			subject := NewStreamingRelation([]query.Symbol{entity, n}, NewMaterializedRelation([]query.Symbol{entity, n}, tuples).Iterator())
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})

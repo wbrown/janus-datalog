@@ -9,7 +9,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -346,11 +345,7 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 			}
 
 			t.Run("WithoutPredicatePushdown", func(t *testing.T) {
-				// Create executor with default options
-				matcher := NewPatternMatcher(db.store)
-				exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-					EnableAlgebraOptimizer: mode.algebra,
-				})
+				exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
 
 				result, err := exec.Execute(q)
 				if err != nil {

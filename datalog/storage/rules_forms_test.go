@@ -155,40 +155,6 @@ func TestRules_PlanCacheServesEachRuleSetItsOwnPlan(t *testing.T) {
 	}
 }
 
-// Join-project insertion changes no result of a query over rules: the
-// closure whole, a group bound before the invocation with a pattern after
-// it, an aggregate over the invocation joined with a rule that computes a
-// value, and a negated invocation with a blank.
-func TestRules_JoinProjectInsertionKeepsResults(t *testing.T) {
-	const rules = `[[(reach ?a ?b) [?a :edge ?b]] [(reach ?a ?c) [?a :edge ?b] (reach ?b ?c)]
-	                [(lbl ?x ?l) [?x :type ?t] [(str ?t) ?l]]]`
-	cases := []struct {
-		name, text string
-		want       []string
-	}{
-		{"whole", `[:find ?x ?y :in $ % :where (reach ?x ?y)]`, chainClosure(4)},
-		{"bound before, pattern after", `[:find ?y :in $ % :where [?x :type :node] (reach ?x ?y) [?y :type ?t]]`, []string{"n2", "n3", "n4"}},
-		{"aggregate over the invocation and a computing rule", `[:find (count ?y) :in $ % :where (reach ?x ?y) (lbl ?y ?l) [?x :type :node]]`, []string{"6"}},
-		{"negated with a blank", `[:find ?x :in $ % :where [?x :type :node] (not (reach ?x _))]`, []string{"n4"}},
-	}
-	for _, mode := range optimizerModes {
-		for _, insertion := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/insertion=%v", mode.name, insertion), func(t *testing.T) {
-				opts := mode.plannerOptions()
-				opts.EnableJoinProjectInsertion = insertion
-				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})
-				g := writeGraph(t, d, chain(4))
-				rs := mustRuleSet(t, rules)
-				for _, c := range cases {
-					rel, err := d.Query(c.text, rs)
-					require.NoError(t, err, c.name)
-					require.ElementsMatch(t, c.want, g.tuples(t, rel), c.name)
-				}
-			})
-		}
-	}
-}
-
 // stratumTotals reads, from the stratum-complete events of a query, the
 // most iterations any stratum ran and the tuples every stratum derived.
 type stratumTotals struct {

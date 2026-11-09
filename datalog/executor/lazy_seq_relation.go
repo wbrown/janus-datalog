@@ -11,11 +11,15 @@ import (
 // Multiple Iterator() calls create independent cursors over the same
 // shared cells — the first consumer realizes cells by advancing the
 // underlying storage iterator, subsequent consumers read cached cells.
+//
+// shared marks a sequence the scan registry serves to several readers. A
+// cursor over it never closes its source; the registry does.
 type LazySeqRelation struct {
 	seq        *LazySeq
 	symbols    []query.Symbol
 	options    ExecutorOptions
 	properties RelationProperties
+	shared     bool
 }
 
 // NewLazySeqRelation creates a Relation backed by a LazySeq with the
@@ -59,6 +63,7 @@ func (r *LazySeqRelation) Rename(subst query.Substitution) (Relation, error) {
 		symbols:    symbols,
 		options:    r.options,
 		properties: r.properties.renameSymbols(subst),
+		shared:     r.shared,
 	}, nil
 }
 func (r *LazySeqRelation) Size() int                { return -1 } // streaming
@@ -81,7 +86,7 @@ func (r *LazySeqRelation) Get(i int) Tuple {
 // Iterator returns a new cursor over the shared LazySeq.
 // Each call creates an independent cursor starting from the head.
 func (r *LazySeqRelation) Iterator() Iterator {
-	return &lazySeqIterator{cur: r.seq}
+	return &lazySeqIterator{cur: r.seq, shared: r.shared}
 }
 
 func (r *LazySeqRelation) Materialize() Relation {
@@ -209,15 +214,18 @@ func (r *LazySeqRelation) Aggregate(findElements []query.FindElement) Relation {
 }
 
 // lazySeqIterator walks a LazySeq chain, producing one Tuple per Next() call.
-// The chain's end carries the shared source's read failure joined with its
-// close failure, which Error answers once the iterator reaches it. Close closes
-// the shared source when the iterator stopped before the end, and answers that
-// close's failure.
+// The chain's end carries the source's read failure joined with its close
+// failure, which Error answers once the iterator reaches it. Close closes the
+// source when the iterator stopped before the end and the sequence has one
+// owner, and answers that close's failure. A cursor over a shared sequence
+// closes nothing: the sequence's other readers read on, and the scan registry
+// closes its source.
 type lazySeqIterator struct {
 	cur     *LazySeq
 	current Tuple
 	done    bool
 	err     error
+	shared  bool
 }
 
 func (it *lazySeqIterator) Next() bool {
@@ -274,9 +282,10 @@ func (it *lazySeqIterator) RequiresCopy() bool { return false }
 
 func (it *lazySeqIterator) Close() error {
 	it.done = true
-	if it.cur != nil {
+	if it.cur != nil && !it.shared {
 		return it.cur.Close()
 	}
+	it.cur = nil
 	return nil
 }
 

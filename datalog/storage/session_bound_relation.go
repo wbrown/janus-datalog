@@ -39,44 +39,52 @@ func (c *queryCompletion) fire(drained int, err error) {
 	c.handler(annotations.TimedEvent(annotations.QueryComplete, c.start, data))
 }
 
-// sessionBoundRelation ties a query's ReadSession and its completion to its
-// result: the session closes, and the query is reported complete, when the
-// result's iterator is exhausted or closed, whichever comes first. Access
+// sessionBoundRelation ties a query's ReadSession, the scan registry its
+// context holds and its completion to its result: the registry's shared
+// scans close, the session closes, and the query is reported complete, when
+// the result's iterator is exhausted or closed, whichever comes first. Access
 // paths that bypass Iterator() — derived relations, formatted dumps — leave
 // release to the session's finalizer backstop and report no completion.
 type sessionBoundRelation struct {
 	executor.Relation
 	session ReadSession
+	// scans is the query's scan registry. A shared scan holds a storage
+	// iterator of session until the query ends, whether or not a reader read
+	// it to its end.
+	scans *executor.ScanRegistry
 	// completion is nil when the query runs with no handler registered.
 	completion *queryCompletion
 }
 
-func newSessionBoundRelation(inner executor.Relation, session ReadSession, completion *queryCompletion) executor.Relation {
-	return &sessionBoundRelation{Relation: inner, session: session, completion: completion}
+func newSessionBoundRelation(inner executor.Relation, session ReadSession, scans *executor.ScanRegistry, completion *queryCompletion) executor.Relation {
+	return &sessionBoundRelation{Relation: inner, session: session, scans: scans, completion: completion}
 }
 
 func (r *sessionBoundRelation) Iterator() executor.Iterator {
-	return &sessionBoundIterator{Iterator: r.Relation.Iterator(), session: r.session, completion: r.completion}
+	return &sessionBoundIterator{Iterator: r.Relation.Iterator(), session: r.session, scans: r.scans, completion: r.completion}
 }
 
-// Rename is the inner relation's rename bound to the same session and the
-// same completion, so the session closes and the query completes when the
-// renamed result's iterator is exhausted or closed.
+// Rename is the inner relation's rename bound to the same session, the same
+// registry and the same completion, so the shared scans and the session
+// close and the query completes when the renamed result's iterator is
+// exhausted or closed.
 func (r *sessionBoundRelation) Rename(subst query.Substitution) (executor.Relation, error) {
 	renamed, err := r.Relation.Rename(subst)
 	if err != nil {
 		return nil, err
 	}
-	return newSessionBoundRelation(renamed, r.session, r.completion), nil
+	return newSessionBoundRelation(renamed, r.session, r.scans, r.completion), nil
 }
 
-// sessionBoundIterator reports the query complete and releases the session
-// at exhaustion or Close, counting the tuples it yields on the way. Error
-// answers the inner iterator's failure, and Close answers the session's close
-// failure beside the inner iterator's, so each reaches the reader once.
+// sessionBoundIterator reports the query complete, closes the shared scans
+// and releases the session at exhaustion or Close, counting the tuples it
+// yields on the way. Error answers the inner iterator's failure, and Close
+// answers the registry's and the session's close failures beside the inner
+// iterator's, so each reaches the reader once.
 type sessionBoundIterator struct {
 	executor.Iterator
 	session    ReadSession
+	scans      *executor.ScanRegistry
 	completion *queryCompletion
 	drained    int
 	released   bool
@@ -84,7 +92,8 @@ type sessionBoundIterator struct {
 }
 
 // release ends the query once: the completion fires with the tuples drained
-// and the error the drain ended in, then the session closes.
+// and the error the drain ended in, the registry closes every shared scan's
+// source, then the session closes.
 func (it *sessionBoundIterator) release(err error) {
 	if it.released {
 		return
@@ -93,7 +102,7 @@ func (it *sessionBoundIterator) release(err error) {
 	if it.completion != nil {
 		it.completion.fire(it.drained, err)
 	}
-	it.releaseErr = it.session.Close()
+	it.releaseErr = errjoin.Join(it.scans.Close(), it.session.Close())
 }
 
 func (it *sessionBoundIterator) Next() bool {

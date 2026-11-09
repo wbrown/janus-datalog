@@ -307,8 +307,9 @@ T6):
 - The join holds its build index and nothing of its output.
 - `BindQueryInputs` holds its fold of several entries, since its reader reads
   the bound group twice.
-- A join result reports no size, so a later pattern or invocation sharing its
-  symbols takes the windowed route.
+- A join result reports no size. A later pattern or invocation sharing its
+  symbols takes the windowed route, since a join result is a group the scope
+  produces and the plan windows a clause over such a group.
 - A query whose final relation is a join result answers -1 for its size, as
   one ending in a scan does.
 

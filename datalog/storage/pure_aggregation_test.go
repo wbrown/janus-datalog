@@ -9,7 +9,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestStorageBackedPureAggregation tests that pure aggregations work against a
@@ -45,22 +44,8 @@ func TestStorageBackedPureAggregation(t *testing.T) {
 }
 
 func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizerMode) {
-	// Note: Matcher options must match executor options for proper propagation
-	execOpts := executor.ExecutorOptions{
-		EnableTrueStreaming:        true,
-		EnableSymmetricHashJoin:    false,
-		EnableStreamingJoins:       false,
-		EnableStreamingAggregation: true,
-	}
-	matcher := NewPatternMatcherWithOptions(db.Store(), execOpts)
-	opts := planner.PlannerOptions{
-		EnableAlgebraOptimizer:     mode.algebra,
-		EnableTrueStreaming:        execOpts.EnableTrueStreaming,
-		EnableSymmetricHashJoin:    execOpts.EnableSymmetricHashJoin,
-		EnableStreamingJoins:       execOpts.EnableStreamingJoins,
-		EnableStreamingAggregation: execOpts.EnableStreamingAggregation,
-	}
-	exec := executor.NewExecutorWithOptions(matcher, db, opts)
+	opts := mode.plannerOptions()
+	exec := executor.NewExecutorWithOptions(db.Matcher(), db, opts)
 
 	// Test 1: Non-aggregated query (should work)
 	t.Run("NonAggregated", func(t *testing.T) {

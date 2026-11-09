@@ -197,7 +197,7 @@ func testOptimizationMatrix(t *testing.T, mode optimizerMode) {
 // mode explicitly. Cross-mode result equivalence for the same query body
 // is covered by TestOptimizationMatrix.
 func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
-	for _, mode := range pinned(optimizerModes, true) {
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQueryRetainsScenarioKeyThroughFallbacks(t, mode)
 		})
@@ -336,17 +336,156 @@ func BenchmarkComplexQueryCheckpointPrefetch(b *testing.B) {
 	benchmarkComplexQueryCheckpoint(b, &options)
 }
 
+// BenchmarkComplexQueryCheckpointNoScanSharing is the checkpoint with
+// EnableScanSharing off, so each identical unbound scan a query makes reads
+// storage.
+func BenchmarkComplexQueryCheckpointNoScanSharing(b *testing.B) {
+	options := DefaultPlannerOptions()
+	options.EnableScanSharing = false
+	benchmarkComplexQueryCheckpoint(b, &options)
+}
+
+// BenchmarkComplexQueryCheckpointCacheOff is the checkpoint with the EA cache
+// disabled, so every lookup and validation the query makes resolves from
+// storage.
+func BenchmarkComplexQueryCheckpointCacheOff(b *testing.B) {
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:         b.TempDir(),
+		Schema:       optimizationMatrixSchema(),
+		DisableCache: true,
+	})
+	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, db.Close()) })
+
+	runComplexQueryCheckpoint(b, db)
+}
+
+// BenchmarkComplexQueryCheckpointAccount counts what one checkpoint query
+// reads, from the events the engine emits, and reports each count per query:
+// the scans of the task-status pattern and the keys they take from the index,
+// every scan and its keys, the (entity, attribute) lookups and those the cache
+// answered without reading storage, the value-bound candidates the cache
+// validated, the cache entries rebuilt, and the scans the scan-sharing
+// matcher answered from a shared result and those it registered as a new
+// one. Its handler costs time, so its ns/op is not the checkpoint's;
+// BenchmarkComplexQueryCheckpoint times it.
+func BenchmarkComplexQueryCheckpointAccount(b *testing.B) {
+	benchmarkComplexQueryCheckpointAccount(b, nil)
+}
+
+// BenchmarkComplexQueryCheckpointAccountNoScanSharing is the account with
+// EnableScanSharing off.
+func BenchmarkComplexQueryCheckpointAccountNoScanSharing(b *testing.B) {
+	options := DefaultPlannerOptions()
+	options.EnableScanSharing = false
+	benchmarkComplexQueryCheckpointAccount(b, &options)
+}
+
+func benchmarkComplexQueryCheckpointAccount(b *testing.B, options *planner.PlannerOptions) {
+	const (
+		numScenarios     = 75
+		tasksPerScenario = 100
+		resultLimit      = 25
+	)
+	var statusScans, statusKeys, scans, scanKeys atomic.Int64
+	var lookups, lookupHits, candidatesFromCache, rebuilds, sharedScans, sharingMisses atomic.Int64
+	counters := []*atomic.Int64{&statusScans, &statusKeys, &scans, &scanKeys, &lookups, &lookupHits, &candidatesFromCache, &rebuilds, &sharedScans, &sharingMisses}
+	status := datalog.NewKeyword(":task/status")
+
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           b.TempDir(),
+		Schema:         optimizationMatrixSchema(),
+		PlannerOptions: options,
+		AnnotationHandler: func(event annotations.Event) {
+			switch event.Name {
+			case annotations.ScanSharingCacheHit:
+				sharedScans.Add(1)
+			case annotations.ScanSharingCacheMiss:
+				sharingMisses.Add(1)
+			case annotations.StorageScanComplete:
+				scanned := int64(event.Data[annotations.KeyDatomsScanned].(int))
+				scans.Add(1)
+				scanKeys.Add(scanned)
+				if pattern, ok := event.Data[annotations.KeyPattern].(*query.DataPattern); ok {
+					if attr, ok := pattern.GetA().(query.Constant); ok && attr.Value == status {
+						statusScans.Add(1)
+						statusKeys.Add(scanned)
+					}
+				}
+			case annotations.StorageResolveComplete:
+				if _, looked := event.Data[annotations.KeyEntity]; !looked {
+					return
+				}
+				lookups.Add(1)
+				_, read := event.Data[annotations.KeyIndex]
+				if !read && event.Data[annotations.KeyDatomsScanned].(int) == 0 {
+					lookupHits.Add(1)
+				}
+			case annotations.VValidationCacheResolved:
+				candidatesFromCache.Add(1)
+			case annotations.CacheRebuild:
+				rebuilds.Add(1)
+			}
+		},
+	})
+	require.NoError(b, err)
+	defer db.Close()
+
+	populateOptimizationMatrix(b, db, numScenarios, tasksPerScenario)
+	queryText := optimizationMatrixQuery(resultLimit)
+
+	// The warm query fills the cache; the counts are the steady state after it.
+	warm, err := db.Query(queryText)
+	require.NoError(b, err)
+	warmTuples, err := executor.CollectTuples(warm, nil)
+	require.NoError(b, err)
+	require.Len(b, warmTuples, resultLimit)
+	for _, counter := range counters {
+		counter.Store(0)
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		result, err := db.Query(queryText)
+		if err != nil {
+			b.Fatal(err)
+		}
+		tuples, err := executor.CollectTuples(result, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(tuples) != resultLimit {
+			b.Fatalf("got %d tuples, want %d", len(tuples), resultLimit)
+		}
+	}
+	perQuery := func(counter *atomic.Int64) float64 { return float64(counter.Load()) / float64(b.N) }
+	b.ReportMetric(perQuery(&statusScans), "status-scans/op")
+	b.ReportMetric(perQuery(&statusKeys), "status-keys/op")
+	b.ReportMetric(perQuery(&scans), "scans/op")
+	b.ReportMetric(perQuery(&scanKeys), "scan-keys/op")
+	b.ReportMetric(perQuery(&lookups), "lookups/op")
+	b.ReportMetric(perQuery(&lookupHits), "lookup-hits/op")
+	b.ReportMetric(perQuery(&candidatesFromCache), "candidates-from-cache/op")
+	b.ReportMetric(perQuery(&rebuilds), "cache-rebuilds/op")
+	b.ReportMetric(perQuery(&sharedScans), "shared-scans/op")
+	b.ReportMetric(perQuery(&sharingMisses), "sharing-misses/op")
+}
+
 // TestComplexQuerySubqueryExecutionCounts pins the algebra path's plan
 // structure. Every counter asserted below is an optimizer artifact: one
 // global execution per subquery body (4 total), or-fallback cache builds,
 // fused constraints, replaced outer groups. The baseline path executes
 // correlated subqueries once per outer combination by definition (10
 // scenarios × 4 subquery bodies = 40 executions), so the counts cannot hold
-// there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its mode
-// explicitly. Cross-mode result equivalence for the same query body is
-// covered by TestOptimizationMatrix.
+// there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its legs.
+// The fusions it lists need fusion on: with fusion off the scenario's title
+// and created-at patterns are read through the window and build branches of
+// their own. They need prefetch off: under prefetch the fallback builds a
+// window above the threshold from the EA cache and fuses nothing for it.
+// Cross-mode result equivalence for the same query body is covered by
+// TestOptimizationMatrix.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
-	for _, mode := range pinned(optimizerModes, true) {
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra && m.fusion && !m.prefetch }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQuerySubqueryExecutionCounts(t, mode)
 		})

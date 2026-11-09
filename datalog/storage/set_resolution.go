@@ -310,6 +310,11 @@ func (m *PatternMatcher) checkSetMembership(bound ScanBound, report *scanReport)
 			return false, err
 		}
 
+		// A datom after the view's as-of target is not read.
+		if m.shouldFilterTx(datom.Tx) {
+			continue
+		}
+
 		elemID := datom.Tx
 
 		// Track highest Tx for each operation type

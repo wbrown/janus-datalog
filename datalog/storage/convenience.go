@@ -92,7 +92,9 @@ func (d *Database) queryUnderPlannerOptions(
 
 	// One read session per query: every storage read — eager during
 	// execution or lazy during result consumption — observes one snapshot.
-	// The session closes when the result is exhausted or closed.
+	// The session closes when the result is exhausted or closed, after the
+	// shared scans the query's registry holds, whose iterators are the
+	// session's.
 	matcher, session, err := d.sessionMatcher(planOpts)
 	if err != nil {
 		return refused(q.String(), err)
@@ -117,16 +119,17 @@ func (d *Database) queryUnderPlannerOptions(
 		return refused(q.String(), err)
 	}
 
-	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(opts.ctx), q, inputRelations)
+	ctx := executor.NewContext().WithRules(rules).WithCancellation(opts.ctx)
+	result, err := exec.ExecuteWithRelations(ctx, q, inputRelations)
 	if err != nil {
 		err = fmt.Errorf("query execution failed: %w", err)
-		if closeErr := session.Close(); closeErr != nil {
+		if closeErr := errjoin.Join(ctx.ScanRegistry().Close(), session.Close()); closeErr != nil {
 			err = errjoin.Join(err, closeErr)
 		}
 		return nil, nil, err
 	}
 
-	return q, newSessionBoundRelation(result, session, completion), nil
+	return q, newSessionBoundRelation(result, session, ctx.ScanRegistry(), completion), nil
 }
 
 // sessionMatcher mints the default-source matcher with a fresh read session

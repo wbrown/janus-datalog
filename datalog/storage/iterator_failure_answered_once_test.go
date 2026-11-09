@@ -118,38 +118,22 @@ func (s scanCloseFailingIterator) Close() error {
 // a scan read to its end, and a scan its reader stops reading before the end.
 func TestAScanSharedRelationAnswersEachFailureOfItsScanOnce(t *testing.T) {
 	score := datalog.NewKeyword(":item/score")
-	var failing, failRead atomic.Bool
-	var scans atomic.Int32
-	options := DefaultPlannerOptions()
-	options.EnableScanSharing = true
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Store:          scanCloseFailingStore{Store: NewBadgerEmulatorStore(nil), failing: &failing, failRead: &failRead, scans: &scans},
-		PlannerOptions: &options,
-	})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(datalog.NewIdentity("scan-shared:first"), score, int64(3)))
-	require.NoError(t, tx.Add(datalog.NewIdentity("scan-shared:second"), score, int64(5)))
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
 	all := `[:find ?e ?v :where [?e :item/score ?v]]`
 	first := `[:find ?e ?v :where [?e :item/score ?v] :limit 1]`
 	readers := []struct {
 		name   string
-		answer func(t *testing.T, text string) error
+		answer func(t *testing.T, db *Database, text string) error
 	}{
-		{"collected tuples", func(t *testing.T, text string) error {
+		{"collected tuples", func(t *testing.T, db *Database, text string) error {
 			_, err := executor.CollectTuples(db.Query(text))
 			return err
 		}},
-		{"ForEach", func(t *testing.T, text string) error {
+		{"ForEach", func(t *testing.T, db *Database, text string) error {
 			rel, err := db.Query(text)
 			require.NoError(t, err)
 			return executor.ForEach(rel, func(executor.Tuple) error { return nil })
 		}},
-		{"QueryInto", func(t *testing.T, text string) error {
+		{"QueryInto", func(t *testing.T, db *Database, text string) error {
 			var answers []struct {
 				E datalog.Identity `datalog:"?e"`
 				V int64            `datalog:"?v"`
@@ -166,22 +150,41 @@ func TestAScanSharedRelationAnswersEachFailureOfItsScanOnce(t *testing.T) {
 		{"a scan read to its end", all, false},
 		{"a scan its reader stops reading before the end", first, false},
 	}
-	for _, c := range cases {
-		for _, reader := range readers {
-			t.Run(c.name+"/"+reader.name, func(t *testing.T) {
-				failRead.Store(c.failRead)
-				scans.Store(0)
-				failing.Store(true)
-				err := reader.answer(t, c.text)
-				failing.Store(false)
-				require.NotZero(t, scans.Load(), "the query opens a scan while failing holds")
-				require.ErrorIs(t, err, errStoreClose, "the scan's close failure reaches the caller")
-				require.Equal(t, int(scans.Load()), occurrences(err, errStoreClose), "each failed close is answered once: %v", err)
-				if c.failRead {
-					require.ErrorIs(t, err, errStoreScan, "the scan's read failure reaches the caller")
-					require.Equal(t, int(scans.Load()), occurrences(err, errStoreScan), "each failed read is answered once: %v", err)
-				}
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.sharing }) {
+		t.Run(mode.name, func(t *testing.T) {
+			var failing, failRead atomic.Bool
+			var scans atomic.Int32
+			options := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Store:          scanCloseFailingStore{Store: NewBadgerEmulatorStore(nil), failing: &failing, failRead: &failRead, scans: &scans},
+				PlannerOptions: &options,
 			})
-		}
+			require.NoError(t, err)
+			defer func() { require.NoError(t, db.Close()) }()
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(datalog.NewIdentity("scan-shared:first"), score, int64(3)))
+			require.NoError(t, tx.Add(datalog.NewIdentity("scan-shared:second"), score, int64(5)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			for _, c := range cases {
+				for _, reader := range readers {
+					t.Run(c.name+"/"+reader.name, func(t *testing.T) {
+						failRead.Store(c.failRead)
+						scans.Store(0)
+						failing.Store(true)
+						err := reader.answer(t, db, c.text)
+						failing.Store(false)
+						require.NotZero(t, scans.Load(), "the query opens a scan while failing holds")
+						require.ErrorIs(t, err, errStoreClose, "the scan's close failure reaches the caller")
+						require.Equal(t, int(scans.Load()), occurrences(err, errStoreClose), "each failed close is answered once: %v", err)
+						if c.failRead {
+							require.ErrorIs(t, err, errStoreScan, "the scan's read failure reaches the caller")
+							require.Equal(t, int(scans.Load()), occurrences(err, errStoreScan), "each failed read is answered once: %v", err)
+						}
+					})
+				}
+			}
+		})
 	}
 }

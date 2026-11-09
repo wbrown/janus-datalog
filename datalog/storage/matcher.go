@@ -688,20 +688,38 @@ func (m *PatternMatcher) LookupSource(_ query.Symbol) (executor.EntityLookupMatc
 // current members as one value, in no fixed order. A cardinality-vector
 // attribute answers its vector, typed by the schema's value type, once the
 // vector has been written, an emptied vector included.
-func (m *PatternMatcher) LookupAttribute(
+func (m *PatternMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool, error) {
+	var def *schema.AttributeDefinition
+	if m.schema != nil {
+		def = m.schema.GetAttribute(attr)
+	}
+	return m.lookupAttribute(entity, attr, def)
+}
+
+// AttributeLookup returns the lookup of attr, which answers at each entity
+// what LookupAttribute answers for that entity and attr.
+func (m *PatternMatcher) AttributeLookup(attr datalog.Keyword) (query.AttributeLookup, error) {
+	var def *schema.AttributeDefinition
+	if m.schema != nil {
+		def = m.schema.GetAttribute(attr)
+	}
+	return func(entity datalog.Identity) (interface{}, bool, error) {
+		return m.lookupAttribute(entity, attr, def)
+	}, nil
+}
+
+// lookupAttribute answers entity's value of attr as LookupAttribute does,
+// resolved as def decides: attr's definition, nil when the schema declares
+// none, which gives its cardinality, its uniqueness and its value type.
+func (m *PatternMatcher) lookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,
+	def *schema.AttributeDefinition,
 ) (value interface{}, found bool, lookupErr error) {
 	if entity == nil {
 		return nil, false, nil
 	}
 
-	// The attribute's definition, nil when the schema declares none, decides how
-	// it resolves: its cardinality, its uniqueness and its value type.
-	var def *schema.AttributeDefinition
-	if m.schema != nil {
-		def = m.schema.GetAttribute(attr)
-	}
 	card := resolvedCardinality(def)
 	var valueType datalog.Keyword
 	if def != nil {

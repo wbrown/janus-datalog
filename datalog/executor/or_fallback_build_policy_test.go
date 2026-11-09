@@ -28,82 +28,78 @@ func TestAFallbackReportsTheNarrowingOfItsPatternBranchToEachWindowsKeys(t *test
 		Build()
 	require.NoError(t, err)
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, algebra := range []bool{true, false} {
-		for _, prefetch := range []bool{false, true} {
-			t.Run(fmt.Sprintf("algebra=%v/prefetch=%v", algebra, prefetch), func(t *testing.T) {
-				var mu sync.Mutex
-				var events []annotations.Event
-				opts := storage.DefaultPlannerOptions()
-				opts.EnableAlgebraOptimizer = algebra
-				opts.EnableEntityPrefetch = prefetch
-				opts.ScopeWindowCap = 128
-				d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(func(e annotations.Event) {
-					switch e.Name {
-					case annotations.ScopeWindow, annotations.ScopeBranchBuild, annotations.PrefetchTrigger:
-						if e.Data[annotations.KeyForm] != "or-default-join" {
-							return
-						}
-					case annotations.OrFallbackBranchNarrowed:
-					default:
+	for _, mode := range executor.OptimizerModes {
+		t.Run(mode.Name(), func(t *testing.T) {
+			var mu sync.Mutex
+			var events []annotations.Event
+			opts := mode.PlannerOptions()
+			opts.ScopeWindowCap = 128
+			d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(func(e annotations.Event) {
+				switch e.Name {
+				case annotations.ScopeWindow, annotations.ScopeBranchBuild, annotations.PrefetchTrigger:
+					if e.Data[annotations.KeyForm] != "or-default-join" {
 						return
 					}
-					mu.Lock()
-					defer mu.Unlock()
-					events = append(events, e)
-				}))
-				require.NoError(t, err)
-				defer func() { require.NoError(t, d.Close()) }()
-				tx := d.NewTransaction()
-				var want [][]interface{}
-				for i := 1; i <= subjectSize; i++ {
-					e := datalog.NewIdentity(fmt.Sprintf("fallback-narrowing:e%d", i))
-					require.NoError(t, tx.Add(e, tn, int64(i)))
-					if i%3 == 0 {
-						want = append(want, []interface{}{e, int64(0)})
-						continue
-					}
-					require.NoError(t, tx.Add(e, ta, int64(i)))
-					want = append(want, []interface{}{e, int64(i)})
+				case annotations.OrFallbackBranchNarrowed:
+				default:
+					return
 				}
-				_, err = tx.Commit()
-				require.NoError(t, err)
-
-				got, err := executor.CollectTuples(d.Query(text))
-				require.NoError(t, err)
-				require.ElementsMatch(t, want, got)
-
 				mu.Lock()
 				defer mu.Unlock()
-				windowKeys := -1
-				var windows, narrowings, groundBuilds, triggers int
-				for _, e := range events {
-					switch e.Name {
-					case annotations.ScopeWindow:
-						windows++
-						windowKeys = e.Data["distinct_keys"].(int)
-					case annotations.PrefetchTrigger:
-						triggers++
-					case annotations.ScopeBranchBuild:
-						if e.Data["branch"] == 1 {
-							groundBuilds++
-						}
-					case annotations.OrFallbackBranchNarrowed:
-						narrowings++
-						require.Equal(t, 0, e.Data["branch"], "the ground branch reports no narrowing")
-						require.Equal(t, true, e.Data["narrowed"])
-						require.Equal(t, windowKeys, e.Data["join_keys"], "the pattern branch is narrowed to its window's keys")
+				events = append(events, e)
+			}))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, d.Close()) }()
+			tx := d.NewTransaction()
+			var want [][]interface{}
+			for i := 1; i <= subjectSize; i++ {
+				e := datalog.NewIdentity(fmt.Sprintf("fallback-narrowing:e%d", i))
+				require.NoError(t, tx.Add(e, tn, int64(i)))
+				if i%3 == 0 {
+					want = append(want, []interface{}{e, int64(0)})
+					continue
+				}
+				require.NoError(t, tx.Add(e, ta, int64(i)))
+				want = append(want, []interface{}{e, int64(i)})
+			}
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			got, err := executor.CollectTuples(d.Query(text))
+			require.NoError(t, err)
+			require.ElementsMatch(t, want, got)
+
+			mu.Lock()
+			defer mu.Unlock()
+			windowKeys := -1
+			var windows, narrowings, groundBuilds, triggers int
+			for _, e := range events {
+				switch e.Name {
+				case annotations.ScopeWindow:
+					windows++
+					windowKeys = e.Data["distinct_keys"].(int)
+				case annotations.PrefetchTrigger:
+					triggers++
+				case annotations.ScopeBranchBuild:
+					if e.Data["branch"] == 1 {
+						groundBuilds++
 					}
+				case annotations.OrFallbackBranchNarrowed:
+					narrowings++
+					require.Equal(t, 0, e.Data["branch"], "the ground branch reports no narrowing")
+					require.Equal(t, true, e.Data["narrowed"])
+					require.Equal(t, windowKeys, e.Data["join_keys"], "the pattern branch is narrowed to its window's keys")
 				}
-				require.Positive(t, windows, "the subject is read in windows")
-				require.Equal(t, windows, narrowings, "each window's build of the pattern branch reports its narrowing")
-				require.Positive(t, groundBuilds, "the ground branch is built, so its silence is a report withheld")
-				if prefetch {
-					require.Positive(t, triggers, "a window above the threshold is prefetched, so a build is served warm")
-				} else {
-					require.Zero(t, triggers, "nothing is prefetched with the option off")
-				}
-			})
-		}
+			}
+			require.Positive(t, windows, "the subject is read in windows")
+			require.Equal(t, windows, narrowings, "each window's build of the pattern branch reports its narrowing")
+			require.Positive(t, groundBuilds, "the ground branch is built, so its silence is a report withheld")
+			if mode.Prefetch() {
+				require.Positive(t, triggers, "a window above the threshold is prefetched, so a build is served warm")
+			} else {
+				require.Zero(t, triggers, "nothing is prefetched with the option off")
+			}
+		})
 	}
 }
 

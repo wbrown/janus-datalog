@@ -10,8 +10,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-func TestOptimizeViaAlgebraReturnsNestedDatalogWithoutMutatingInput(t *testing.T) {
-	entity := datalog.NewSymbol("?entity")
+// The bridge answers a new query: its input is unchanged, the find, the
+// inputs, the order and the limit are carried over, every clause is carried,
+// and the bridge reports its completion.
+func TestOptimizeViaAlgebraReturnsANewQueryWithoutMutatingItsInput(t *testing.T) {
 	parsed, err := parser.ParseQuery(
 		`[:find ?entity ?payload
 		  :where [?entity :item/score ?score]
@@ -29,11 +31,7 @@ func TestOptimizeViaAlgebraReturnsNestedDatalogWithoutMutatingInput(t *testing.T
 	}
 	optimized, err := optimizeViaAlgebra(
 		parsed, query.Bindings{},
-
-		PlannerOptions{
-			EnableAlgebraOptimizer:     true,
-			EnableJoinProjectInsertion: true,
-		},
+		PlannerOptions{EnableAlgebraOptimizer: true},
 		handler,
 		nil)
 
@@ -44,20 +42,7 @@ func TestOptimizeViaAlgebraReturnsNestedDatalogWithoutMutatingInput(t *testing.T
 	require.Equal(t, parsed.In, optimized.In)
 	require.Equal(t, parsed.OrderBy, optimized.OrderBy)
 	require.Equal(t, parsed.Limit, optimized.Limit)
-
-	require.Len(t, optimized.Where, 2)
-	projected, ok := optimized.Where[0].(*query.SubqueryPattern)
-	require.True(t, ok)
-	require.Equal(t,
-		[]query.FindElement{query.FindVariable{Symbol: entity}},
-		projected.Query.Find,
-	)
-	require.Equal(t,
-		query.RelationBinding{Variables: []query.Symbol{entity}},
-		projected.Binding,
-	)
-	_, ok = optimized.Where[1].(*query.DataPattern)
-	require.True(t, ok)
+	require.Len(t, optimized.Where, 3, "the three clauses are carried")
 	require.Contains(t, eventNames, "algebra/bridge-complete")
 	require.NotContains(t, eventNames, "algebra/emitted")
 }
@@ -83,50 +68,6 @@ func TestClauseBasedPlannerPlansOptimizedDatalog(t *testing.T) {
 	require.NoError(t, plan.Validate())
 	require.Contains(t, names, "algebra/bridge-complete")
 	require.NotContains(t, names, "algebra/emitted")
-}
-
-func TestClauseBasedPlannerLowersJoinProjectIntoNestedDatalog(t *testing.T) {
-	entity := datalog.NewSymbol("?entity")
-	payload := datalog.NewSymbol("?payload")
-	parsed, err := parser.ParseQuery(
-		`[:find ?entity ?payload
-		  :where [?entity :item/score ?score]
-		         [(> ?score 90)]
-		         [?entity :item/payload ?payload]]`,
-	)
-	require.NoError(t, err)
-
-	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{
-		EnableAlgebraOptimizer:     true,
-		EnableJoinProjectInsertion: true,
-	}).
-		Plan(parsed, query.Bindings{}, nil)
-	require.NoError(t, err)
-	require.NoError(t, plan.Validate())
-	require.Len(t, plan.Phases, 1)
-	require.Equal(t, []query.Symbol{entity, payload}, plan.Phases[0].Provides)
-	require.Empty(t, plan.Phases[0].Keep)
-	require.Len(t, plan.Phases[0].Query.Where, 2)
-	var projected *query.SubqueryPattern
-	var hasPattern bool
-	for _, clause := range plan.Phases[0].Query.Where {
-		switch typed := clause.(type) {
-		case *query.SubqueryPattern:
-			projected = typed
-		case *query.DataPattern:
-			hasPattern = true
-		}
-	}
-	require.NotNil(t, projected, "logical Project must remain a nested Datalog query")
-	require.Equal(t,
-		[]query.FindElement{query.FindVariable{Symbol: entity}},
-		projected.Query.Find,
-	)
-	require.Equal(t,
-		query.RelationBinding{Variables: []query.Symbol{entity}},
-		projected.Binding,
-	)
-	require.True(t, hasPattern)
 }
 
 func TestClauseBasedPlannerKeepsInputSymbolsLiveAcrossJoinPlanning(t *testing.T) {

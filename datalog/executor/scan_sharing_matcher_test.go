@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -40,33 +41,103 @@ func (m *fixedMatcher) Match(q *query.Query, bindings Relations) (Relation, erro
 	), nil
 }
 
-// TestScanSharingMatcher_UnboundScanShared verifies that calling Match()
-// twice with the same unbound pattern only calls the inner matcher once.
+// registryListing is a phase reading each of sites unbound, and a registry
+// listing the sites its plan reads each shared scan at.
+func registryListing(sites ...*query.DataPattern) (*query.Query, *ScanRegistry) {
+	phase := &query.Query{}
+	plan := &planner.RealizedPlan{Phases: []planner.RealizedPhase{{Query: phase}}}
+	for _, site := range sites {
+		phase.Where = append(phase.Where, site)
+		plan.Phases[0].Patterns = append(plan.Phases[0].Patterns, planner.PatternPlan{Pattern: site})
+	}
+	registry := NewScanRegistry()
+	registry.expect(sharedScanSites(plan))
+	return phase, registry
+}
+
+// The plan reads one status pattern unbound at two sites, so the registry
+// serves the two sites one scan and holds its head until both have read it.
+// A match after that, at either site, is a new scan. A site whose entity a
+// group binds is no site of the shared scan, and its match goes to the inner
+// matcher with its bindings.
+func TestTheRegistryReleasesAScansHeadWhenItsLastSiteReads(t *testing.T) {
+	status := func(entity string) *query.DataPattern {
+		return &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol(entity)},
+			query.Constant{Value: datalog.NewKeyword(":task/status")},
+			query.Constant{Value: datalog.NewKeyword(":status/complete")},
+		}}
+	}
+	first, second, bound := status("?t"), status("?u"), status("?w")
+	phase := &query.Query{
+		Find:  []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?t")}},
+		Where: []query.Clause{first, second, bound},
+	}
+	plan := &planner.RealizedPlan{Phases: []planner.RealizedPhase{{
+		Query: phase,
+		Patterns: []planner.PatternPlan{
+			{Pattern: first},
+			{Pattern: second},
+			{Pattern: bound, BoundMask: planner.BoundMask{E: true}},
+		},
+	}}}
+	inner := &countingMatcher{inner: &fixedMatcher{tuples: []Tuple{{"t1"}, {"t2"}}, symbols: first.Symbols()}}
+	registry := NewScanRegistry()
+	registry.expect(sharedScanSites(plan))
+	matcher := NewScanSharingMatcher(inner, registry, nil)
+	read := func(site *query.DataPattern, bindings Relations) [][]interface{} {
+		rel, err := matcher.Match(patternMatchQuery(phase, site), bindings)
+		require.NoError(t, err)
+		tuples, err := CollectTuples(rel, nil)
+		require.NoError(t, err)
+		return tuples
+	}
+	want := [][]interface{}{{"t1"}, {"t2"}}
+
+	require.Equal(t, want, read(first, nil), "the first site reads the scan")
+	require.Equal(t, want, read(second, nil), "the second site reads the scan")
+	require.Equal(t, int32(1), atomic.LoadInt32(&inner.callCount), "the two sites read one scan")
+	shared := registry.lookup(FingerprintScan(patternMatchQuery(phase, first), first))
+	require.NotNil(t, shared, "the registry holds the shared scan")
+	require.Nil(t, shared.Seq, "the registry holds no head once every site has read")
+
+	require.Equal(t, want, read(first, nil), "a site reading again reads the whole scan")
+	require.Equal(t, int32(2), atomic.LoadInt32(&inner.callCount), "a match after the release is a new scan")
+
+	group := Relations{NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?w")}, []Tuple{{"t1"}})}
+	read(bound, group)
+	require.Equal(t, int32(3), atomic.LoadInt32(&inner.callCount), "a site a group binds goes to the inner matcher")
+}
+
+// TestScanSharingMatcher_UnboundScanShared verifies that when the plan reads
+// one unbound pattern at two sites, the inner matcher is called once.
 func TestScanSharingMatcher_UnboundScanShared(t *testing.T) {
 	inner := &countingMatcher{inner: &fixedMatcher{
 		tuples:  []Tuple{{"e1", "s1"}, {"e2", "s2"}, {"e3", "s3"}},
 		symbols: []query.Symbol{datalog.NewSymbol("?t"), datalog.NewSymbol("?s")},
 	}}
-	reg := NewScanRegistry()
+	root := func() *query.DataPattern {
+		return &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?t")},
+				query.Constant{Value: datalog.NewKeyword(":task/root")},
+				query.Variable{Name: datalog.NewSymbol("?s")},
+			},
+		}
+	}
+	first, second := root(), root()
+	phase, reg := registryListing(first, second)
 	matcher := NewScanSharingMatcher(inner, reg, nil)
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?t")},
-			query.Constant{Value: datalog.NewKeyword(":task/root")},
-			query.Variable{Name: datalog.NewSymbol("?s")},
-		},
-	}
-
-	// First call — should hit inner matcher
-	rel1, err := matcher.Match(query.PatternQuery(pattern), nil)
+	// First site — should hit inner matcher
+	rel1, err := matcher.Match(patternMatchQuery(phase, first), nil)
 	require.NoError(t, err)
 	tuples1, err := CollectTuples(rel1, nil)
 	require.NoError(t, err)
 	assert.Len(t, tuples1, 3)
 
-	// Second call — should hit registry, not inner matcher
-	rel2, err := matcher.Match(query.PatternQuery(pattern), nil)
+	// Second site — should hit registry, not inner matcher
+	rel2, err := matcher.Match(patternMatchQuery(phase, second), nil)
 	require.NoError(t, err)
 	tuples2, err := CollectTuples(rel2, nil)
 	require.NoError(t, err)
@@ -76,34 +147,98 @@ func TestScanSharingMatcher_UnboundScanShared(t *testing.T) {
 		"inner matcher should be called exactly once")
 }
 
-// TestScanSharingMatcher_BoundScanNotShared verifies that Match() calls
-// with non-nil bindings always go to the inner matcher (no caching).
+// TestScanSharingMatcher_BoundScanNotShared verifies that sites whose entity
+// the plan binds are not shared: each match goes to the inner matcher with
+// its bindings.
 func TestScanSharingMatcher_BoundScanNotShared(t *testing.T) {
 	inner := &countingMatcher{inner: &fixedMatcher{
 		tuples:  []Tuple{{"e1"}},
 		symbols: []query.Symbol{datalog.NewSymbol("?t")},
 	}}
-	reg := NewScanRegistry()
-	matcher := NewScanSharingMatcher(inner, reg, nil)
-
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?t")},
-			query.Constant{Value: datalog.NewKeyword(":task/root")},
-			query.Variable{Name: datalog.NewSymbol("?s")},
-		},
+	root := func() *query.DataPattern {
+		return &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?t")},
+				query.Constant{Value: datalog.NewKeyword(":task/root")},
+				query.Variable{Name: datalog.NewSymbol("?s")},
+			},
+		}
 	}
+	first, second := root(), root()
+	phase := &query.Query{Where: []query.Clause{first, second}}
+	plan := &planner.RealizedPlan{Phases: []planner.RealizedPhase{{
+		Query: phase,
+		Patterns: []planner.PatternPlan{
+			{Pattern: first, BoundMask: planner.BoundMask{E: true}},
+			{Pattern: second, BoundMask: planner.BoundMask{E: true}},
+		},
+	}}}
+	reg := NewScanRegistry()
+	reg.expect(sharedScanSites(plan))
+	matcher := NewScanSharingMatcher(inner, reg, nil)
 
 	bindings := Relations{NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?t")},
 		[]Tuple{{"e1"}},
 	)}
 
-	_, _ = matcher.Match(query.PatternQuery(pattern), bindings)
-	_, _ = matcher.Match(query.PatternQuery(pattern), bindings)
+	for _, site := range []*query.DataPattern{first, second} {
+		rel, err := matcher.Match(patternMatchQuery(phase, site), bindings)
+		require.NoError(t, err)
+		tuples, err := CollectTuples(rel, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"e1"}}, tuples)
+	}
 
 	assert.Equal(t, int32(2), atomic.LoadInt32(&inner.callCount),
 		"bound scans should not be shared — inner called every time")
+}
+
+// bindingsRecordingMatcher records the bindings each Match call passes it.
+type bindingsRecordingMatcher struct {
+	inner PatternMatcher
+	seen  []Relations
+}
+
+func (m *bindingsRecordingMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	m.seen = append(m.seen, bindings)
+	return m.inner.Match(q, bindings)
+}
+
+// A site the plan reads unbound is shared though its match carries a group of
+// another scope's variable, which binds none of the pattern's variables. The
+// inner matcher is asked for the shared scan with no bindings. A subquery body
+// run over a window of another scope's variable matches its leading pattern
+// so.
+func TestAScanWhoseBindingsBindNoneOfItsVariablesIsShared(t *testing.T) {
+	status := func() *query.DataPattern {
+		return &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?t")},
+			query.Constant{Value: datalog.NewKeyword(":task/status")},
+			query.Constant{Value: datalog.NewKeyword(":status/complete")},
+		}}
+	}
+	sites := []*query.DataPattern{status(), status(), status()}
+	phase, registry := registryListing(sites...)
+	inner := &bindingsRecordingMatcher{inner: &fixedMatcher{
+		tuples:  []Tuple{{"t1"}, {"t2"}},
+		symbols: sites[0].Symbols(),
+	}}
+	matcher := NewScanSharingMatcher(inner, registry, nil)
+	scenarios := Relations{NewMaterializedRelation(
+		[]query.Symbol{datalog.NewSymbol("?s")},
+		[]Tuple{{"s1"}, {"s2"}},
+	)}
+
+	for consumer, site := range sites {
+		rel, err := matcher.Match(patternMatchQuery(phase, site), scenarios)
+		require.NoError(t, err)
+		tuples, err := CollectTuples(rel, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"t1"}, {"t2"}}, tuples, "consumer %d answers the scan's tuples", consumer)
+	}
+	require.Len(t, inner.seen, 1, "the three consumers share one scan")
+	require.Empty(t, inner.seen[0], "the shared scan is asked for with no bindings")
 }
 
 // TestScanSharingMatcher_DifferentPatternsIndependent verifies that
@@ -113,26 +248,26 @@ func TestScanSharingMatcher_DifferentPatternsIndependent(t *testing.T) {
 		tuples:  []Tuple{{"e1"}},
 		symbols: []query.Symbol{datalog.NewSymbol("?t")},
 	}}
-	reg := NewScanRegistry()
+	pattern := func(attr string) *query.DataPattern {
+		return &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?t")},
+				query.Constant{Value: datalog.NewKeyword(attr)},
+				query.Variable{Name: datalog.NewSymbol("?s")},
+			},
+		}
+	}
+	root, status := pattern(":task/root"), pattern(":task/status")
+	phase, reg := registryListing(root, pattern(":task/root"), status, pattern(":task/status"))
 	matcher := NewScanSharingMatcher(inner, reg, nil)
 
-	p1 := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?t")},
-			query.Constant{Value: datalog.NewKeyword(":task/root")},
-			query.Variable{Name: datalog.NewSymbol("?s")},
-		},
+	for _, site := range []*query.DataPattern{root, status} {
+		rel, err := matcher.Match(patternMatchQuery(phase, site), nil)
+		require.NoError(t, err)
+		tuples, err := CollectTuples(rel, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"e1"}}, tuples)
 	}
-	p2 := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?t")},
-			query.Constant{Value: datalog.NewKeyword(":task/status")},
-			query.Variable{Name: datalog.NewSymbol("?s")},
-		},
-	}
-
-	_, _ = matcher.Match(query.PatternQuery(p1), nil)
-	_, _ = matcher.Match(query.PatternQuery(p2), nil)
 
 	assert.Equal(t, int32(2), atomic.LoadInt32(&inner.callCount),
 		"different patterns should each call inner matcher")
@@ -146,9 +281,6 @@ func TestScanSharingMatcher_SymbolRemapping(t *testing.T) {
 		tuples:  []Tuple{{"e1", "v1"}, {"e2", "v2"}},
 		symbols: []query.Symbol{datalog.NewSymbol("?t"), datalog.NewSymbol("?s")},
 	}}
-	reg := NewScanRegistry()
-	matcher := NewScanSharingMatcher(inner, reg, nil)
-
 	p1 := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?t")},
@@ -163,16 +295,22 @@ func TestScanSharingMatcher_SymbolRemapping(t *testing.T) {
 			query.Variable{Name: datalog.NewSymbol("?y")},
 		},
 	}
+	phase, reg := registryListing(p1, p2)
+	matcher := NewScanSharingMatcher(inner, reg, nil)
 
-	rel1, _ := matcher.Match(query.PatternQuery(p1), nil)
-	rel2, _ := matcher.Match(query.PatternQuery(p2), nil)
+	rel1, err := matcher.Match(patternMatchQuery(phase, p1), nil)
+	require.NoError(t, err)
+	rel2, err := matcher.Match(patternMatchQuery(phase, p2), nil)
+	require.NoError(t, err)
 
 	assert.Equal(t, []query.Symbol{datalog.NewSymbol("?t"), datalog.NewSymbol("?s")}, rel1.Symbols())
 	assert.Equal(t, []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}, rel2.Symbols())
 
 	// Same tuple data
-	tuples1, _ := CollectTuples(rel1, nil)
-	tuples2, _ := CollectTuples(rel2, nil)
+	tuples1, err := CollectTuples(rel1, nil)
+	require.NoError(t, err)
+	tuples2, err := CollectTuples(rel2, nil)
+	require.NoError(t, err)
 	require.Len(t, tuples1, 2)
 	require.Len(t, tuples2, 2)
 	assert.Equal(t, tuples1[0][0], tuples2[0][0])
@@ -181,8 +319,8 @@ func TestScanSharingMatcher_SymbolRemapping(t *testing.T) {
 	assert.Equal(t, int32(1), atomic.LoadInt32(&inner.callCount))
 }
 
-// TestScanSharingMatcher_ThreeConsumers verifies that three Match() calls
-// with the same pattern all return correct data from a single inner call.
+// TestScanSharingMatcher_ThreeConsumers verifies that three sites of one
+// pattern all return correct data from a single inner call.
 func TestScanSharingMatcher_ThreeConsumers(t *testing.T) {
 	tuples := make([]Tuple, 100)
 	for i := range tuples {
@@ -192,27 +330,25 @@ func TestScanSharingMatcher_ThreeConsumers(t *testing.T) {
 		tuples:  tuples,
 		symbols: []query.Symbol{datalog.NewSymbol("?i")},
 	}}
-	reg := NewScanRegistry()
+	pattern := func() *query.DataPattern {
+		return &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?i")},
+				query.Constant{Value: datalog.NewKeyword(":attr")},
+			},
+		}
+	}
+	sites := []*query.DataPattern{pattern(), pattern(), pattern()}
+	phase, reg := registryListing(sites...)
 	matcher := NewScanSharingMatcher(inner, reg, nil)
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?i")},
-			query.Constant{Value: datalog.NewKeyword(":attr")},
-		},
+	for consumer, site := range sites {
+		rel, err := matcher.Match(patternMatchQuery(phase, site), nil)
+		require.NoError(t, err)
+		read, err := CollectTuples(rel, nil)
+		require.NoError(t, err)
+		assert.Len(t, read, 100, "site %d reads every tuple", consumer)
 	}
-
-	rel1, _ := matcher.Match(query.PatternQuery(pattern), nil)
-	rel2, _ := matcher.Match(query.PatternQuery(pattern), nil)
-	rel3, _ := matcher.Match(query.PatternQuery(pattern), nil)
-
-	t1, _ := CollectTuples(rel1, nil)
-	t2, _ := CollectTuples(rel2, nil)
-	t3, _ := CollectTuples(rel3, nil)
-
-	assert.Len(t, t1, 100)
-	assert.Len(t, t2, 100)
-	assert.Len(t, t3, 100)
 
 	assert.Equal(t, int32(1), atomic.LoadInt32(&inner.callCount),
 		"three consumers should share a single inner Match() call")
@@ -225,7 +361,16 @@ func TestScanSharingMatcher_AnnotationEvents(t *testing.T) {
 		tuples:  []Tuple{{"e1"}},
 		symbols: []query.Symbol{datalog.NewSymbol("?t")},
 	}
-	reg := NewScanRegistry()
+	pattern := func() *query.DataPattern {
+		return &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?t")},
+				query.Constant{Value: datalog.NewKeyword(":attr")},
+			},
+		}
+	}
+	sites := []*query.DataPattern{pattern(), pattern()}
+	phase, reg := registryListing(sites...)
 
 	var events []string
 	handler := annotations.Handler(func(e annotations.Event) {
@@ -233,44 +378,62 @@ func TestScanSharingMatcher_AnnotationEvents(t *testing.T) {
 	})
 	matcher := NewScanSharingMatcher(inner, reg, handler)
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?t")},
-			query.Constant{Value: datalog.NewKeyword(":attr")},
-		},
+	for _, site := range sites {
+		_, err := matcher.Match(patternMatchQuery(phase, site), nil)
+		require.NoError(t, err)
 	}
-
-	_, _ = matcher.Match(query.PatternQuery(pattern), nil)
-	_, _ = matcher.Match(query.PatternQuery(pattern), nil)
 
 	assert.Contains(t, events, annotations.ScanSharingCacheMiss)
 	assert.Contains(t, events, annotations.ScanSharingCacheHit)
 }
 
+// Sites whose queries ask one pattern for a different order or limit read
+// separate scans, each shared by the two sites that ask for it.
 func TestScanSharingMatcherSeparatesPhysicalRequirements(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
-	pattern := &query.DataPattern{Elements: []query.PatternElement{
-		query.Variable{Name: entity},
-		query.Constant{Value: datalog.NewKeyword(":item/value")},
-		query.Variable{Name: datalog.NewSymbol("?value")},
-	}}
+	pattern := func() *query.DataPattern {
+		return &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: entity},
+			query.Constant{Value: datalog.NewKeyword(":item/value")},
+			query.Variable{Name: datalog.NewSymbol("?value")},
+		}}
+	}
+	one, two := 1, 2
+	shapes := []struct {
+		orderBy []query.OrderByClause
+		limit   *int
+	}{
+		{limit: &one},
+		{limit: &two},
+		{orderBy: []query.OrderByClause{{Variable: entity, Descending: false}}, limit: &one},
+	}
+	plan := &planner.RealizedPlan{}
+	var phases []*query.Query
+	var sites []*query.DataPattern
+	for _, shape := range shapes {
+		for reader := 0; reader < 2; reader++ {
+			site := pattern()
+			phase := &query.Query{Where: []query.Clause{site}, OrderBy: shape.orderBy, Limit: shape.limit}
+			plan.Phases = append(plan.Phases, planner.RealizedPhase{
+				Query:    phase,
+				Patterns: []planner.PatternPlan{{Pattern: site}},
+			})
+			phases = append(phases, phase)
+			sites = append(sites, site)
+		}
+	}
+	registry := NewScanRegistry()
+	registry.expect(sharedScanSites(plan))
 	inner := &countingMatcher{inner: &fixedMatcher{
 		tuples:  []Tuple{{"e1", int64(1)}, {"e2", int64(2)}},
-		symbols: pattern.Symbols(),
+		symbols: sites[0].Symbols(),
 	}}
-	matcher := NewScanSharingMatcher(inner, NewScanRegistry(), nil)
-	one, two := 1, 2
+	matcher := NewScanSharingMatcher(inner, registry, nil)
 
-	_, err := matcher.Match(&query.Query{Where: []query.Clause{pattern}, Limit: &one}, nil)
-	require.NoError(t, err)
-	_, err = matcher.Match(&query.Query{Where: []query.Clause{pattern}, Limit: &two}, nil)
-	require.NoError(t, err)
-	_, err = matcher.Match(&query.Query{
-		Where:   []query.Clause{pattern},
-		OrderBy: []query.OrderByClause{{Variable: entity, Descending: false}},
-		Limit:   &one,
-	}, nil)
-	require.NoError(t, err)
+	for i, site := range sites {
+		_, err := matcher.Match(patternMatchQuery(phases[i], site), nil)
+		require.NoError(t, err)
+	}
 
 	require.Equal(t, int32(3), atomic.LoadInt32(&inner.callCount))
 }
@@ -300,11 +463,12 @@ func TestScanSharingMatcherPreservesAndRemapsProperties(t *testing.T) {
 			Keys:     [][]query.Symbol{{entity}},
 		},
 	}
-	matcher := NewScanSharingMatcher(inner, NewScanRegistry(), nil)
+	phase, registry := registryListing(first, second)
+	matcher := NewScanSharingMatcher(inner, registry, nil)
 
-	miss, err := matcher.Match(query.PatternQuery(first), nil)
+	miss, err := matcher.Match(patternMatchQuery(phase, first), nil)
 	require.NoError(t, err)
-	hit, err := matcher.Match(query.PatternQuery(second), nil)
+	hit, err := matcher.Match(patternMatchQuery(phase, second), nil)
 	require.NoError(t, err)
 
 	require.Equal(t, options, miss.Options())
@@ -321,15 +485,18 @@ func TestScanSharingMatcherConcurrentSameFingerprintUsesOneScan(t *testing.T) {
 		tuples:  []Tuple{{"e1", int64(1)}, {"e2", int64(2)}, {"e3", int64(3)}},
 		symbols: []query.Symbol{datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")},
 	}}
-	matcher := NewScanSharingMatcher(inner, NewScanRegistry(), nil)
-	pattern := &query.DataPattern{Elements: []query.PatternElement{
-		query.Variable{Name: datalog.NewSymbol("?entity")},
-		query.Constant{Value: datalog.NewKeyword(":item/value")},
-		query.Variable{Name: datalog.NewSymbol("?value")},
-	}}
-	q := query.PatternQuery(pattern)
-
 	const consumers = 20
+	sites := make([]*query.DataPattern, consumers)
+	for consumer := range sites {
+		sites[consumer] = &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?entity")},
+			query.Constant{Value: datalog.NewKeyword(":item/value")},
+			query.Variable{Name: datalog.NewSymbol("?value")},
+		}}
+	}
+	phase, registry := registryListing(sites...)
+	matcher := NewScanSharingMatcher(inner, registry, nil)
+
 	start := make(chan struct{})
 	results := make([][][]interface{}, consumers)
 	errors := make([]error, consumers)
@@ -339,7 +506,7 @@ func TestScanSharingMatcherConcurrentSameFingerprintUsesOneScan(t *testing.T) {
 		go func(index int) {
 			defer wait.Done()
 			<-start
-			relation, err := matcher.Match(q, nil)
+			relation, err := matcher.Match(patternMatchQuery(phase, sites[index]), nil)
 			if err != nil {
 				errors[index] = err
 				return

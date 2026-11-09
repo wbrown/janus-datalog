@@ -80,34 +80,40 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
 
 ## Design
 
-1. `optimizerMode` in `datalog/storage`, defined next to `cacheTestModes`, is one leg of the matrix — a storage backend crossed with an optimizer path:
+1. `optimizerMode` in `datalog/storage`, defined next to `cacheTestModes`, is one leg of the matrix — a storage backend crossed with a setting of every planner option a test can turn on:
 
    ```go
    type optimizerMode struct {
-       name    string
-       algebra bool
-       backend Backend
+       name      string
+       algebra   bool
+       sharing   bool
+       prefetch  bool
+       symmetric bool
+       streaming bool
+       fusion    bool
+       backend   Backend
    }
    ```
 
-   `optimizerModes` is the engine axis, the tree store × `{algebra_on, algebra_off}`, and `backendModes` is the store axis, `AvailableBackends()` × the same two paths. A test of the engine loops the first; a test of the store, what it persists or how it reads, loops the second. Two constructors sit on them:
+   The settings are the pairwise covering design `optionLegs` states: the strength-2 orthogonal array on three bits, eight legs, on which every pair of the six options takes all four settings. The first leg is the reference, every option off, and one leg is `DefaultPlannerOptions`' profile. `optimizerModes` is the engine axis, the tree store crossed with the legs, and `backendModes` is the store axis, `AvailableBackends()` crossed with them. A test of the engine loops the first; a test of the store, what it persists or how it reads, loops the second. Two constructors sit on them:
 
    - `createOptimizerModeDB(t, mode, opts)` — the mode's backend and the mode's planner options, threaded through `DatabaseOptions`. This is what a test on either axis uses.
-   - `openBackendDB(t, backend, opts)` — a named backend with the caller's `PlannerOptions` left intact, for a test whose own options are the subject of its assertion. The algebra half of the mode has nothing left to vary there, so it takes a `Backend` rather than a mode; reaching for it drops that half of the axis.
+   - `openBackendDB(t, backend, opts)` — a named backend with the caller's `PlannerOptions` left intact, for a test whose own options are the subject of its assertion. The option half of the mode has nothing left to vary there, so it takes a `Backend` rather than a mode; reaching for it drops that half of the axis.
 
    Two narrowings, each naming what it gives up:
 
-   - `pinned(modes, algebra bool)` — one leg per backend of the given axis with the optimizer path fixed, for tests that drive the matcher directly and never reach the planner. Pinning a plan shape does not pin a store.
+   - `legsWhere(modes, keep)` — the legs of the given axis a predicate admits, for a test pinning one option's mechanism: it runs on the legs that carry the option in place of setting the option, still a leg per backend and per setting of the other options, because pinning one option pins neither a store nor another option.
    - `byteKeyBackends(t)` — badger and badger-emulator out of the store axis, not memory-trees. The tree store hands out the datom it already holds, so a property of the encoded index key, or of anything downstream of it such as the Tier-3 blob tier, is not a property it has. The switch has no silent default: a new backend fails there until someone says which side of the line it falls on.
 
    Packages that cannot import storage's test files carry their own copy — the Go-testing reality for cross-package test code:
 
-   - `tests/` has `createBackendModeDB`, with `eachMode`, `eachModeOpts` and `eachModeWith` on the engine axis and `eachStoreBackendAndModeOpts` on the store axis.
-   - `db` carries both axes.
-   - `qb` carries the engine axis alone, threading `mode.backend` into its own constructor.
-   - `reflect` carries the engine axis alone, threading `mode.backend` into its own constructor.
+   - `executor` carries the eight legs and a ninth, fusion alone, the profile `NewExecutor` constructs with, in `datalog/executor/optimizer_modes_test.go`, with `optimizerModesWhere` as its narrowing.
+   - `tests/` has `createBackendModeDB`, with `eachMode`, `eachModeOpts` and `eachModeWith` on the engine axis and `eachStoreBackendAndModeOpts` on the store axis, over the two optimizer paths alone.
+   - `db` carries both axes, over the two optimizer paths alone.
+   - `qb` carries the engine axis alone over the two optimizer paths, threading `mode.backend` into its own constructor.
+   - `reflect` carries the engine axis alone over the two optimizer paths, threading `mode.backend` into its own constructor.
 
-2. Query-executing tests wrap their query-and-assert body in `for _, mode := range optimizerModes { t.Run(mode.name, ...) }`, **with the database built inside the loop**. A mode loop around a database constructed outside it — or constructed from `Path:`, which is `DefaultBackend()` — runs one backend under N mode names and reads as coverage it does not have. Schema values and other backend-independent fixtures can still be built once above.
+2. Query-executing tests wrap their query-and-assert body in `for _, mode := range optimizerModes { t.Run(mode.name, ...) }`, **with the database built inside the loop**. A mode loop around a database constructed outside it — or constructed from `Path:`, which is `DefaultBackend()` — runs one backend under N mode names and reads as coverage it does not have. Schema values and other backend-independent fixtures can still be built once above. A loop that builds its planner options from one field of the mode runs every leg under the other options' zero values, the same coverage it does not have; the options a leg runs under are `mode.plannerOptions()`.
 
 3. Where a test already matrixes another axis (cache modes, schemaless vs schema-aware), orthogonal axes cross — the honest matrix is the product. The storage backend is not one of those: it lives inside `optimizerMode`, so a test on the axis gets it without crossing anything.
 
@@ -115,7 +121,7 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
 
    The two cache legs are not worth the same under this axis. `DisableCache: true` sends reads to storage, and storage is now three implementations — so the cache-off legs are where the backends genuinely differ. The EA cache is a `Database` structure rather than a store one, so the cache-on legs run the same cache code with different fill paths and can mask a storage-path divergence on their own. That asymmetry is what the differential shape exists to catch, and the backend axis is what makes it name the store responsible.
 
-4. Tests that pin one mode's behavior (plan structure, EXPLAIN output, the algebra package's own unit tests, the existing differential pins) declare `EnableAlgebraOptimizer` explicitly and are exempt from the loop — an explicit declaration is the correct statement of "this test is about one mode."
+4. A test that pins one option's mechanism (a plan shape under the algebra optimizer, a shared scan's completion, a fallback's prefetch) selects the legs that carry the option through `legsWhere` and runs on every leg that does. It sets no option itself: an option set inside a test is absent from the matrix, and a test that needs an option for its answer has let a performance option stand in for correctness. The planner and algebra packages' own unit tests, which plan without executing, declare `EnableAlgebraOptimizer` as the path they pin.
 
 5. A test whose *subject* is one backend names it and says why: the assertion reads a property only that store has, so on the others it would hold vacuously. A table of such tests carries the axis per entry rather than inheriting the global one — `queryBoundaryFaultCase.modes` is the instance, with the injected-fault case on the engine axis and the Tier-3 blob case on `byteKeyBackends`.
 

@@ -74,9 +74,9 @@ var DefaultPlannerOptions = defaultPlannerOptions
 var NewQueryExecutor = newQueryExecutor
 
 // ExecuteBoundPattern runs the pattern as one body over the window of its
-// subject.
-func (e *DefaultQueryExecutor) ExecuteBoundPattern(ctx *Context, pattern *query.DataPattern, groups Relations) (Relations, error) {
-	return e.executeBoundPattern(ctx, pattern, groups)
+// subject, reading whether it has a match through exists.
+func (e *DefaultQueryExecutor) ExecuteBoundPattern(ctx *Context, pattern, exists *query.DataPattern, groups Relations) (Relations, error) {
+	return e.executeBoundPattern(ctx, pattern, exists, groups)
 }
 
 // SetPlanner replaces the planner the executor plans every scope through.
@@ -187,20 +187,38 @@ func (ev *ruleEvaluation) Derived() map[query.Symbol]Relation { return ev.derive
 // Total answers the tuples the evaluation derived, every window's together.
 func (ev *ruleEvaluation) Total() int { return ev.total }
 
+// OptimizerMode is one leg of the package's optimizer mode axis.
+type OptimizerMode = optimizerMode
+
 // OptimizerModes is the package's optimizer mode axis.
 var OptimizerModes = optimizerModes
+
+// OptimizerModesWhere is the modes a predicate admits, in the table's order.
+var OptimizerModesWhere = optimizerModesWhere
 
 // Name answers the mode's name.
 func (m optimizerMode) Name() string { return m.name }
 
 func (m optimizerMode) Algebra() bool { return m.algebra }
 
-// PlannerOptions is NewExecutor's default profile with the mode's algebra
-// setting.
+// Sharing answers whether the mode turns scan sharing on.
+func (m optimizerMode) Sharing() bool { return m.sharing }
+
+// Prefetch answers whether the mode turns entity prefetch on.
+func (m optimizerMode) Prefetch() bool { return m.prefetch }
+
+// Fusion answers whether the mode turns attribute-fetch fusion on.
+func (m optimizerMode) Fusion() bool { return m.fusion }
+
+// Symmetric answers whether the mode turns the symmetric hash join on.
+func (m optimizerMode) Symmetric() bool { return m.symmetric }
+
+// PlannerOptions is NewExecutor's default profile with the mode's setting of
+// every option.
 func (m optimizerMode) PlannerOptions() planner.PlannerOptions { return m.plannerOptions() }
 
-// ZeroPlannerOptions is the zero-value profile with the mode's algebra
-// setting.
+// ZeroPlannerOptions is the zero-value profile with the mode's setting of
+// every option.
 func (m optimizerMode) ZeroPlannerOptions() planner.PlannerOptions { return m.zeroPlannerOptions() }
 
 // ApplyFindPulls renders each pull find element of a result.

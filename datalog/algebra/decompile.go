@@ -48,47 +48,15 @@ func decompileNode(n *Node) ([]query.Clause, error) {
 	}
 }
 
-// subqueryInputs is what a decompiled subquery declares and is passed: the
-// default source, and the rule set after it when a clause of its own scope
-// uses % (query.RulesUse).
-func subqueryInputs(where []query.Clause) ([]query.InputSpec, []query.PatternElement) {
-	in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}}
-	inputs := []query.PatternElement{query.Constant{Value: datalog.SymDollar}}
-	if query.RulesUse(where) != nil {
-		in = append(in, query.RulesInput{})
-		inputs = append(inputs, query.Constant{Value: datalog.SymRules})
-	}
-	return in, inputs
-}
-
+// decompileProject emits no clause for a childless Project, the schema
+// placeholder the compiler seeds a scope with for the symbols the scope is
+// given. A Project over clauses has no clause form: Datalog states a
+// projection at a scope's find alone.
 func decompileProject(n *Node) ([]query.Clause, error) {
-	project := n.Data.(*Project)
 	if len(n.Children) == 0 {
 		return nil, nil
 	}
-	if len(n.Children) != 1 {
-		return nil, fmt.Errorf("Project requires 1 child")
-	}
-	where, err := decompileNode(n.Children[0])
-	if err != nil {
-		return nil, err
-	}
-	find := make([]query.FindElement, len(project.Symbols))
-	for i, symbol := range project.Symbols {
-		find[i] = query.FindVariable{Symbol: symbol}
-	}
-	in, inputs := subqueryInputs(where)
-	return []query.Clause{&query.SubqueryPattern{
-		Query: &query.Query{
-			Find:  find,
-			In:    in,
-			Where: where,
-		},
-		Inputs: inputs,
-		Binding: query.RelationBinding{
-			Variables: append([]query.Symbol(nil), project.Symbols...),
-		},
-	}}, nil
+	return nil, fmt.Errorf("a Project over clauses has no clause form: Datalog states a projection at a scope's find alone")
 }
 
 // decompileScan emits the original DataPattern.

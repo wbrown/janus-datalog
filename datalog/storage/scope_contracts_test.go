@@ -713,16 +713,16 @@ func TestPreparationEventCarriesThePreparedQueryAndWhetherItWasRewritten(t *test
 	}
 }
 
-// With EnableEntityPrefetch off no prefetch runs: a query of two patterns
-// over the same entity triggers no prefetch and populates no cache entry on
-// anyone's behalf.
+// On the legs with EnableEntityPrefetch off no prefetch runs: a query of two
+// patterns over the same entity triggers no prefetch and populates no cache
+// entry on anyone's behalf.
 func TestEntityPrefetchOffRunsNoPrefetch(t *testing.T) {
 	e1, e2 := named("e1"), named("e2")
 	facts := []fact{
 		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(1)},
 		{e2, ":t/n", int64(2)}, {e2, ":t/a", int64(2)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.prefetch }) {
 		t.Run(mode.name, func(t *testing.T) {
 			var triggers, populated atomic.Int64
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: func(e annotations.Event) {
@@ -735,7 +735,6 @@ func TestEntityPrefetchOffRunsNoPrefetch(t *testing.T) {
 					}
 				}
 			}})
-			require.False(t, mode.plannerOptions().EnableEntityPrefetch, "the option is off by default")
 			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e ?v :where [?e :t/n _] [?e :t/a ?v]]`)
 			require.NoError(t, err)
@@ -767,28 +766,27 @@ func TestFallbackPrefetchAnswersAsTheScanPath(t *testing.T) {
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			run := func(t *testing.T, prefetch bool) []annotations.Event {
-				var triggersMu sync.Mutex
-				var triggers []annotations.Event
-				opts := mode.plannerOptions()
-				opts.ScopeWindowCap = 128
-				opts.EnableEntityPrefetch = prefetch
-				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
-					if e.Name == annotations.PrefetchTrigger {
-						triggersMu.Lock()
-						triggers = append(triggers, e)
-						triggersMu.Unlock()
-					}
-				}})
-				names := commitFacts(t, d, facts)
-				rel, err := d.Query(text)
-				require.NoError(t, err)
-				require.ElementsMatch(t, want, renderedTuples(t, rel, names))
-				return triggers
+			var triggersMu sync.Mutex
+			var triggers []annotations.Event
+			opts := mode.plannerOptions()
+			opts.ScopeWindowCap = 128
+			d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
+				if e.Name == annotations.PrefetchTrigger {
+					triggersMu.Lock()
+					triggers = append(triggers, e)
+					triggersMu.Unlock()
+				}
+			}})
+			names := commitFacts(t, d, facts)
+			rel, err := d.Query(text)
+			require.NoError(t, err)
+			require.ElementsMatch(t, want, renderedTuples(t, rel, names))
+			if !mode.prefetch {
+				require.Empty(t, triggers, "no trigger with the option off")
+				return
 			}
-			require.Empty(t, run(t, false), "no trigger with the option off")
 			var fallbackTriggers []annotations.Event
-			for _, e := range run(t, true) {
+			for _, e := range triggers {
 				if e.Data[annotations.KeyForm] == "or-default-join" {
 					fallbackTriggers = append(fallbackTriggers, e)
 				}
@@ -830,28 +828,27 @@ func TestFallbackPrefetchAnswersAsTheScanPathForARequiredValue(t *testing.T) {
 	const text = `[:find ?e ?v :where [?e :t/n ?v] (or-default-join [[?e ?v]] [?e :t/a ?v] [?e :t/b ?v])]`
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			run := func(t *testing.T, prefetch bool) []annotations.Event {
-				var triggersMu sync.Mutex
-				var triggers []annotations.Event
-				opts := mode.plannerOptions()
-				opts.ScopeWindowCap = 128
-				opts.EnableEntityPrefetch = prefetch
-				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
-					if e.Name == annotations.PrefetchTrigger {
-						triggersMu.Lock()
-						triggers = append(triggers, e)
-						triggersMu.Unlock()
-					}
-				}})
-				names := commitFacts(t, d, facts)
-				rel, err := d.Query(text)
-				require.NoError(t, err)
-				require.ElementsMatch(t, want, renderedTuples(t, rel, names))
-				return triggers
+			var triggersMu sync.Mutex
+			var triggers []annotations.Event
+			opts := mode.plannerOptions()
+			opts.ScopeWindowCap = 128
+			d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
+				if e.Name == annotations.PrefetchTrigger {
+					triggersMu.Lock()
+					triggers = append(triggers, e)
+					triggersMu.Unlock()
+				}
+			}})
+			names := commitFacts(t, d, facts)
+			rel, err := d.Query(text)
+			require.NoError(t, err)
+			require.ElementsMatch(t, want, renderedTuples(t, rel, names))
+			if !mode.prefetch {
+				require.Empty(t, triggers, "no trigger with the option off")
+				return
 			}
-			require.Empty(t, run(t, false), "no trigger with the option off")
 			var fallbackTriggers []annotations.Event
-			for _, e := range run(t, true) {
+			for _, e := range triggers {
 				if e.Data[annotations.KeyForm] == "or-default-join" {
 					fallbackTriggers = append(fallbackTriggers, e)
 				}

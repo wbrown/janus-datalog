@@ -29,7 +29,8 @@ func TestExecuteBoundPatternStandsInTheConsumedGroupsPlace(t *testing.T) {
 	pattern := &query.DataPattern{Elements: []query.PatternElement{
 		query.Variable{Name: entity}, query.Constant{Value: attr}, query.Variable{Name: value},
 	}}
-	groups, err := exec.ExecuteBoundPattern(NewContext(), pattern, Relations{unrelated, subject})
+	exists := *pattern
+	groups, err := exec.ExecuteBoundPattern(NewContext(), pattern, &exists, Relations{unrelated, subject})
 	require.NoError(t, err)
 	require.Len(t, groups, 2, "the result stands in the subject's place beside the group the pattern does not read")
 	require.Same(t, unrelated, groups[0])
@@ -58,7 +59,8 @@ func TestExecuteBoundPatternWithNoMatchLeavesItsSubjectUnread(t *testing.T) {
 	pattern := &query.DataPattern{Elements: []query.PatternElement{
 		query.Variable{Name: entity}, query.Constant{Value: datalog.NewKeyword(":t/a")}, query.Variable{Name: value},
 	}}
-	groups, err := exec.ExecuteBoundPattern(NewContext(), pattern, Relations{subject})
+	exists := *pattern
+	groups, err := exec.ExecuteBoundPattern(NewContext(), pattern, &exists, Relations{subject})
 	require.NoError(t, err)
 	require.Len(t, groups, 1, "the result stands in the subject's place")
 	assert.Equal(t, []query.Symbol{entity, value}, groups[0].Symbols())

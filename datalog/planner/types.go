@@ -126,8 +126,7 @@ type PlannerOptions struct {
 
 	// Subquery / algebra optimization
 	EnableAlgebraOptimizer     bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)
-	EnableJoinProjectInsertion bool // Materialize narrowed inner-join children (experimental, default: false)
-	EnableScanSharing          bool // Share unbound scan results across subqueries via LazySeq (default: false)
+	EnableScanSharing          bool // Share unbound scan results across subqueries via LazySeq (default: true)
 	EnableEntityPrefetch       bool // Warm EA cache after first DataPattern via PrefetchEntities (default: false)
 	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple binding instead of match+join (default: true)
 
@@ -207,7 +206,9 @@ type RealizedPhase struct {
 	Provides  []query.Symbol // Symbols this phase provides
 	Keep      []query.Symbol // Symbols to keep for next phase
 
-	// Explain fields - populated for detailed plan output, nil during normal execution
+	// The analysis of each clause of Query, in clause order, which Plan fills
+	// for every phase. Explain renders it, and the executor's scan sharing
+	// reads each pattern's BoundMask.
 	Patterns    []PatternPlan    // Pattern plans with index selection and selectivity
 	Expressions []ExpressionPlan // Expression plans with inputs/outputs
 	Predicates  []PredicatePlan  // Predicate plans with classification
@@ -233,12 +234,33 @@ type RealizedPlan struct {
 	// evaluation reads it here.
 	Evaluations map[*query.RuleInvocation]*InvocationEvaluation
 
+	// Frames is the frames each form of the plan's phases runs, by the form's
+	// clause, in branch order: an or-join's and an or-default-join's
+	// branches, a not-join's body and a subquery's inner query.
+	Frames map[query.Clause][]FramePlan
+
+	// Windows is the set of the plan's clauses read in windows of a group
+	// their scope produces: each data pattern and invocation sharing a
+	// variable with a clause's result, or with a join of one with a group. A
+	// clause the set does not hold binds through the groups before it.
+	Windows map[query.Clause]bool
+
 	// SourceAnswers is each question the get-else scan rewrite asked the
 	// sources while this plan, the body plans its evaluations embed, and the
 	// scope plans each evaluation's magic-sets rewrite read were made, with
 	// the answer each got. The plan cache serves the plan only where the
 	// requesting planner's sources answer every one alike.
 	SourceAnswers []SourceAnswer
+}
+
+// FramePlan is one frame a form runs: its plan, the one the cache serves the
+// executor's framing of the form, and whether its branch reads nothing of
+// what it is given (BranchFrame.ReadsNothing). The form runs a frame whose
+// branch reads nothing once, and every other frame once per window of its
+// subject.
+type FramePlan struct {
+	Plan         *RealizedPlan
+	ReadsNothing bool
 }
 
 // String returns a human-readable representation of a RealizedPhase

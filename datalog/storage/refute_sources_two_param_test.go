@@ -217,7 +217,7 @@ func TestRefuteSources_EachTwoParameterSubqueryTakesTheDecorrelationDecisionOfIt
 			declined = append(declined, event.Data["reason"])
 		}
 	}
-	d := createOptimizerModeDB(t, pinned(optimizerModes, true)[0], DatabaseOptions{AnnotationHandler: handler})
+	d := createOptimizerModeDB(t, legsWhere(optimizerModes, func(m optimizerMode) bool { return m.algebra })[0], DatabaseOptions{AnnotationHandler: handler})
 	commitFacts(t, d, refuteTwoParamFacts())
 	shapes := map[bool]int{}
 	for _, query := range refuteTwoParamQueries() {

@@ -8,7 +8,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -71,9 +70,7 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 			_, err = tx.Commit()
 			assert.NoError(t, err)
 
-			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
-			exec := executor.NewExecutorWithOptions(matcher, db,
-				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
+			exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
 
 			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
@@ -141,9 +138,7 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 			_, err := tx.Commit()
 			assert.NoError(t, err)
 
-			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
-			exec := executor.NewExecutorWithOptions(matcher, db,
-				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
+			exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
 
 			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
@@ -228,12 +223,7 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 				_, err := tx.Commit()
 				assert.NoError(t, err)
 
-				matcher := executor.PatternMatcher(NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{}))
-				if sc.s != nil {
-					matcher = db.Matcher()
-				}
-				exec := executor.NewExecutorWithOptions(matcher, db,
-					planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
+				exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
 
 				tuples, err := executor.CollectTuples(exec.Execute(parsed))
 				assert.NoError(t, err)

@@ -186,8 +186,6 @@ const (
 	AlgebraDecorrelateApply = "algebra/decorrelate-apply"
 	AlgebraGetElseScanSkip  = "algebra/getelse-scan-skip"
 	AlgebraGetElseScanApply = "algebra/getelse-scan-apply"
-	AlgebraJoinProjectSkip  = "algebra/join-project-skip"
-	AlgebraJoinProjectApply = "algebra/join-project-apply"
 
 	// Aggregation operations
 	AggregationExecuted     = "aggregation/executed"

@@ -252,9 +252,10 @@ while a closure is under evaluation is invisible to it.
 An invocation inside an `or-join` or `or-default-join` branch, a `not-join`
 body or a subquery's inner query is evaluated once per execution of the
 form, continued across the windows of the form's subject, and a top-level
-invocation one of whose variable arguments a group that reports no size
-binds is evaluated the same way, as the one branch of a form whose subject
-is the groups binding its arguments, its result standing in their place. The
+invocation one of whose variable arguments a group the query produces
+binds, a clause's result or the join of one with another group, is
+evaluated the same way, as the one branch of a form whose subject is the
+groups binding its arguments, its result standing in their place. The
 branch runs over each window's keys. A window's keys enter the seed
 predicate's stratum as a delta, the sets of every stratum and the
 derived-tuple count are carried from window to window, and the strata run

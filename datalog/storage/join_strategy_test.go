@@ -29,7 +29,9 @@ func TestVerifyStrategyUsed(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	// On the legs without attribute-fetch fusion the email pattern runs as
+	// the join whose strategy each subtest reads.
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -55,23 +57,17 @@ func TestVerifyStrategyUsed(t *testing.T) {
 				}
 			}
 
-			// Attribute-fetch fusion is off, so the email pattern runs as the
-			// join whose strategy each subtest reads.
 			planOpts := mode.plannerOptions()
-			planOpts.EnableAttributeFetchFusion = false
 
 			t.Run("default_behavior", func(t *testing.T) {
 				var strategies []string
-				opts := executor.ExecutorOptions{
-					EnableStreamingJoins:    true,
-					EnableSymmetricHashJoin: false,
-					DefaultHashTableSize:    256,
-					Handler: func(event annotations.Event) {
-						if event.Name == "storage/join-strategy" {
-							strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
-							strategies = append(strategies, strategy)
-						}
-					},
+				opts := executor.ExecutorOptionsFromPlanner(planOpts)
+				opts.DefaultHashTableSize = 256
+				opts.Handler = func(event annotations.Event) {
+					if event.Name == "storage/join-strategy" {
+						strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
+						strategies = append(strategies, strategy)
+					}
 				}
 				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
@@ -97,16 +93,13 @@ func TestVerifyStrategyUsed(t *testing.T) {
 
 			t.Run("forced_hash_join", func(t *testing.T) {
 				var strategies []string
-				opts := executor.ExecutorOptions{
-					EnableStreamingJoins:    true,
-					EnableSymmetricHashJoin: false,
-					DefaultHashTableSize:    256,
-					Handler: func(event annotations.Event) {
-						if event.Name == "storage/join-strategy" {
-							strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
-							strategies = append(strategies, strategy)
-						}
-					},
+				opts := executor.ExecutorOptionsFromPlanner(planOpts)
+				opts.DefaultHashTableSize = 256
+				opts.Handler = func(event annotations.Event) {
+					if event.Name == "storage/join-strategy" {
+						strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
+						strategies = append(strategies, strategy)
+					}
 				}
 				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 

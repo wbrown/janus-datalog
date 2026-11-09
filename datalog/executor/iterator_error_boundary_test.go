@@ -145,13 +145,3 @@ func TestBufferedIteratorCloneCarriesSourceError(t *testing.T) {
 	require.ErrorIs(t, clone.Error(), errInjectedIterator)
 	require.ErrorIs(t, buf.Error(), errInjectedIterator)
 }
-
-func TestExtractEntityIDsSurfacesScanError(t *testing.T) {
-	alice := datalog.NewIdentity("user:alice")
-	rel := failingRelation{
-		Relation:  NewMaterializedRelation(testSymbols(), []Tuple{{alice}, {alice}}),
-		failAfter: 1,
-	}
-	_, err := extractEntityIDs(rel, testSymbols())
-	require.ErrorIs(t, err, errInjectedIterator)
-}

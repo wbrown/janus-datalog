@@ -21,7 +21,13 @@ type KeyOnlyIterator struct {
 	// variable-length V. Seek replaces it alongside the embedded iterator's end,
 	// because a run is its start, its end and its membership rule together, and
 	// adopting a subset of the three yields a run nobody asked for.
-	membership   runMembership
+	membership runMembership
+	// fixed is the components the current run's prefix fixes, and runHeld
+	// whether currentDatom is a datom of the current run, whose fixed
+	// components the run's next key shares. Seek replaces both for the run it
+	// names.
+	fixed        fixedComponents
+	runHeld      bool
 	currentDatom datalog.Datom
 	hasDatom     bool
 	currentError error
@@ -49,6 +55,7 @@ func NewKeyOnlyIterator(store *BadgerStore, index IndexType, run EncodedRun) (It
 		encoder:        store.encoder,
 		blobs:          badgerTxnBlobReader{txn: txn},
 		membership:     run.Membership,
+		fixed:          run.Fixed,
 	}, nil
 }
 
@@ -85,11 +92,16 @@ func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 		return nil, fmt.Errorf("no current datom")
 	}
 	if !i.hasDatom {
+		run := runDecode{fixed: i.fixed}
+		if i.runHeld {
+			run.shared = &i.currentDatom
+		}
 		datom, err := decodeDatomFromKey(
 			i.index,
 			i.it.Item().Key(),
 			i.encoder,
 			i.blobs,
+			run,
 		)
 		if err != nil {
 			i.currentError = err
@@ -97,6 +109,7 @@ func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 		}
 		i.currentDatom = datom
 		i.hasDatom = true
+		i.runHeld = true
 	}
 	return &i.currentDatom, nil
 }
@@ -137,6 +150,8 @@ func (i *KeyOnlyIterator) Seek(bound ScanBound) {
 	// only material it has. That is how key-layout arithmetic gets back above
 	// this seam.
 	i.membership = run.Membership
+	i.fixed = run.Fixed
+	i.runHeld = false
 	i.end = run.End
 	i.BadgerIterator.Seek(run.Start)
 	i.hasDatom = false

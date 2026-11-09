@@ -123,6 +123,9 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **One scan sought per key**: the per-key seek arm opened one key-only scan per distinct key, each with its iterator, its cursor and its probe datom, and closed it as the key's run ended. It now opens one scan over the pattern's extent at its first pull and seeks it to each key's run, and the memory-trees iterator fills its probe in place at a seek. The completion event's count in the bound's place is named for the fact every writer reports, the runs the arm addressed, under `runs.addressed` in place of `scans.opened` (`docs/proposals/ONE_SCAN_SOUGHT_PER_KEY_PROOF.md`, T1 to T4). `TestPerKeySeekAllocatesPerKeyWhatItsBoundsAllocate` bounds a match's allocations per key beyond a smaller binding's at its bounds' per key plus a half, and `TestMemoryTreeIterator_SeekAllocatesNothing` bounds a seek's at none. `BenchmarkPerKeySeek` had opened its database with the EA cache on, under which a binding at the entity position is served from the cache and the seek arm never runs, so its earlier figures are the cache path's. It opens the cache off now, as the seek tests do, and the figures below are its first of the arm. Each figure is read at count 3 on memory-trees under the physical planner, on the tree with the change and on dfcdb80, the tree without it, in adjacent runs on an Apple M5.
   - `BenchmarkPerKeySeek`, a thousand keys over a thousand entities: **347–385 µs/op, 566 KB/op and 7,144 allocs/op** against **449–497 µs/op, 886 KB/op and 10,141 allocs/op**; over a hundred thousand entities **464–582 µs/op** against **595–612 µs/op** at the same bytes and allocations. Thirty-two keys over a thousand entities: **14.8–16.2 µs/op, 24.3 KB/op and 358 allocs/op** against **17.0–19.2 µs/op, 34.2 KB/op and 451 allocs/op**; over a hundred thousand **16.3–22.8 µs/op** against **20.3–23.2 µs/op**.
   - The reproduction's `unfilled` query through the CLI: **18.1 s wall and 21.2 s user CPU** against **17.9 s and 21.3 s**, and **3,637 MB allocated** against **3,594 MB**, a difference within the **110 MB** spread `TupleSet.grow` alone shows between runs of one tree. The seek's own sites fall: `storeVersion.scan` **133.5 MB** cumulative against **187.5 MB**, `datomTree.cursor` **68.5 MB** against **94.0 MB**, and the probe's builder, **50.0 MB** without the change, absent from the top.
+- ✅ **Scan sharing on by default, its readers from the plan**: one query's unbound reads of one scan are served from one shared sequence, and the sequence's readers are the sites the plan lists for its fingerprint. The executor's site walk lists, per fingerprint (source, pattern, order and limit), the unbound data patterns of the plan's phases, of its forms' frames and of its evaluations' bodies, and the existence check of each pattern the plan reads in windows. A fingerprint read at two or more sites, or at a site in a frame that runs once per window, is shared, and one read at one site is not. A reader that stops early never closes the shared scan. The registry holds the sequence's head until every listed site has been handed it and every per-window frame listing it has ended, a read at an unlisted site or after the release is a scan of its own, and the source closes when read to its end or when the query ends, before storage closes its read session. The plan states each clause's route, windowed over a group the scope produces or bound through a group it is given (`RealizedPlan.Windows`, `RealizedPlan.Frames`), and the executor owns the windowed route's existence check and its site (`docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.1 and §4.4, `docs/proposals/EXECUTION_PLANS_NOTHING_PROOF.md`, `docs/reference/PLANNER_OPTIONS.md`). Before this, a reader's early close closed the shared storage iterator and ended the sequence for every other reader, so with sharing on History, rule fixpoints, unions and correlated subqueries answered wrong. `TestAConsumerThatStopsEarlyLeavesTheSharedScanWhole`, `TestAScanReadAtOneSiteIsNotShared`, `TestTheRegistryReleasesAScansHeadWhenItsLastSiteReads`, `TestASharedScanReportsItsCompletionWhenTheQueryEnds`, `TestASiteReadInEveryWindowIsSharedAcrossItsWindows` and `TestSubqueryBodiesScanningOnePatternReadItOnceUnderScanSharing` pin the rules, and `TestThePlanStatesEachPatternsRoute` the routes. The option matrix is a pairwise covering design over the planner options tests turn on (`optionLegs` in `datalog/storage`, with the executor's copy in `datalog/executor`), and a test of one option's mechanism selects the legs that carry it through `legsWhere`. Entity prefetch's one trigger is the fallback's window step (`OrFallbackIterator.prefetchWindow`). Measured on badger, Apple M5 (verified 2026-11-08):
+  - `BenchmarkComplexQueryCheckpointAccount`, 75 scenarios of 100 tasks, counts after one warm query: with sharing on **1 status scan of 7,500 keys and 3 scans in all, 2 of them served from the shared head**, against **3 status scans of 22,500 keys and 5 scans** with it off, every lookup answered by the cache in both.
+  - `BenchmarkComplexQueryCheckpoint` at `-benchtime 10s`, three runs: **8.66–9.02 ms/op, 14.49 MB/op and 133,673 allocs/op** with sharing on, **10.47–11.06 ms/op, 13.35 MB/op and 118,672 allocs/op** with it off (`BenchmarkComplexQueryCheckpointNoScanSharing`), and **13.51–15.47 ms/op, 13.71 MB/op and 141,276–141,278 allocs/op** at `f9cacb4`, the commit before these changes, where sharing is off by default. Sharing adds 15,001 allocations and 1.14 MB per query. That these are two allocations per tuple of the held status scan is an inference from the counts and not a profile.
 - ✅ **Iterator composition**: **4.06× speedup** (1,259μs → 310μs, 89% memory reduction) (verified 2025-10-25)
 - ✅ **Streaming execution**: **2.22× faster** with low-selectivity filters (1,720ms → 774ms), 52% memory reduction (verified 2025-10-25)
 - ⚠️ **Parallel subquery execution** (superseded October 2026, entry 17): measured at **2.06× speedup** with 8 workers on M3 Max (730ms → 355ms) (verified 2025-10-25); the per-tuple iteration it measured is gone, a relation input being one group the plan runs once over
@@ -1726,10 +1729,10 @@ evidence of a general-query regression.
 
 ### Materialized join-project experiment (July 12, 2026)
 
-Backward liveness can insert `Project` above narrowed inner-join children and
-lower it as a relation-binding subquery, but `EnableJoinProjectInsertion`
-remains default-off. On a focused 2,000-entity scan → selective predicate →
-project → join query, with algebra optimization enabled in both modes
+Backward liveness inserted `Project` above narrowed inner-join children and
+lowered it as a relation-binding subquery, behind `EnableJoinProjectInsertion`,
+default-off. On a focused 2,000-entity scan → selective predicate → project →
+join query, with algebra optimization enabled in both modes
 (`benchtime=500ms`, `count=10`, darwin/arm64):
 
 | Metric | Flat | Materialized project | Delta |
@@ -1738,13 +1741,14 @@ project → join query, with algebra optimization enabled in both modes
 | Memory | 1.627 MiB/op | 2.614 MiB/op | **+60.7%** |
 | Allocations | 20.38K/op | 36.64K/op | **+79.8%** |
 
-The narrower tuple does not repay nested relation-subquery execution. The
-transform and benchmark remain as a correctness/proof checkpoint, but this
-rewrite must stay inactive until the subquery path can consume the logical
-projection without adding this physical cost.
-
-**Files**: `datalog/storage/optimization_matrix_test.go`,
-`datalog/storage/algebra_project_benchmark_test.go`
+The narrower tuple did not repay nested relation-subquery execution. The
+transform, its option and its benchmark are removed (November 2026). A
+projection lowered as a scope carried nothing of the enclosing scope across its
+boundary: not a symbol a clause of the scope bound, not the scope's required
+run, and not the failure contract that an evaluation fails a query only at an
+assignment where every other clause holds. It refused forms and rule bodies and
+raised failures beside empty clauses. `docs/ideas/JOIN_PROJECT_INSERTION.md`
+records the idea and where it belongs.
 
 ---
 

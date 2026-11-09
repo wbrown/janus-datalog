@@ -537,7 +537,7 @@ func retractMemoryDatom(
 	)
 	matches := memoryKeysWithPrefix(store.keys, searchPrefix)
 	for _, encoded := range matches {
-		stored, err := decodeDatomFromKey(EAVT, []byte(encoded), store.encoder, blobs)
+		stored, err := decodeDatomFromKey(EAVT, []byte(encoded), store.encoder, blobs, runDecode{})
 		if err != nil {
 			return err
 		}
@@ -605,6 +605,12 @@ type memoryIterator struct {
 	// start, its end and its membership rule together, and adopting a subset of
 	// the three yields a run nobody asked for.
 	membership runMembership
+	// fixed is the components the current run's prefix fixes, and runHeld
+	// whether currentDatom is a datom of the current run, whose fixed
+	// components the run's next key shares. Seek replaces both for the run it
+	// names.
+	fixed   fixedComponents
+	runHeld bool
 	// end is the current run's exclusive upper bound, inside the scan's own
 	// range, which keys never leaves. A seek to a narrower run stops here.
 	end []byte
@@ -637,6 +643,7 @@ func chunkedMemoryIterator(index IndexType, run EncodedRun, keys *btree.BTreeG[s
 		index:      index,
 		position:   -1,
 		membership: run.Membership,
+		fixed:      run.Fixed,
 		tree:       keys,
 		rangeStart: run.Start,
 		rangeEnd:   string(run.End),
@@ -742,11 +749,16 @@ func (i *memoryIterator) Datom() (*datalog.Datom, error) {
 		return nil, errors.New("no current datom")
 	}
 	if !i.hasDatom {
+		run := runDecode{fixed: i.fixed}
+		if i.runHeld {
+			run.shared = &i.currentDatom
+		}
 		datom, err := decodeDatomFromKey(
 			i.index,
 			i.keys[i.position],
 			i.encoder,
 			i.blobs,
+			run,
 		)
 		if err != nil {
 			i.err = err
@@ -754,6 +766,7 @@ func (i *memoryIterator) Datom() (*datalog.Datom, error) {
 		}
 		i.currentDatom = datom
 		i.hasDatom = true
+		i.runHeld = true
 	}
 	return &i.currentDatom, nil
 }
@@ -781,6 +794,8 @@ func (i *memoryIterator) Seek(bound ScanBound) {
 	// caller gets the run it asked for rather than its start and the scan's
 	// remainder.
 	i.membership = run.Membership
+	i.fixed = run.Fixed
+	i.runHeld = false
 	i.end = run.End
 	i.hasDatom = false
 	if !i.chunkHolds(run.Start) {

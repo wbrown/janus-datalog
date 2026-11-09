@@ -192,6 +192,16 @@ func (m *AnnotatedMatcher) LookupAttribute(
 	return nil, false, fmt.Errorf("entity lookup unavailable: underlying matcher %T does not support attribute lookup", m.underlying)
 }
 
+// AttributeLookup forwards to the underlying matcher, so a reader of one
+// attribute reads it through the annotation wrapper as it does without one.
+// An underlying matcher that cannot look up is an error.
+func (m *AnnotatedMatcher) AttributeLookup(attr datalog.Keyword) (query.AttributeLookup, error) {
+	if elm, ok := m.underlying.(EntityLookupMatcher); ok {
+		return elm.AttributeLookup(attr)
+	}
+	return nil, fmt.Errorf("entity lookup unavailable: underlying matcher %T does not support attribute lookup", m.underlying)
+}
+
 // LookupSource forwards to the underlying matcher, so a database function
 // names its source through the annotation wrapper and reads that source's own
 // lookup. An underlying matcher that cannot look up is an error.

@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -125,7 +126,8 @@ func TestPlanFormScope_PlansEachFrameTheExecutorFrames(t *testing.T) {
 	}
 	t.Run("an or-join whose header no group binds", func(t *testing.T) {
 		p := planner()
-		require.NoError(t, p.planFormScope(orJoin, nil, nil, query.Bindings{}, nil))
+		_, err := p.planFormScope(orJoin, nil, nil, query.Bindings{}, nil)
+		require.NoError(t, err)
 		for i, branch := range orJoin.Branches {
 			require.True(t, heldPlan(p, Scope{Required: []query.Symbol{e}, Find: outputs, Clauses: branch}), "branch %d is planned over the required run alone", i+1)
 		}
@@ -134,7 +136,8 @@ func TestPlanFormScope_PlansEachFrameTheExecutorFrames(t *testing.T) {
 	})
 	t.Run("an or-join whose header a group binds, its output among them", func(t *testing.T) {
 		p := planner()
-		require.NoError(t, p.planFormScope(orJoin, []query.Symbol{m, e}, nil, query.Bindings{}, nil))
+		_, err := p.planFormScope(orJoin, []query.Symbol{m, e}, nil, query.Bindings{}, nil)
+		require.NoError(t, err)
 		for i, branch := range orJoin.Branches {
 			require.True(t, heldPlan(p, Scope{Required: []query.Symbol{e}, Find: outputs, Clauses: branch}), "branch %d is first planned over the required run alone", i+1)
 			require.True(t, heldPlan(p, Scope{Required: []query.Symbol{e, m}, Clauses: branch}), "branch %d is planned over the required run and the carried output, in the header's order", i+1)
@@ -144,27 +147,30 @@ func TestPlanFormScope_PlansEachFrameTheExecutorFrames(t *testing.T) {
 	})
 	t.Run("a not-join", func(t *testing.T) {
 		p := planner()
-		require.NoError(t, p.planFormScope(notJoin, []query.Symbol{e}, nil, query.Bindings{}, nil))
+		_, err := p.planFormScope(notJoin, []query.Symbol{e}, nil, query.Bindings{}, nil)
+		require.NoError(t, err)
 		require.True(t, heldPlan(p, Scope{Required: []query.Symbol{e}, Clauses: notJoin.Clauses}), "the body is planned over its header")
 		_, _, size := p.cache.Stats()
 		require.Equal(t, 1, size)
 	})
 	t.Run("a subquery", func(t *testing.T) {
 		p := planner()
-		require.NoError(t, p.planFormScope(subquery, []query.Symbol{a}, nil, query.Bindings{}, nil))
+		_, err := p.planFormScope(subquery, []query.Symbol{a}, nil, query.Bindings{}, nil)
+		require.NoError(t, err)
 		require.True(t, heldPlan(p, Scope{Required: []query.Symbol{a}, Find: subquery.Query.Find, Clauses: subquery.Query.Where}), "the inner query is planned over its inner symbols with its find")
 		_, _, size := p.cache.Stats()
 		require.Equal(t, 1, size)
 	})
 	t.Run("a pattern", func(t *testing.T) {
 		p := planner()
-		require.NoError(t, p.planFormScope(q.Where[0], nil, nil, query.Bindings{}, nil))
+		_, err := p.planFormScope(q.Where[0], nil, nil, query.Bindings{}, nil)
+		require.NoError(t, err)
 		_, _, size := p.cache.Stats()
 		require.Equal(t, 0, size, "a clause that is no form plans nothing")
 	})
 }
 
-// planFormScopes walks the phases a planner made, each form framed with the
+// planClauses walks the phases a planner made, each form framed with the
 // symbols the clauses before it provide as the subject's: after the walk the
 // cache holds each form's frames, the or-join's branches over ?e with ?m as
 // their find, since ?m is bound by nothing before the form, the not-join's
@@ -179,7 +185,7 @@ func TestPlanFormScopes_PlansEveryFormOfThePhases(t *testing.T) {
 	phased, err := NewClauseBasedPlanner(nil, PlannerOptions{}).Plan(prepared, query.Bindings{}, nil)
 	require.NoError(t, err)
 	p := NewClauseBasedPlanner(nil, PlannerOptions{Cache: NewPlanCache(10, 0)})
-	_, err = p.planFormScopes(phased.Phases, query.Bindings{}, nil)
+	_, err = p.planClauses(phased.Phases, query.Bindings{}, nil)
 	require.NoError(t, err)
 	outputs := []query.FindElement{query.FindVariable{Symbol: m}}
 	for i, branch := range orJoin.Branches {
@@ -189,6 +195,126 @@ func TestPlanFormScopes_PlansEveryFormOfThePhases(t *testing.T) {
 	require.True(t, heldPlan(p, Scope{Required: []query.Symbol{a}, Find: subquery.Query.Find, Clauses: subquery.Query.Where}), "the subquery's inner query")
 	_, _, size := p.cache.Stats()
 	require.Equal(t, 4, size, "every form's frames and nothing else")
+}
+
+// A plan carries the frames each of its forms runs, by the form's clause, in
+// branch order: the plans the cache serves for the or-join's branches, the
+// not-join's body and the subquery's inner query, each beside whether its
+// branch reads nothing of what it is given. Every branch of formsQuery reads
+// its header; an or-join branch grounding its output reads nothing.
+func TestThePlanCarriesTheFramesItsFormsRun(t *testing.T) {
+	e, m, a := datalog.NewSymbol("?e"), datalog.NewSymbol("?m"), datalog.NewSymbol("?a")
+	q, err := parser.ParseQuery(formsQuery)
+	require.NoError(t, err)
+	prepared, err := query.Prepare(q, nil)
+	require.NoError(t, err)
+	orJoin, notJoin, subquery := prepared.Where[1].(*query.OrJoinClause), prepared.Where[2].(*query.NotJoinClause), prepared.Where[3].(*query.SubqueryPattern)
+	p := NewClauseBasedPlanner(nil, PlannerOptions{Cache: NewPlanCache(10, 0)})
+	plan, err := p.Plan(prepared, query.Bindings{}, nil)
+	require.NoError(t, err)
+
+	cached := func(scope Scope) *RealizedPlan {
+		held, ok := p.cache.GetWithOptions(scope.Query(), query.Bindings{}, p.options)
+		require.True(t, ok, "the cache holds the scope's plan")
+		return held
+	}
+	outputs := []query.FindElement{query.FindVariable{Symbol: m}}
+	require.Len(t, plan.Frames[orJoin], len(orJoin.Branches), "one frame per or-join branch")
+	for i, branch := range orJoin.Branches {
+		require.Same(t, cached(Scope{Required: []query.Symbol{e}, Find: outputs, Clauses: branch}), plan.Frames[orJoin][i].Plan, "or-join branch %d", i+1)
+		require.False(t, plan.Frames[orJoin][i].ReadsNothing, "or-join branch %d reads ?e", i+1)
+	}
+	require.Len(t, plan.Frames[notJoin], 1, "the not-join's one body")
+	require.Same(t, cached(Scope{Required: []query.Symbol{e}, Clauses: notJoin.Clauses}), plan.Frames[notJoin][0].Plan, "the not-join's body")
+	require.False(t, plan.Frames[notJoin][0].ReadsNothing, "the not-join's body reads ?e")
+	require.Len(t, plan.Frames[subquery], 1, "the subquery's one inner query")
+	require.Same(t, cached(Scope{Required: []query.Symbol{a}, Find: subquery.Query.Find, Clauses: subquery.Query.Where}), plan.Frames[subquery][0].Plan, "the subquery's inner query")
+	require.False(t, plan.Frames[subquery][0].ReadsNothing, "the subquery's inner query reads ?a")
+
+	grounding, err := parser.ParseQuery(`[:find ?e ?m :where [?e :t/k ?a] (or-join [[?e] ?m] [?e :t/q ?m] [(ground 1) ?m])]`)
+	require.NoError(t, err)
+	preparedGrounding, err := query.Prepare(grounding, nil)
+	require.NoError(t, err)
+	form := preparedGrounding.Where[1].(*query.OrJoinClause)
+	groundingPlan, err := p.Plan(preparedGrounding, query.Bindings{}, nil)
+	require.NoError(t, err)
+	require.Len(t, groundingPlan.Frames[form], 2, "one frame per or-join branch")
+	require.False(t, groundingPlan.Frames[form][0].ReadsNothing, "the branch reading ?e")
+	require.True(t, groundingPlan.Frames[form][1].ReadsNothing, "the branch grounding ?m reads nothing of what it is given")
+}
+
+// A plan states each clause it reads in windows: a data pattern or an
+// invocation sharing a variable with a group the scope produces. A pattern's
+// matches are produced by the scope, so a later pattern sharing one of its
+// variables is read in windows. A pattern sharing its variables with a
+// predicate the scope derives at its clause is read in windows too, since the
+// derivation is produced by the scope. A pattern sharing its variables only
+// with what the scope is given binds through it: the query's inputs, or the
+// delta a recursive rule's copy opens with, a relation the scope's bindings
+// hold. An invocation after a pattern sharing its variable is read in windows.
+// The plan holds which clauses are windowed, and nothing of how the executor
+// reads them.
+func TestThePlanStatesEachPatternsRoute(t *testing.T) {
+	rules, err := parser.ParseRules(`[[(r ?a ?b) [?a :t/p ?b]]]`)
+	require.NoError(t, err)
+	planned := func(t *testing.T, text string, algebra bool, bindings query.Bindings) *RealizedPlan {
+		q, err := parser.ParseQuery(text)
+		require.NoError(t, err)
+		prepared, err := query.Prepare(q, bindings.Rules)
+		require.NoError(t, err)
+		plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: algebra}).Plan(prepared, bindings, nil)
+		require.NoError(t, err)
+		return plan
+	}
+	clause := func(t *testing.T, plan *RealizedPlan, holds func(query.Clause) bool) query.Clause {
+		for _, phase := range plan.Phases {
+			for _, c := range phase.Query.Where {
+				if holds(c) {
+					return c
+				}
+			}
+		}
+		require.Fail(t, "the plan holds the clause")
+		return nil
+	}
+	reads := func(attr string) func(query.Clause) bool {
+		return func(c query.Clause) bool {
+			pattern, ok := c.(*query.DataPattern)
+			if !ok {
+				return false
+			}
+			constant, ok := pattern.GetA().(query.Constant)
+			return ok && constant.Value == datalog.NewKeyword(attr)
+		}
+	}
+
+	for _, algebra := range []bool{false, true} {
+		t.Run(fmt.Sprintf("algebra=%v", algebra), func(t *testing.T) {
+			plan := planned(t, `[:find ?e ?x :where [?e :t/kind ?k] [?x :t/label ?k]]`, algebra, query.Bindings{})
+			first, second := clause(t, plan, reads(":t/kind")), clause(t, plan, reads(":t/label"))
+			require.NotContains(t, plan.Windows, first, "the first pattern follows no group")
+			require.True(t, plan.Windows[second], "the second pattern shares ?k with the first pattern's matches, which the scope produces")
+
+			plan = planned(t, `[:find ?e ?k :in $ [?e ...] :where [?e :t/kind ?k]]`, algebra, query.Bindings{Symbols: map[query.Symbol]bool{datalog.NewSymbol("?e"): true}})
+			require.NotContains(t, plan.Windows, clause(t, plan, reads(":t/kind")), "a pattern sharing its variables only with the inputs binds through them")
+
+			plan = planned(t, `[:find ?x ?y :in $ % :where [?x :t/k _] (r ?x ?y)]`, algebra, query.Bindings{Rules: rules})
+			invocation := clause(t, plan, func(c query.Clause) bool {
+				_, ok := c.(*query.RuleInvocation)
+				return ok
+			})
+			require.True(t, plan.Windows[invocation], "the invocation shares ?x with the pattern's matches, which the scope produces")
+
+			chain, err := parser.ParseRules(`[[(reach ?a ?b) [?a :t/p ?b]] [(reach ?a ?c) (reach ?a ?b) [?b :t/q ?c]]]`)
+			require.NoError(t, err)
+			bodies, err := PlanStratum(NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: algebra}), chain, chain.Strata()[0], nil)
+			require.NoError(t, err)
+			require.NotEmpty(t, bodies.Delta, "the recursive rule has a delta copy")
+			for _, body := range bodies.Delta {
+				require.NotContains(t, body.Plan.Windows, clause(t, body.Plan, reads(":t/q")), "the copy's pattern binds through the delta, a relation the scope's bindings hold")
+			}
+		})
+	}
 }
 
 // planInvocation plans the bodies an invocation runs into the cache, as the
@@ -219,17 +345,8 @@ func TestPlanInvocation_PlansTheBodiesAnInvocationRuns(t *testing.T) {
 		require.True(t, heldBody(p, rs, base, base.Body), "the base rule's plain body")
 		copied, _ := markDelta(recursive.Body, map[query.Symbol]bool{follows: true}, 0)
 		require.True(t, heldBody(p, rs, recursive, copied), "the recursive rule's delta copy")
-		// The delta leads the copy, so its pattern stands after it and
-		// windows over the delta's symbols (DELTA_LEADS_ITS_COPY_PROOF.md).
-		pattern, delta := copied[0], copied[1]
-		framing := WindowFraming(query.ScopeOf(pattern, rs).Provides, query.ScopeOf(delta, rs).Provides)
-		framing.Carried = framing.CarriedBy(query.ScopeOf(delta, rs).Provides)
-		for _, frame := range framing.Branches([][]query.Clause{{pattern}}, rs) {
-			_, held := p.cache.GetWithOptions(frame.Scope.Query(), query.Bindings{Rules: rs, Held: query.HeldByFixpoint}, p.options)
-			require.True(t, held, "the window scope of the recursive copy's pattern over the delta, under the body's bindings")
-		}
 		_, _, size := p.cache.Stats()
-		require.Equal(t, 3, size, "the two bodies, the window scope of the recursive copy's pattern, and nothing else")
+		require.Equal(t, 2, size, "the two bodies and nothing else: the copy's pattern binds through the delta, which the scope is given, and reads no window")
 	})
 	t.Run("a held predicate under a body a fixpoint runs", func(t *testing.T) {
 		p := planner()
@@ -260,13 +377,14 @@ func TestPlanInvocation_PlansTheBodiesAnInvocationRuns(t *testing.T) {
 	})
 }
 
-// planFormScopes plans the window scope of every windowable clause, the
-// frame a run reads when the clause's group streams
+// planClauses plans the window scope of every clause it windows, the frame
+// a run reads for a clause over a group the scope produces
 // (docs/proposals/EXECUTION_PLANS_NOTHING_PROOF.md T1, T5): a pattern after a
 // pattern binding one of its symbols is planned over that symbol with its
-// other symbol as the find, an invocation after such a pattern likewise, and
-// a window scope's own clause, standing after scope/required alone, is
-// planned no window scope of its own.
+// other symbol as the find, an invocation after such a pattern likewise, a
+// pattern after two given relations joined likewise, a clause sharing no
+// bound symbol is planned none, and a window scope's own clause, over the
+// required run alone, is planned no window scope of its own.
 func TestPlanFormScopes_PlansTheWindowScopeOfAWindowableClause(t *testing.T) {
 	e := datalog.NewSymbol("?e")
 	planner := func() *ClauseBasedPlanner {
@@ -292,7 +410,7 @@ func TestPlanFormScopes_PlansTheWindowScopeOfAWindowableClause(t *testing.T) {
 			}
 		}
 		p := planner()
-		_, err := p.planFormScopes(phases, query.Bindings{}, nil)
+		_, err := p.planClauses(phases, query.Bindings{}, nil)
 		require.NoError(t, err)
 		window := Scope{Required: []query.Symbol{e}, Find: []query.FindElement{query.FindVariable{Symbol: other}}, Clauses: []query.Clause{second}}
 		require.True(t, heldPlan(p, window), "the second pattern's window scope over ?e")
@@ -307,16 +425,48 @@ func TestPlanFormScopes_PlansTheWindowScopeOfAWindowableClause(t *testing.T) {
 		require.Len(t, phases, 1)
 		inv := phases[0].Query.Where[1].(*query.RuleInvocation)
 		p := planner()
-		_, err = p.planFormScopes(phases, query.Bindings{Rules: rs}, nil)
+		_, err = p.planClauses(phases, query.Bindings{Rules: rs}, nil)
 		require.NoError(t, err)
 		window := Scope{Required: []query.Symbol{e}, Find: []query.FindElement{query.FindVariable{Symbol: y}}, Clauses: []query.Clause{inv}}
 		_, held := p.cache.GetWithOptions(window.Query(), query.Bindings{Rules: rs}, p.options)
 		require.True(t, held, "the invocation's window scope over ?e")
 	})
+	t.Run("a pattern after two given relations joined", func(t *testing.T) {
+		// Under a body a fixpoint runs, an invocation of a predicate without
+		// required positions reads the relation the fixpoint holds, as the
+		// required run is read; joined, the two given relations are a group the
+		// scope produces, so the pattern over its ?b is windowed and its window
+		// scope is planned.
+		rs, err := parser.ParseRules(`[[(p ?a ?b) [?a :t/p ?b]]]`)
+		require.NoError(t, err)
+		a, b, c := datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")
+		q, err := parser.ParseQuery(`[:find ?a ?c :in $ % :where (p ?a ?b) [?b :t/q ?c]]`)
+		require.NoError(t, err)
+		prepared, err := query.Prepare(q, rs)
+		require.NoError(t, err)
+		bindings := query.Bindings{Rules: rs, Held: query.HeldByFixpoint}
+		p := planner()
+		body := Scope{Required: []query.Symbol{a}, Find: []query.FindElement{query.FindVariable{Symbol: c}}, Clauses: prepared.Where}
+		plan, err := p.PlanScope(body, bindings, nil)
+		require.NoError(t, err)
+		var pattern *query.DataPattern
+		for _, phase := range plan.Phases {
+			for _, clause := range phase.Query.Where {
+				if dp, ok := clause.(*query.DataPattern); ok {
+					pattern = dp
+				}
+			}
+		}
+		require.NotNil(t, pattern)
+		require.True(t, plan.Windows[pattern], "the plan windows the pattern over the produced group")
+		window := Scope{Required: []query.Symbol{b}, Find: []query.FindElement{query.FindVariable{Symbol: c}}, Clauses: []query.Clause{pattern}}
+		_, held := p.cache.GetWithOptions(window.Query(), bindings, p.options)
+		require.True(t, held, "the pattern's window scope over ?b is planned")
+	})
 	t.Run("a clause sharing no bound symbol", func(t *testing.T) {
 		phases := phasesOf(t, `[:find ?e ?b :where [?e :t/k ?a] [?x :t/q ?b]]`, nil)
 		p := planner()
-		_, err := p.planFormScopes(phases, query.Bindings{}, nil)
+		_, err := p.planClauses(phases, query.Bindings{}, nil)
 		require.NoError(t, err)
 		_, _, size := p.cache.Stats()
 		require.Equal(t, 0, size, "a clause sharing no bound symbol never windows and is planned no window scope")

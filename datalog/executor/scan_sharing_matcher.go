@@ -8,14 +8,17 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// ScanSharingMatcher wraps a PatternMatcher and deduplicates unbound scans
-// using a ScanRegistry. When the same unbound pattern is requested multiple
-// times (e.g., by 3 decorrelated subqueries all scanning [?t :task/root ?s]),
-// the first call creates a LazySeq over the storage iterator and registers it.
-// Subsequent calls return LazySeqRelations backed by the same shared LazySeq.
+// ScanSharingMatcher wraps a PatternMatcher and serves, from one LazySeq per
+// fingerprint, the scans a query's plan reads unbound at two or more sites
+// (ScanRegistry). The rules:
 //
-// Only unbound scans (bindings == nil or empty) participate in sharing.
-// Bound scans with entity IDs from prior joins pass through to the inner matcher.
+//   - A reader's close never closes a shared scan.
+//   - The registry holds a shared scan's head until every site the plan lists
+//     for it has read it.
+//   - A fingerprint the plan reads at one site is not shared.
+//
+// Every other match goes to the inner matcher with its bindings, as it does
+// with sharing off.
 type ScanSharingMatcher struct {
 	inner    PatternMatcher
 	registry *ScanRegistry
@@ -33,21 +36,18 @@ func NewScanSharingMatcher(inner PatternMatcher, registry *ScanRegistry, handler
 	}
 }
 
-// Match implements PatternMatcher. For unbound scans, checks the registry
-// first. For bound scans, delegates directly to the inner matcher.
+// Match implements PatternMatcher. A match at a site the registry serves reads
+// the shared scan's head: the first listed site's read creates the scan by
+// asking the inner matcher for it with no bindings, so the shared result is
+// the fingerprint's alone. Any other match goes to the inner matcher with its
+// bindings.
 func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
 	pattern, err := q.SingleDataPattern()
 	if err != nil {
 		return nil, err
 	}
-	// Only share unbound scans — bound scans are specialized to binding values
-	if bindings != nil && len(bindings) > 0 {
-		return m.inner.Match(q, bindings)
-	}
-
-	fp := FingerprintScan(q, pattern)
-	shared, hit, err := m.registry.GetOrCreate(fp, func() (*SharedScan, error) {
-		rel, err := m.inner.Match(q, bindings)
+	head, shared, hit, err := m.registry.GetOrCreate(q, pattern, func() (*SharedScan, error) {
+		rel, err := m.inner.Match(q, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -61,6 +61,9 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 	if err != nil {
 		return nil, err
 	}
+	if head == nil {
+		return m.inner.Match(q, bindings)
+	}
 	remapped := remapSymbols(shared.Symbols, pattern)
 	properties := remapRelationProperties(shared.Properties, shared.Symbols, remapped)
 	if m.handler != nil {
@@ -71,16 +74,17 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 		m.handler(annotations.Event{
 			Name: eventName,
 			Data: map[string]interface{}{
-				"fingerprint": fp.String(),
+				"fingerprint": FingerprintScan(q, pattern).String(),
 				"symbols":     symStrings(remapped),
 			},
 		})
 	}
 	return &LazySeqRelation{
-		seq:        shared.Seq,
+		seq:        head,
 		symbols:    remapped,
 		options:    shared.Options,
 		properties: properties,
+		shared:     true,
 	}, nil
 }
 
@@ -150,6 +154,16 @@ func (m *ScanSharingMatcher) LookupAttribute(
 		return elm.LookupAttribute(entity, attr)
 	}
 	return nil, false, fmt.Errorf("entity lookup unavailable: inner matcher %T does not support attribute lookup", m.inner)
+}
+
+// AttributeLookup forwards to the inner matcher, so a reader of one
+// attribute reads it under scan sharing as it does without it. An inner
+// matcher that cannot look up is an error.
+func (m *ScanSharingMatcher) AttributeLookup(attr datalog.Keyword) (query.AttributeLookup, error) {
+	if elm, ok := m.inner.(EntityLookupMatcher); ok {
+		return elm.AttributeLookup(attr)
+	}
+	return nil, fmt.Errorf("entity lookup unavailable: inner matcher %T does not support attribute lookup", m.inner)
 }
 
 // LookupSource forwards to the inner matcher, so a database function names

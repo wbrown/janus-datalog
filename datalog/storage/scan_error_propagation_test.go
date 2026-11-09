@@ -288,7 +288,7 @@ func TestValidateCandidateSurfacesScanErrors(t *testing.T) {
 				currentBoundV:   "bound-value",
 			}
 
-			ok, err := it.validateCandidate(datalog.NewIdentity("user:alice"), datalog.NewKeyword(":user/email"))
+			ok, err := it.validateCandidate(datalog.NewIdentity("user:alice"), datalog.NewKeyword(":user/email"), nil)
 			if err == nil {
 				t.Fatal("expected the scan failure to surface, got nil error")
 			}

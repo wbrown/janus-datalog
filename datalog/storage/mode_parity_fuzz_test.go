@@ -85,22 +85,27 @@ func modeParityAnswer(d *Database, text string, inputs []interface{}) (string, e
 	return strings.Join(rendered, " | "), nil
 }
 
-// The two optimizer paths answer every query queryfuzz draws alike on one
-// dataset, on every backend: both answer the same tuples, or both refuse. A
-// refusal on one path beside an answer on the other, and two answers that
-// differ, are reported with the query, each class with its count and its
-// first instances. The texts the parser refuses are the parser's and run on
-// neither path.
+// Every leg of the optimizer matrix, the algebra optimizer and scan sharing
+// each on and off, answers every query queryfuzz draws alike on one dataset,
+// on every backend: each leg answers the tuples the leg with both off
+// answers, or refuses where it refuses. A refusal on one leg beside an answer
+// on the other, and two answers that differ, are reported with the query and
+// both legs, each class with its count and its first instances. The texts the
+// parser refuses are the parser's and run on no leg.
 func TestQueriesAnswerAlikeUnderBothOptimizerModes(t *testing.T) {
 	for _, backend := range AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {
-			dbs := map[bool]*Database{}
-			for _, algebra := range []bool{true, false} {
-				mode := optimizerMode{name: backend.Name, algebra: algebra, backend: backend}
-				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-				modeParityEntities(t, d)
-				dbs[algebra] = d
+			modes := buildOptimizerModes([]Backend{backend})
+			dbs := make([]*Database, len(modes))
+			reference := -1
+			for i, mode := range modes {
+				dbs[i] = createOptimizerModeDB(t, mode, DatabaseOptions{})
+				modeParityEntities(t, dbs[i])
+				if !mode.algebra && !mode.sharing {
+					reference = i
+				}
 			}
+			require.GreaterOrEqual(t, reference, 0, "the matrix holds the leg with the algebra optimizer and scan sharing off")
 			var oneRefusal, differing []string
 			ran, answered, refused := 0, 0, 0
 			for _, seed := range queryfuzz.Seeds {
@@ -113,23 +118,28 @@ func TestQueriesAnswerAlikeUnderBothOptimizerModes(t *testing.T) {
 					}
 					ran++
 					inputs := modeParityInputs(q)
-					on, errOn := modeParityAnswer(dbs[true], text, inputs)
-					off, errOff := modeParityAnswer(dbs[false], text, inputs)
-					switch {
-					case errOn != nil && errOff != nil:
-						refused++
-					case errOn == nil && errOff == nil && on == off:
-						answered++
-					case errOn == nil && errOff == nil:
-						differing = append(differing, fmt.Sprintf("%s\n    algebra on:  %s\n    algebra off: %s", text, on, off))
-					default:
-						oneRefusal = append(oneRefusal, fmt.Sprintf("%s\n    algebra on:  %v %s\n    algebra off: %v %s", text, errOn, on, errOff, off))
+					want, errWant := modeParityAnswer(dbs[reference], text, inputs)
+					for leg, mode := range modes {
+						if leg == reference {
+							continue
+						}
+						got, errGot := modeParityAnswer(dbs[leg], text, inputs)
+						switch {
+						case errGot != nil && errWant != nil:
+							refused++
+						case errGot == nil && errWant == nil && got == want:
+							answered++
+						case errGot == nil && errWant == nil:
+							differing = append(differing, fmt.Sprintf("%s\n    %s: %s\n    %s: %s", text, mode.name, got, modes[reference].name, want))
+						default:
+							oneRefusal = append(oneRefusal, fmt.Sprintf("%s\n    %s: %v %s\n    %s: %v %s", text, mode.name, errGot, got, modes[reference].name, errWant, want))
+						}
 					}
 				}
 			}
-			t.Logf("%d texts ran: %d answered alike, %d refused on both paths, %d refused on one, %d answered differently", ran, answered, refused, len(oneRefusal), len(differing))
+			t.Logf("%d texts ran: %d comparisons answered alike, %d refused on both legs, %d refused on one, %d answered differently", ran, answered, refused, len(oneRefusal), len(differing))
 			require.Greater(t, ran, 0, "the parser accepted no drawn query")
-			require.Greater(t, answered, 0, "no drawn query answered on both paths, so the comparison compared nothing")
+			require.Greater(t, answered, 0, "no drawn query answered on two legs, so the comparison compared nothing")
 			report := func(label string, failures []string) {
 				if len(failures) == 0 {
 					return

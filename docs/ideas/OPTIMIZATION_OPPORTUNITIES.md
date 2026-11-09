@@ -735,11 +735,14 @@ Candidate investigations:
 1. **Completed (July 13, 2026):** lower optimized algebra into nested Datalog so
    rewrites survive while the optimizer remains `Query → Query`. Structural
    operator tests and exact optimized/off tuple differentials are green.
-2. Backward liveness and inner-join `Project` insertion are proven and retained
-   behind default-off `EnableJoinProjectInsertion`. Lowering the projection as a
+2. Inner-join `Project` insertion by backward liveness was removed with
+   `EnableJoinProjectInsertion` (2026-11). Lowering the projection as a
    relation-binding subquery regressed a focused benchmark by 60.4% time, 60.7%
-   memory, and 79.8% allocations. Ready `Select` movement through
-   joins/subqueries/fallback remains unimplemented.
+   memory, and 79.8% allocations, and a projection lowered as a scope carried
+   nothing of the enclosing scope across its boundary;
+   [JOIN_PROJECT_INSERTION.md](JOIN_PROJECT_INSERTION.md) records the idea.
+   Ready `Select` movement through joins/subqueries/fallback remains
+   unimplemented.
 3. **Completed (July 13, 2026):** fuse proven CardinalityOne literal constraints
    into cache-backed per-tuple lookup/filter traversal. Focused 1K/10K workloads
    improve 21.9–23.2% time, 35.3–38.8% memory, and 42.3–43.4% allocations.
@@ -853,8 +856,7 @@ Final confidence gates on 2026-07-12:
 
 - Recent hash-join inner-loop changes are already measured and effective.
 - Planning latency is measured in microseconds.
-- Scan sharing and entity prefetch are benchmarked as neutral in the default
-  workload.
+- Entity prefetch is benchmarked as neutral in the default workload.
 - Symmetric hash join trades throughput for time-to-first-row.
 - Streaming hash joins are **8.04% slower**, use **3.78% more memory**, and
   allocate **8.34% more** on the complex checkpoint; keep them opt-in.

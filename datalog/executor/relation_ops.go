@@ -47,7 +47,9 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 	return result
 }
 
-// filterWithPredicateAndLookup filters a relation using a predicate with optional database lookup.
+// filterWithPredicateAndLookup filters a relation using a predicate.
+// evaluation is a database-function predicate's evaluation through its
+// source's lookup, nil for a predicate its own Eval decides.
 // env is the query scope's environment relation (single-valued :in
 // parameters); its one tuple binds into every tuple's evaluation — the join of
 // the environment into the operator, with the per-tuple bindings map as
@@ -66,11 +68,11 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 // here left it to consumers that inspect relations structurally (emptiness
 // branches) and laundered it into a silent empty
 // (BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY).
-func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, env Relation) (result Relation, resultErr error) {
+func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, evaluation query.PredicateEvaluation, env Relation) (result Relation, resultErr error) {
 	if properties := rel.Properties(); properties.Evaluates || canFailOnAValueOver(pred, properties.Identities) {
 		properties = properties.clone()
 		properties.Evaluates = true
-		filter := NewPredicateFilterIterator(rel.Iterator(), rel.Symbols(), pred, lookup, env)
+		filter := NewPredicateFilterIterator(rel.Iterator(), rel.Symbols(), pred, evaluation, env)
 		return NewStreamingRelationWithProperties(rel.Symbols(), filter, rel.Options(), properties), nil
 	}
 
@@ -88,9 +90,6 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 
 	// Reuse single bindings map to avoid repeated allocations
 	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(envSymbols))
-
-	// Check if this is a DatabaseFunctionPredicate that needs lookup
-	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
 
 	// Named return + closure so the deferred Close() also runs on panic
 	// (predicate Eval is user-supplied code and can panic), without losing
@@ -117,8 +116,8 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		// Evaluate the predicate
 		var passes bool
 		var err error
-		if isDbFuncPred && lookup != nil {
-			passes, err = dbFuncPred.EvalWithLookup(bindings, lookup)
+		if evaluation != nil {
+			passes, err = evaluation(bindings)
 		} else {
 			passes, err = pred.Eval(bindings)
 		}
@@ -147,12 +146,13 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 // evaluateExpressionWithLookup answers rel joined with what expr's binding
 // reads from its value on each tuple, as a stream that evaluates as it is
 // pulled: a tuple nothing pulls is never evaluated, and an evaluation failure
-// surfaces when the result is driven. If lookup is non-nil and the expression
-// is a DatabaseFunction, it evaluates through EvalWithLookup. env is the
-// query scope's environment relation (single-valued :in parameters); its one
-// tuple binds into every tuple's evaluation.
-func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, env Relation) Relation {
-	evaluator := NewFunctionEvaluatorIterator(rel.Iterator(), rel.Symbols(), expr, lookup, env)
+// surfaces when the result is driven. The evaluation it is given is a
+// database function's evaluation through its source's lookup, and is nil for
+// a function its own Eval computes. The environment env is the query scope's
+// relation of single-valued :in parameters; its one tuple binds into every
+// tuple's evaluation.
+func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, evaluation query.Evaluation, env Relation) Relation {
+	evaluator := NewFunctionEvaluatorIterator(rel.Iterator(), rel.Symbols(), expr, evaluation, env)
 
 	// Only extension symbols touch the properties: bound positions are
 	// filtered, never rewritten, so orderings and keys naming them stay

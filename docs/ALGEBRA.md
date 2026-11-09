@@ -463,9 +463,10 @@ reads the outer is evaluated over the window's keys, never per tuple.
 - `unanswered`, under the fallback, narrows a branch's run to the keys the
   earlier branches left unanswered.
 - `recordAnswered` records the keys a build answered.
-- `prefetchWindow`, the fallback's window step and Rule 6's first trigger
-  point, prefetches a window's distinct entities above the threshold under
-  `EnableEntityPrefetch` before the window's branches are built.
+- `prefetchWindow`, the fallback's window step and the trigger point Rule 6
+  states for the fallback, prefetches a window's distinct entities above the
+  threshold under `EnableEntityPrefetch` before the window's branches are
+  built.
 - `buildFromCache`, from the window the trigger prefetched on, builds a branch
   of one data pattern on the default source, whose entity position is the one
   required variable it reads, on a cardinality-one attribute under a
@@ -976,30 +977,24 @@ running in a goroutine. The executor continues processing (hash joins,
 etc.) in parallel. By the time subsequent patterns need the data, the
 cache is warm.
 
-**Trigger points**:
-1. The fallback's window step (`OrFallbackIterator.prefetchWindow`): before
-   a window's branches are built, when a branch of one data pattern reads the
-   subject's entity symbol, the window's distinct entities above the
-   threshold are prefetched, and the branch is built from the cache from that
-   window on
-2. The clause-by-clause executor: after a DataPattern scan produces entity
-   IDs, if subsequent clauses reference the same entity variable, prefetch
-3. The matcher itself: when `Match()` returns a Relation with entity
-   symbols and bindings reference those entities, trigger prefetch
+**Trigger point**: the fallback's window step
+(`OrFallbackIterator.prefetchWindow`). Before a window's branches are built,
+when a branch of one data pattern reads the subject's entity symbol, the
+window's distinct entities above the threshold are prefetched, and the branch
+is built from the cache from that window on.
 
 **What needs to exist**:
 1. `Cache.PrefetchEntities(entities []Entity, resolver CacheResolver)` —
    batch load all (E, A) pairs for a set of entities
 2. `PatternMatcher.PrefetchEntities(entities []datalog.Identity)` — sorts
    by key order, scans EATV, resolves CRDT, populates cache
-3. The two triggers in the executor: `DefaultQueryExecutor.Execute` after the
-   first data pattern and `OrFallbackIterator.prefetchWindow` before a
-   fallback window's build, both under `EnableEntityPrefetch` and the one
-   threshold `prefetchEntityThreshold`
+3. The trigger in the executor: `OrFallbackIterator.prefetchWindow` before a
+   fallback window's build, under `EnableEntityPrefetch` and the threshold
+   `prefetchEntityThreshold`
 
 **Guard conditions**:
 - Only prefetch when entity count exceeds the threshold (`prefetchEntityThreshold`, 50)
-- Only prefetch when subsequent clauses reference the same entity variable
+- Only prefetch when a branch of one data pattern reads the subject's entity symbol
 - Don't prefetch for temporal queries: the matcher's `PrefetchEntities`
   prefetches nothing under History and keeps an as-of handle's view
 
@@ -1031,9 +1026,10 @@ Found via `go tool pprof`, not theorizing. Fix: one line.
 | + Scan sharing | 401ms | 125ms |
 | + Entity prefetch | 395ms | 125ms |
 
-Decorrelation provides 5× speedup. Scan sharing and entity prefetch are
-performance-neutral at this scale — BadgerDB's block cache and the fast
-key-only iterators make redundant scans cheap.
+Decorrelation provides 5× speedup. Entity prefetch is performance-neutral at
+this scale. Scan sharing measured neutral in this matrix. On the complex
+checkpoint it reads the three subquery bodies' status scans from storage once,
+and the status table below gives that measurement.
 
 ### Infrastructure status
 
@@ -1041,7 +1037,7 @@ key-only iterators make redundant scans cheap.
 |---|---|---|
 | PrefetchValues=false | Active, critical | 34× speedup |
 | Algebra optimizer (Rules 1, 4, 5) | Active | 5× decorrelation speedup |
-| Scan sharing (LazySeq) | Disabled (default off) | Correct but no measurable benefit |
+| Scan sharing (LazySeq) | Active (default on) | Complex checkpoint 11.69 ms → 8.83 ms per query |
 | Entity prefetch | Disabled (default off) | Correct but no measurable benefit |
 | Selinger decorrelation | Disabled (default off) | Redundant with algebra optimizer |
 

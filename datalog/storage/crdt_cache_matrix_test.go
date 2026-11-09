@@ -1373,45 +1373,44 @@ func TestCacheMatrix_CardinalityVector(t *testing.T) {
 // See BUG_CACHE_EMPTY_VECTOR_NEVER_SET.
 func TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral(t *testing.T) {
 	// The optimizer axis is outside the cache axis: the two cache arms are
-	// compared against each other, so both must come from the same backend.
+	// compared against each other, so both come from the same backend and run
+	// in the one subtest that compares them.
 	for _, omode := range optimizerModes {
 		t.Run(omode.name, func(t *testing.T) {
 			tuplesPerMode := map[string]int{}
 
 			for _, mode := range cacheTestModes {
-				t.Run(mode.name, func(t *testing.T) {
-					db := createCacheTestDB(t, omode, mode.disableCache, nil)
+				db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
-					skill := datalog.NewKeyword(":person/skill")
-					s := schema.NewSchema()
-					s.Add(&schema.AttributeDefinition{
-						Ident:       skill,
-						ValueType:   schema.TypeString,
-						Cardinality: schema.CardinalityVector,
-					})
-					require.NoError(t, db.SetSchema(s))
-
-					// One entity, written under a different attribute, so the entity
-					// exists and :person/skill genuinely never was.
-					who := datalog.NewIdentity("person:alice")
-					tx := db.NewTransaction()
-					require.NoError(t, tx.Set(who, datalog.NewKeyword(":person/name"), "Alice"))
-					_, err := tx.Commit()
-					require.NoError(t, err)
-
-					pattern := &query.DataPattern{
-						Elements: []query.PatternElement{
-							query.Constant{Value: who},
-							query.Constant{Value: skill},
-							query.Constant{Value: []interface{}{}},
-						},
-					}
-
-					m := db.Matcher().(*PatternMatcher)
-					rel, err := m.matchUnboundAsRelation(nil, pattern, nil, nil)
-					require.NoError(t, err)
-					tuplesPerMode[mode.name] = drainRelation(t, rel)
+				skill := datalog.NewKeyword(":person/skill")
+				s := schema.NewSchema()
+				s.Add(&schema.AttributeDefinition{
+					Ident:       skill,
+					ValueType:   schema.TypeString,
+					Cardinality: schema.CardinalityVector,
 				})
+				require.NoError(t, db.SetSchema(s), mode.name)
+
+				// One entity, written under a different attribute, so the entity
+				// exists and :person/skill genuinely never was.
+				who := datalog.NewIdentity("person:alice")
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(who, datalog.NewKeyword(":person/name"), "Alice"), mode.name)
+				_, err := tx.Commit()
+				require.NoError(t, err, mode.name)
+
+				pattern := &query.DataPattern{
+					Elements: []query.PatternElement{
+						query.Constant{Value: who},
+						query.Constant{Value: skill},
+						query.Constant{Value: []interface{}{}},
+					},
+				}
+
+				m := db.Matcher().(*PatternMatcher)
+				rel, err := m.matchUnboundAsRelation(nil, pattern, nil, nil)
+				require.NoError(t, err, mode.name)
+				tuplesPerMode[mode.name] = drainRelation(t, rel)
 			}
 
 			require.Equal(t, tuplesPerMode["cache_disabled"], tuplesPerMode["cache_enabled"],

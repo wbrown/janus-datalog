@@ -12,19 +12,17 @@ import (
 )
 
 // runFallbackRecordingLookups runs text on a database holding facts under s,
-// with a window cap of 128, entity prefetch as given and attribute-fetch
-// fusion off, so a lookup of attr is a fallback's build of a branch from the
-// EA cache and nothing else. It returns the rendered result and, in the order
-// reported, the windows and prefetch triggers the or-default-join reports
-// and the lookups of attr.
-func runFallbackRecordingLookups(t *testing.T, mode optimizerMode, s *schema.Schema, facts []fact, text string, attr datalog.Keyword, prefetch bool) ([]string, []annotations.Event) {
+// with a window cap of 128 and the mode's options, so on a leg without
+// attribute-fetch fusion a lookup of attr is a fallback's build of a branch
+// from the EA cache and nothing else. It returns the rendered result and, in
+// the order reported, the windows and prefetch triggers the or-default-join
+// reports and the lookups of attr.
+func runFallbackRecordingLookups(t *testing.T, mode optimizerMode, s *schema.Schema, facts []fact, text string, attr datalog.Keyword) ([]string, []annotations.Event) {
 	t.Helper()
 	var mu sync.Mutex
 	var events []annotations.Event
 	opts := mode.plannerOptions()
 	opts.ScopeWindowCap = 128
-	opts.EnableEntityPrefetch = prefetch
-	opts.EnableAttributeFetchFusion = false
 	d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: s, PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -84,20 +82,20 @@ func TestFallbackServesThePrefetchedWindowFromTheCache(t *testing.T) {
 		want = append(want, fmt.Sprintf("%s %d", e.name, i))
 	}
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
-			result, events := runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"), true)
+			result, events := runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"))
 			require.ElementsMatch(t, want, result, "every subject tuple takes its :t/a, from the plan before the prefetch and from the cache after it")
+			if !mode.prefetch {
+				require.Empty(t, eventsNamed(events, annotations.PrefetchTrigger), "nothing is prefetched with the option off")
+				require.Empty(t, eventsNamed(events, annotations.StorageResolveComplete), "the branch is built from its plan with the option off")
+				return
+			}
 			triggers := eventsNamed(events, annotations.PrefetchTrigger)
 			require.Len(t, triggers, 1, "the one window above the threshold is prefetched")
 			require.Equal(t, lastWindow, triggers[0].Data["entity_count"], "the window's distinct entities are prefetched")
 			require.Len(t, eventsNamed(events, annotations.StorageResolveComplete), lastWindow,
 				"the branch is served from the cache for the prefetched window alone")
-
-			result, events = runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"), false)
-			require.ElementsMatch(t, want, result)
-			require.Empty(t, eventsNamed(events, annotations.PrefetchTrigger), "nothing is prefetched with the option off")
-			require.Empty(t, eventsNamed(events, annotations.StorageResolveComplete), "the branch is built from its plan with the option off")
 		})
 	}
 }
@@ -123,15 +121,17 @@ func TestFallbackServesAnAttributeTheSchemaDoesNotDefineFromTheCache(t *testing.
 		want = append(want, fmt.Sprintf("%s %d", e.name, i))
 	}
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
-			result, events := runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"), true)
+			result, events := runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"))
+			if !mode.prefetch {
+				require.ElementsMatch(t, want, result, "the branch's plan answers what the cache answers")
+				require.Empty(t, eventsNamed(events, annotations.StorageResolveComplete), "the branch is built from its plan with the option off")
+				return
+			}
 			require.ElementsMatch(t, want, result, "every subject tuple takes its :t/a, from the plan before the prefetch and from the cache after it")
 			require.Len(t, eventsNamed(events, annotations.StorageResolveComplete), lastWindow,
 				"the branch is served from the cache for the prefetched window")
-
-			result, _ = runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"), false)
-			require.ElementsMatch(t, want, result, "the branch's plan answers what the cache answers")
 		})
 	}
 }
@@ -156,9 +156,9 @@ func TestFallbackLooksUpEachEntityOfACachedWindowOnce(t *testing.T) {
 		want = append(want, fmt.Sprintf("%s 1 %d", e.name, i), fmt.Sprintf("%s 2 %d", e.name, i))
 	}
 	const text = `[:find ?e ?k ?v :where [?e :t/k ?k] (or-default-join [[?e ?k] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsWhere(optimizerModes, func(m optimizerMode) bool { return m.prefetch && !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
-			result, events := runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"), true)
+			result, events := runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"))
 			require.ElementsMatch(t, want, result)
 
 			var window map[datalog.Identity]bool

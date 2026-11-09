@@ -26,7 +26,8 @@ type ExecutorOptions struct {
 	// Scan sharing: deduplicate unbound scans across subqueries via LazySeq
 	EnableScanSharing bool
 
-	// Entity prefetch: warm EA cache after first DataPattern
+	// Entity prefetch: warm the EA cache with a fallback window's entities
+	// before the window's branches are built (OrFallbackIterator.prefetchWindow).
 	EnableEntityPrefetch bool
 
 	// Attribute-fetch fusion: execute a same-entity [?e :const-attr ?fresh]

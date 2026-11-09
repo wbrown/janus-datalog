@@ -469,14 +469,17 @@ func (m *PatternMatcher) matchUnboundScan(
 				useVectorResolution = true
 			}
 		}
-	} else if e == nil && a != nil && v != nil && card == schema.CardinalityOne && m.mode != historyMode {
-		// E is unbound, A is bound, V is constant, cardinality-one, in the
-		// current or an as-of view. A V-bound scan (AVET) only sees datoms with
-		// this V, but the LWW winner may have a different V, so each candidate
-		// is validated against the winner. See
+	} else if e == nil && v != nil && (a == nil || card == schema.CardinalityOne) && m.mode != historyMode {
+		// E is unbound and V is constant, A is open or bound to an attribute
+		// resolving as cardinality-one, in the current or an as-of view. A
+		// V-bound scan only sees datoms with this V, but the LWW winner may
+		// have a different V, so each candidate is validated against the
+		// winner. A bound A's candidates come from AVET. An open A's come from
+		// VAET, and each candidate's own attribute decides its validation, as
+		// on the binding route (analyzeReuseStrategy). See
 		// docs/reference/INDEX_SELECTION_PROOF.md Theorem 2 & 5. Under History
-		// nothing resolves and there is no winner: the raw AVET scan below
-		// reads every datom carrying V, which is the answer.
+		// nothing resolves and there is no winner: the raw scan below reads
+		// every datom carrying V, which is the answer.
 		dummySym := datalog.NewSymbol("__v_bound_dummy__")
 		bindingRel := executor.NewMaterializedRelation(
 			[]query.Symbol{dummySym},
@@ -488,6 +491,9 @@ func (m *PatternMatcher) matchUnboundScan(
 			Index:           AVET,
 			ValidationIndex: EATV,
 			BoundA:          a,
+		}
+		if a == nil {
+			strategy.Index = VAET
 		}
 		return m.matchWithVValidation(pattern, bindingRel, symbols, strategy, nil)
 	} else if e == nil && a != nil && card == schema.CardinalityVector && m.mode != historyMode {
@@ -733,6 +739,11 @@ func (m *PatternMatcher) matchWithVValidation(
 		}
 	}
 
+	var boundDef *schema.AttributeDefinition
+	if a, ok := strategy.BoundA.(datalog.Keyword); ok && m.schema != nil {
+		boundDef = m.schema.GetAttribute(a)
+	}
+
 	// Create validating iterator
 	iter := &validatingVBoundIterator{
 		matcher:          m,
@@ -742,6 +753,7 @@ func (m *PatternMatcher) matchWithVValidation(
 		candidateIndex:   strategy.Index,           // AVET or VAET for candidates
 		validationIndex:  strategy.ValidationIndex, // EATV for validation
 		boundA:           strategy.BoundA,          // Constant A value if any
+		boundDef:         boundDef,
 		symbols:          symbols,
 		constraints:      constraints,
 		currentTupleIdx:  -1,
@@ -782,6 +794,10 @@ type validatingVBoundIterator struct {
 	candidateIndex  IndexType // AVET or VAET
 	validationIndex IndexType // EATV
 	boundA          any       // Constant A value (nil if A is variable)
+	// boundDef is boundA's definition, nil when A is a variable or the schema
+	// declares no definition of it. Every candidate of a bound attribute
+	// carries it, so it is read once, when the iterator is built.
+	boundDef *schema.AttributeDefinition
 
 	// Iterator state - CRDTResolvingIterator wraps the raw scan
 	crdtIter        *CRDTResolvingIterator // Wraps VAET/AVET scan
@@ -886,15 +902,22 @@ func (it *validatingVBoundIterator) Next() bool {
 					continue
 				}
 
-				card := it.getCardinalityEnum(datom.A)
-				// Schemaless attributes are treated as cardinality-one (LWW)
-				// everywhere else in the engine (planner routing, cache OneValue),
-				// so they must validate the candidate against the current winner
-				// too. Without this, the V-prefix candidate scan leaks over-matches:
-				// an empty bound value matches every value of the type, and a
-				// non-empty value prefix-matches. Validation enforces exact equality.
-				if card == schema.CardinalityOne || card == schema.CardinalityUnknown {
-					ok, err := it.validateCandidate(datom.E, datom.A)
+				// A bound attribute's candidates all carry it; an open one's carry
+				// their own.
+				def := it.boundDef
+				if it.boundA == nil && it.matcher.schema != nil {
+					def = it.matcher.schema.GetAttribute(datom.A)
+				}
+				switch resolvedCardinality(def) {
+				case schema.CardinalityOne:
+					// Schemaless attributes are treated as cardinality-one (LWW)
+					// everywhere else in the engine (planner routing, cache
+					// OneValue), so they must validate the candidate against the
+					// current winner too. Without this, the V-prefix candidate scan
+					// leaks over-matches: an empty bound value matches every value
+					// of the type, and a non-empty value prefix-matches. Validation
+					// enforces exact equality.
+					ok, err := it.validateCandidate(datom.E, datom.A, def)
 					if err != nil {
 						it.err = err
 						return false
@@ -903,6 +926,11 @@ func (it *validatingVBoundIterator) Next() bool {
 						// Stale candidate - LWW winner has different V
 						continue
 					}
+				case schema.CardinalityVector:
+					// A vector attribute's value is its whole collection, and the
+					// bound V here is a scalar, which equals no collection: the
+					// candidate is one element of it.
+					continue
 				}
 
 				// Build result tuple
@@ -967,7 +995,7 @@ func (it *validatingVBoundIterator) Next() bool {
 			// resolver counts that against the same report — counting it again
 			// would report one emission as two.
 			return true
-		} else if it.isBoundAUniqueAttr() {
+		} else if it.boundDef.HasUniqueConstraint() {
 			// Attribute is unique but no valid claimant — skip this binding.
 			continue
 		}
@@ -982,23 +1010,6 @@ func (it *validatingVBoundIterator) Next() bool {
 	}
 }
 
-// isBoundAUniqueAttr reports whether the bound attribute (if any) is
-// declared unique in the schema. Returns false if A is a variable (not
-// constant), if no schema is set, or if the attribute is not unique.
-func (it *validatingVBoundIterator) isBoundAUniqueAttr() bool {
-	if it.boundA == nil {
-		return false
-	}
-	aKw, ok := it.boundA.(datalog.Keyword)
-	if !ok {
-		return false
-	}
-	if it.matcher.schema == nil {
-		return false
-	}
-	return it.matcher.schema.GetAttribute(aKw).HasUniqueConstraint()
-}
-
 // tryEmitUniqueWinner resolves the (A, V)-LWW winner for the current
 // binding and, if a valid claimant exists, sets it.currentTuple and
 // returns (true, nil). If the attribute is not unique, returns
@@ -1006,7 +1017,7 @@ func (it *validatingVBoundIterator) isBoundAUniqueAttr() bool {
 // If the attribute is unique but no entity currently claims the bound
 // value, returns (false, nil) with a short-circuit indicator (see caller).
 func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
-	if !it.isBoundAUniqueAttr() {
+	if !it.boundDef.HasUniqueConstraint() {
 		return false, nil
 	}
 
@@ -1038,15 +1049,11 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	return true, nil
 }
 
-// validateCandidate checks if the current value of (E, A) matches boundV.
+// validateCandidate checks if the current value of (E, A) matches boundV,
+// def being A's definition, nil for an attribute the schema does not declare.
 // A storage or decode failure surfaces as an error — it must never collapse
 // to "candidate doesn't match", which would silently drop valid results.
-func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) (valid bool, validateErr error) {
-	var def *schema.AttributeDefinition
-	if it.matcher.schema != nil {
-		def = it.matcher.schema.GetAttribute(a)
-	}
-
+func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword, def *schema.AttributeDefinition) (valid bool, validateErr error) {
 	// CardinalityOne fast path. The view's EA cache resolves the (E, A) value
 	// with the same EATV-first-entry + tombstone semantics this scan performs,
 	// but memoized — turning a per-candidate seek into an O(1) cache lookup.
@@ -1149,7 +1156,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 					"winner_op":                winner.Op,
 					keyMatches:                 matches,
 					"will_emit":                matches,
-					annotations.KeyCardinality: it.getCardinalityEnum(a),
+					annotations.KeyCardinality: resolvedCardinality(def),
 				},
 			})
 		}
@@ -1174,19 +1181,6 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		})
 	}
 	return false, nil
-}
-
-// getCardinalityEnum looks up the cardinality enum for an attribute
-// Returns CardinalityUnknown (0) for schemaless or undefined attributes
-func (it *validatingVBoundIterator) getCardinalityEnum(a datalog.Keyword) datalog.Keyword {
-	if it.matcher.schema == nil {
-		return schema.CardinalityUnknown
-	}
-	def := it.matcher.schema.GetAttribute(a)
-	if def == nil {
-		return schema.CardinalityUnknown
-	}
-	return def.Cardinality
 }
 
 // openCRDTScan opens a CRDT-resolving scan on the V-primary index for current bound V.
@@ -2628,6 +2622,11 @@ func (it *cardinalityManyAVETValueIterator) Next() bool {
 		if err != nil {
 			it.err = err
 			return false
+		}
+
+		// A datom after the view's as-of target is not read.
+		if it.matcher.shouldFilterTx(datom.Tx) {
+			continue
 		}
 
 		// Check if this is a new entity

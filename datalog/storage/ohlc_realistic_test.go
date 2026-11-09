@@ -9,7 +9,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestOHLCRealisticQueries exercises realistic OHLC query shapes against a
@@ -80,11 +79,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 				t.Fatalf("Failed to commit price data: %v", err)
 			}
 
-			// Create executor
-			matcher := NewPatternMatcher(db.store)
-			exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-				EnableAlgebraOptimizer: mode.algebra,
-			})
+			exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
 
 			t.Run("Test1_CountTotalDatoms", func(t *testing.T) {
 				// Query: [:find (count ?e) :where [?e ?a ?v]]

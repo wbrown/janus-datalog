@@ -24,7 +24,7 @@ func seekNPattern() (*query.DataPattern, []query.Symbol) {
 // before the one read last
 // (docs/proposals/ONE_SCAN_SOUGHT_PER_KEY_PROOF.md, T4, L5).
 func TestMemoryTreeIterator_SeekAllocatesNothing(t *testing.T) {
-	mode := pinned(optimizerModes, false)[0]
+	mode := legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.algebra })[0]
 	f := newSeekFixture(t, mode, mode.plannerOptions(), nil)
 	m := f.db.Matcher().(*PatternMatcher)
 	pattern, _ := seekNPattern()
@@ -57,7 +57,7 @@ func TestMemoryTreeIterator_SeekAllocatesNothing(t *testing.T) {
 // bindings and the keys are built outside the measured calls, since they
 // are the caller's.
 func TestPerKeySeekAllocatesPerKeyWhatItsBoundsAllocate(t *testing.T) {
-	mode := pinned(optimizerModes, false)[0]
+	mode := legsWhere(optimizerModes, func(m optimizerMode) bool { return !m.algebra })[0]
 	f := newSeekFixture(t, mode, mode.plannerOptions(), nil)
 	m := f.db.Matcher().(*PatternMatcher)
 	pattern, symbols := seekNPattern()

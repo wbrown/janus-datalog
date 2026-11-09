@@ -926,8 +926,8 @@ func TestFreeInvocationRewritesTheRequiredPredicatesOfItsStratum(t *testing.T) {
 }
 
 // Every phase of a plan parses back to itself: a correlated count over an
-// invocation, which the optimizer decorrelates into an aggregate, and a plan
-// with a projection inserted between its joins included.
+// invocation, which the optimizer decorrelates into an aggregate, and a
+// pattern over an invocation's output.
 func TestRules_EveryPhaseParsesBackToItself(t *testing.T) {
 	queries := []string{
 		`[:find ?x ?n :in $ % :where [?x :edge _] [(q [:find (count ?y) :in $ % ?x :where [?x :edge _] (reach ?x ?y)] $ % ?x) [[?n]]]]`,
@@ -935,9 +935,7 @@ func TestRules_EveryPhaseParsesBackToItself(t *testing.T) {
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			opts := mode.plannerOptions()
-			opts.EnableJoinProjectInsertion = true
-			d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeGraph(t, d, chain(4))
 			rules := mustRuleSet(t, closureRules)
 			for _, text := range queries {

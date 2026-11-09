@@ -42,19 +42,16 @@ type cachedPlan struct {
 }
 
 // planOptions is the planner options that shape a plan: the algebra
-// optimizer, join-project insertion for the algebra bridge, and the roster a
-// plan carries.
+// optimizer and the roster a plan carries.
 type planOptions struct {
-	algebraOptimizer     bool
-	joinProjectInsertion bool
-	collectRosters       bool
+	algebraOptimizer bool
+	collectRosters   bool
 }
 
 func planOptionsOf(opts PlannerOptions) planOptions {
 	return planOptions{
-		algebraOptimizer:     opts.EnableAlgebraOptimizer,
-		joinProjectInsertion: opts.EnableJoinProjectInsertion,
-		collectRosters:       opts.CollectRosters,
+		algebraOptimizer: opts.EnableAlgebraOptimizer,
+		collectRosters:   opts.CollectRosters,
 	}
 }
 
@@ -222,9 +219,6 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, bindings query.Binding
 	var bits uint64
 	if options.algebraOptimizer {
 		bits |= 1
-	}
-	if options.joinProjectInsertion {
-		bits |= 2
 	}
 	if options.collectRosters {
 		bits |= 4

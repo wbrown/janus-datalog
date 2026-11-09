@@ -750,6 +750,12 @@ func (d *Database) LookupAttribute(entity datalog.Identity, attr datalog.Keyword
 	return d.Matcher().(executor.EntityLookupMatcher).LookupAttribute(entity, attr)
 }
 
+// AttributeLookup implements executor.EntityLookupMatcher for a database
+// passed as a named source, answering through its matcher.
+func (d *Database) AttributeLookup(attr datalog.Keyword) (query.AttributeLookup, error) {
+	return d.Matcher().(executor.EntityLookupMatcher).AttributeLookup(attr)
+}
+
 // LookupSource implements executor.EntityLookupMatcher for a database passed
 // as a named source: it is one source, so its matcher is the lookup of the
 // source under any name, and get-else, missing? and get-some on that source
@@ -854,10 +860,9 @@ func (d *Database) History() *Database {
 func DefaultPlannerOptions() planner.PlannerOptions {
 	return planner.PlannerOptions{
 		// Planner / algebra optimization
-		EnableAlgebraOptimizer:     true,  // Relational algebra optimization with nested Datalog lowering
-		EnableJoinProjectInsertion: false, // Materialized join narrowing regresses focused workloads; retained for experiments
-		EnableScanSharing:          false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
-		EnableEntityPrefetch:       false, // Prefetch entities into the EA cache after the first DataPattern and before a fallback's window above the threshold; one option, every trigger (benchmarked: performance-neutral)
+		EnableAlgebraOptimizer: true,  // Relational algebra optimization with nested Datalog lowering
+		EnableScanSharing:      true,  // Share unbound scan results across subqueries via LazySeq
+		EnableEntityPrefetch:   false, // Prefetch entities into the EA cache after the first DataPattern and before a fallback's window above the threshold; one option, every trigger (benchmarked: performance-neutral)
 
 		// Executor streaming options
 		EnableTrueStreaming:     true,  // No auto-materialization

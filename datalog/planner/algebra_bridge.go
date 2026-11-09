@@ -8,11 +8,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// joinProjectPassName names the bridge-level projection-insertion transform
-// in rewrite records and event data. It is a transform outside the pass
-// framework, but its decisions report exactly like a pass's.
-const joinProjectPassName = "join-project-insertion"
-
 // optimizeAlgebra compiles a query's clauses to relational algebra and applies
 // the configured equivalence passes without flattening the optimized tree. The
 // full query goes to Compile — its :in symbols seed the bridge's clause
@@ -94,50 +89,6 @@ func optimizeViaAlgebra(
 	compiled, optimized, err := optimizeAlgebra(q, bindings, handler, sink, options.matchAnswersLookup)
 	if err != nil {
 		return nil, err
-	}
-	if options.EnableJoinProjectInsertion {
-		hasValueInput := false
-		for _, input := range q.In {
-			switch input.(type) {
-			case query.DatabaseInput, query.RulesInput:
-				// Execution context, not a value binding.
-			default:
-				hasValueInput = true
-			}
-		}
-		observing := sink.Recording()
-		if hasValueInput {
-			// terminalSymbols walks the query, and on this branch nothing else
-			// needs the answer.
-			if observing {
-				sink.Record(algebra.RewriteRecord{
-					Pass:    joinProjectPassName,
-					Action:  algebra.RewriteDeclined,
-					Reason:  "query has value inputs",
-					Subject: terminalSymbols(q),
-				}, annotations.AlgebraJoinProjectSkip, map[string]interface{}{
-					"reason": "query has value inputs",
-				})
-			}
-		} else {
-			// One walk for the transform and its record, so the record names
-			// the symbols actually inserted rather than a second computation of
-			// them.
-			terminals := terminalSymbols(q)
-			optimized, err = algebra.InsertJoinProjects(optimized, terminals)
-			if err != nil {
-				return nil, fmt.Errorf("algebra project insertion: %w", err)
-			}
-			if observing {
-				sink.Record(algebra.RewriteRecord{
-					Pass:    joinProjectPassName,
-					Action:  algebra.RewriteApplied,
-					Subject: terminals,
-				}, annotations.AlgebraJoinProjectApply, map[string]interface{}{
-					"terminal_symbols": terminals,
-				})
-			}
-		}
 	}
 	clauses, err := algebra.Decompile(optimized)
 	if err != nil {

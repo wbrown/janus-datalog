@@ -320,14 +320,12 @@ func TestRunStratum_APassCarriesAChainOfDerivations(t *testing.T) {
 // to the magic set, and not of the page held since the first window.
 func TestRuleEvaluation_ALaterWindowReadsALowerStratumsNewTuplesAlone(t *testing.T) {
 	a := datalog.NewSymbol("?a")
-	for _, mode := range OptimizerModes {
+	// On the legs without attribute-fetch fusion the base rule's edge pattern
+	// is matched over the window's seeds, the keys the matcher counts.
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return !m.Fusion() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			matcher := &edgeKeysMatcher{Database: factsDatabase(t, ChainDatoms(6)), keys: map[query.Symbol]int{}}
-			// Attribute-fetch fusion is off, so the base rule's edge pattern is
-			// matched over the window's seeds, the keys the matcher counts.
-			opts := mode.PlannerOptions()
-			opts.EnableAttributeFetchFusion = false
-			exec, planned, ctx := boundClosure(t, followsRecursionFirstText, matcher, opts)
+			exec, planned, ctx := boundClosure(t, followsRecursionFirstText, matcher, mode.PlannerOptions())
 			rules, seed := planned.Magic.Rules, planned.Magic.Seed
 			ev := NewRuleEvaluation(exec, planned)
 			// A bound invocation answers the whole invocation's tuples carrying

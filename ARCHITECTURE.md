@@ -576,13 +576,7 @@ Core types in the top-level package:
 
 Single planner: `ClauseBasedPlanner`. Converts a prepared `*query.Query` (see Preparation under the query path overview) into a `RealizedPlan` (ordered phases with physical symbol-flow contracts). The default logical path compiles and optimizes algebra under the rule set, validates exact schemas and free requirements, then lowers back to nested Datalog before the planner constructs phases. The planner computes no interface: `ScopeOf` reads a nested form's header alone, the required run as mandatory correlates and the outputs as provided, and `PlanQuery` panics as `ScopeOf` does on a headerless form.
 
-**Algebra lowering**: `EnableAlgebraOptimizer` (on by default) runs Query → algebra IR → transform passes → schema refresh/validation → Query. Non-linear children remain nested Datalog (`q`, OR/fallback, and NOT forms); `Project` lowers to a relation-binding subquery. A rule invocation compiles to a `Derived` leaf the passes carry through and decompile back to the invocation. Algebra never constructs `RealizedPlan`.
-
-**Join projection experiment**: `EnableJoinProjectInsertion` (off by default)
-uses backward liveness to insert `Project` on narrowed inner-join children before
-nested Datalog lowering. It is correctness-proven for no-input queries, but
-relation-subquery execution regresses the focused workload, so it remains an
-inactive logical-rewrite experiment.
+**Algebra lowering**: `EnableAlgebraOptimizer` (on by default) runs Query → algebra IR → transform passes → schema refresh/validation → Query. Non-linear children remain nested Datalog (`q`, OR/fallback, and NOT forms). The one `Project` the compiler makes is childless, the placeholder a scope's branches compile against for the symbols the scope is given, and it lowers to no clause; a `Project` over clauses has no clause form, since Datalog states a projection at a scope's find alone (`docs/ideas/JOIN_PROJECT_INSERTION.md`). A rule invocation compiles to a `Derived` leaf the passes carry through and decompile back to the invocation. Algebra never constructs `RealizedPlan`.
 
 **Disabled-optimizer algorithm** (`clause_phasing.go`): Greedy clause selection within phases:
 1. Start with input symbols as available

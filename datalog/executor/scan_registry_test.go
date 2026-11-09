@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -126,18 +127,37 @@ func TestScanRegistry_SymbolsPreserved(t *testing.T) {
 	assert.Equal(t, datalog.NewSymbol("?tx"), shared.Symbols[2])
 }
 
+// Twenty sites the plan lists for one scan read it at once: the scan is
+// created once, and every site is served the same scan and head.
 func TestScanRegistryGetOrCreateConcurrent(t *testing.T) {
-	registry := NewScanRegistry()
-	var creates atomic.Int64
 	const callers = 20
-	results := make([]*SharedScan, callers)
-	errors := make([]error, callers)
+	phase := &query.Query{}
+	plan := &planner.RealizedPlan{Phases: []planner.RealizedPhase{{Query: phase}}}
+	sites := make([]*query.DataPattern, callers)
+	for caller := range sites {
+		sites[caller] = &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: datalog.NewKeyword(":registry/same")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+		}}
+		phase.Where = append(phase.Where, sites[caller])
+		plan.Phases[0].Patterns = append(plan.Phases[0].Patterns, planner.PatternPlan{Pattern: sites[caller]})
+	}
+	registry := NewScanRegistry()
+	registry.expect(sharedScanSites(plan))
+
+	var creates atomic.Int64
+	heads := make([]*LazySeq, callers)
+	scans := make([]*SharedScan, callers)
+	hits := make([]bool, callers)
+	errs := make([]error, callers)
 	var wait sync.WaitGroup
 	for caller := 0; caller < callers; caller++ {
 		wait.Add(1)
 		go func(index int) {
 			defer wait.Done()
-			results[index], _, errors[index] = registry.GetOrCreate(unboundScanOf(":registry/same"), func() (*SharedScan, error) {
+			site := sites[index]
+			heads[index], scans[index], hits[index], errs[index] = registry.GetOrCreate(patternMatchQuery(phase, site), site, func() (*SharedScan, error) {
 				creates.Add(1)
 				return &SharedScan{Seq: &LazySeq{}}, nil
 			})
@@ -146,10 +166,17 @@ func TestScanRegistryGetOrCreateConcurrent(t *testing.T) {
 	wait.Wait()
 
 	require.Equal(t, int64(1), creates.Load())
+	misses := 0
 	for caller := 0; caller < callers; caller++ {
-		require.NoError(t, errors[caller])
-		require.Same(t, results[0], results[caller])
+		require.NoError(t, errs[caller])
+		require.NotNil(t, heads[caller], "site %d is served the head", caller)
+		require.Same(t, heads[0], heads[caller])
+		require.Same(t, scans[0], scans[caller])
+		if !hits[caller] {
+			misses++
+		}
 	}
+	require.Equal(t, 1, misses, "the one site that created the scan missed")
 }
 
 func TestScanRegistryCloseReleasesPartialScans(t *testing.T) {

@@ -559,34 +559,31 @@ func TestFallbackPrefetch_AnswersAsTheScanPathAndFires(t *testing.T) {
 		{"a fallback whose output the subject carries", `[:find ?e ?v :where [?e :q ?v] (or-default-join [[?e] ?v] [?e :p ?v] [(ground :none) ?v])]`, false, nil, carried, 0, -1},
 	}
 	for _, mode := range optimizerModes {
-		for _, prefetch := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/prefetch_%v", mode.name, prefetch), func(t *testing.T) {
-				var triggers atomic.Int32
-				opts := mode.plannerOptions()
-				opts.EnableEntityPrefetch = prefetch
-				d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: scopeGraphSchema(t), PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
-					if e.Name == annotations.PrefetchTrigger {
-						triggers.Add(1)
+		t.Run(mode.name, func(t *testing.T) {
+			var triggers atomic.Int32
+			opts := mode.plannerOptions()
+			d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: scopeGraphSchema(t), PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
+				if e.Name == annotations.PrefetchTrigger {
+					triggers.Add(1)
+				}
+			}})
+			names := commitFacts(t, d, g.facts())
+			for _, c := range checks {
+				t.Run(c.name, func(t *testing.T) {
+					rel, err := d.Query(c.text)
+					require.NoError(t, err)
+					got := renderedTuples(t, rel, names)
+					require.ElementsMatch(t, c.want, got)
+					if c.tuples >= 0 {
+						require.Len(t, got, c.tuples, "the record's count")
 					}
-				}})
-				names := commitFacts(t, d, g.facts())
-				for _, c := range checks {
-					t.Run(c.name, func(t *testing.T) {
-						rel, err := d.Query(c.text)
-						require.NoError(t, err)
-						got := renderedTuples(t, rel, names)
-						require.ElementsMatch(t, c.want, got)
-						if c.tuples >= 0 {
-							require.Len(t, got, c.tuples, "the record's count")
-						}
-					})
-				}
-				if prefetch {
-					require.GreaterOrEqual(t, triggers.Load(), int32(1), "the trigger fires with the option on")
-				} else {
-					require.Equal(t, int32(0), triggers.Load(), "no prefetch runs with the option off")
-				}
-			})
-		}
+				})
+			}
+			if mode.prefetch {
+				require.GreaterOrEqual(t, triggers.Load(), int32(1), "the trigger fires with the option on")
+			} else {
+				require.Equal(t, int32(0), triggers.Load(), "no prefetch runs with the option off")
+			}
+		})
 	}
 }

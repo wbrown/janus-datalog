@@ -228,24 +228,6 @@ func TestPlanCacheTTL(t *testing.T) {
 	}
 }
 
-func TestPlanCacheSeparatesJoinProjectInsertionOption(t *testing.T) {
-	cache := NewPlanCache(10, 0)
-	q := &query.Query{
-		Find: []query.FindElement{
-			query.FindVariable{Symbol: datalog.NewSymbol("?e")},
-		},
-	}
-	plan := &RealizedPlan{Query: q}
-	disabled := PlannerOptions{EnableAlgebraOptimizer: true}
-	enabled := disabled
-	enabled.EnableJoinProjectInsertion = true
-
-	cache.SetWithOptions(q, query.Bindings{}, plan, disabled)
-	if _, ok := cache.GetWithOptions(q, query.Bindings{}, enabled); ok {
-		t.Fatal("join-project insertion option must produce a distinct plan cache key")
-	}
-}
-
 // A plan made under CollectRosters carries a roster and one made without
 // carries none, so the two are two entries of one text.
 func TestPlanCacheSeparatesCollectRostersOption(t *testing.T) {
