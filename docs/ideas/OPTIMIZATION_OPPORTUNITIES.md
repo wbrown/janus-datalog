@@ -448,12 +448,15 @@ remain hash-table construction and insertion.
 
 ### Join materialization check
 
-`BenchmarkComplexQueryJoinMaterialization` runs the same production-shaped
-query with only `EnableStreamingJoins` changed:
+`BenchmarkComplexQueryJoinMaterialization` ran the same production-shaped
+query with only `EnableStreamingJoins` changed (2026-07). The benchmark and
+the option were removed in 2026-11: the hash join answers a streaming relation
+over its iterator whenever the build holds a tuple, in every setting, so the
+option selected nothing (`docs/reference/PLANNER_OPTIONS.md`).
 
 | Mode | Time | Memory | Allocations |
 |---|---:|---:|---:|
-| Materialized (default) | 48.57 ms | 82.78 MiB | 1.088M |
+| Materialized (then the default) | 48.57 ms | 82.78 MiB | 1.088M |
 | Streaming | 52.48 ms | 85.91 MiB | 1.179M |
 | Delta | **+8.04%** | **+3.78%** | **+8.34%** |
 
@@ -859,8 +862,9 @@ Final confidence gates on 2026-07-12:
 - Planning latency is measured in microseconds.
 - Entity prefetch is benchmarked as neutral in the default workload.
 - Symmetric hash join trades throughput for time-to-first-row.
-- Streaming hash joins are **8.04% slower**, use **3.78% more memory**, and
-  allocate **8.34% more** on the complex checkpoint; keep them opt-in.
+- The streaming-join setting measured **8.04% slower**, **3.78% more memory**
+  and **8.34% more allocations** on the complex checkpoint (2026-07, the join
+  materialization check above).
 - Do not tune the current merge join before its ordering contract is explicit.
   It sorts full tuples lexicographically while extracting a join key by datom
   position. Physical properties should represent the required order first.
