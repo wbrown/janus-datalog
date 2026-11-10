@@ -21,9 +21,11 @@ query.Query → algebra tree → optimized algebra tree → query.Query
 
 Algebra is an internal logical representation. Every optimized operator lowers
 back into Datalog before physical planning; scoped operators use nested queries
-and relation bindings. `Project`, for example, lowers to a subquery with an exact
-`:find`. `ClauseBasedPlanner` alone turns the optimized query into
-`RealizedPlan` phases.
+and relation bindings. The one `Project` the compiler makes is childless, the
+placeholder a scope's branches compile against, and lowers to no clause. A
+`Project` over clauses has no clause form, since Datalog states a projection at
+a scope's find alone, and `Decompile` refuses one (`docs/ALGEBRA.md`, Project).
+`ClauseBasedPlanner` alone turns the optimized query into `RealizedPlan` phases.
 
 This separation keeps algebraic equivalence independent from execution topology:
 logical rewrites cannot create physical phases, and physical planning cannot
