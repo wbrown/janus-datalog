@@ -50,6 +50,11 @@ type scanEntry struct {
 	// close closes the scan's source. It reaches the iterator's state, not
 	// the head, so the entry keeps no cell by holding it.
 	close func() error
+	// closed reports whether the scan's source has been closed, at the
+	// chain's end or by an earlier Close; a source closed at its end answered
+	// its failure to the reader that reached the end. It reaches the
+	// iterator's state as close does.
+	closed func() bool
 }
 
 // release drops the head once no site read once is waiting for it and no
@@ -184,6 +189,7 @@ func (r *ScanRegistry) Put(fingerprint ScanFingerprint, scan *SharedScan) {
 		if entry.fingerprint.Equal(fingerprint) {
 			entry.scan = scan
 			entry.close = scan.Seq.closer
+			entry.closed = scan.Seq.sourceClosed
 			return
 		}
 	}
@@ -191,6 +197,7 @@ func (r *ScanRegistry) Put(fingerprint ScanFingerprint, scan *SharedScan) {
 		fingerprint: fingerprint,
 		scan:        scan,
 		close:       scan.Seq.closer,
+		closed:      scan.Seq.sourceClosed,
 	})
 }
 
@@ -223,6 +230,7 @@ func (r *ScanRegistry) GetOrCreate(
 		}
 		entry.scan = created
 		entry.close = created.Seq.closer
+		entry.closed = created.Seq.sourceClosed
 	}
 	head = entry.scan.Seq
 	if entry.unread[site] {
@@ -232,16 +240,20 @@ func (r *ScanRegistry) GetOrCreate(
 	return head, entry.scan, hit, nil
 }
 
-// Close closes the source of every scan the registry holds, at the query's
-// end, whether or not a reader read it to its end.
+// Close closes, at the query's end, the source of every scan the registry
+// holds that is still open, and answers those closes' failures. A source the
+// chain's end closed answered its failure to the reader that reached the end,
+// and a second Close closes nothing, so each failure reaches the query's
+// reader once.
 func (r *ScanRegistry) Close() error {
 	r.mu.Lock()
 	var closes []func() error
 	for _, entries := range r.scans {
 		for _, entry := range entries {
-			if entry.close != nil {
-				closes = append(closes, entry.close)
+			if entry.close == nil || entry.closed() {
+				continue
 			}
+			closes = append(closes, entry.close)
 		}
 	}
 	r.mu.Unlock()

@@ -106,19 +106,24 @@ registry holds the sequence's head until every listed site has been handed it
 and every per-window frame listing it has ended, then releases it; a read at
 an unlisted site, or after the release, is a scan of its own. A fingerprint
 read at one site is not shared. The scan's source closes when it is read to
-its end or when the query ends. On the complex checkpoint (Badger, 75
-scenarios of 100 tasks), the three subquery bodies' status scans read storage
-once, and the query answers in 8.66–9.02 ms against 10.47–11.06 ms with
-sharing off, at 1.14 MB more per query for the held scan (n=3 at 10s; verified
-2026-11-08, Apple M5). Consumed in `executor/executor.go`, `executor/scan_sites.go`,
-`executor/scan_registry.go` and `executor/scan_sharing_matcher.go`.
+its end or when the query ends: the result the executor returns closes the
+registry's open scans when its iterator is exhausted or closed, on every
+route, and a close failure reaches the reader once. On the complex checkpoint
+(Badger, 75 scenarios of 100 tasks), the three subquery bodies' status scans
+read storage once, and the query answers in 8.66–9.02 ms against 10.47–11.06
+ms with sharing off, at 1.14 MB more per query for the held scan (n=3 at 10s;
+verified 2026-11-08, Apple M5). Consumed in `executor/executor.go`,
+`executor/scan_sites.go`, `executor/scan_registry.go`,
+`executor/scan_sharing_matcher.go` and `executor/registry_bound_relation.go`.
 
 #### EnableEntityPrefetch — **opt-in** (default false)
 Prefetches entities into the EA cache via `PrefetchEntities` before a
-fallback window's branches are built, when a branch of one data pattern reads
-the subject's entity symbol, from which window on that branch is built from
-the cache. It fires above a threshold of 50 entities, and the matcher
-prefetches nothing under History. Benchmarked performance-neutral, hence off.
+fallback window's branches are built, when a branch is one data pattern of
+the shape a lookup answers, `[?e attr ?v]` on the default source, reading the
+subject's entity symbol, from which window on that branch is built from the
+cache. A branch reading its fourth or fifth position is built from its plan.
+It fires above a threshold of 50 entities, and the matcher prefetches nothing
+under History. Benchmarked performance-neutral, hence off.
 Consumed in `executor/or_fallback_relation.go`.
 
 #### EnableAttributeFetchFusion — **default-active**

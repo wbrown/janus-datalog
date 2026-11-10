@@ -123,13 +123,13 @@ func (d *Database) queryUnderPlannerOptions(
 	result, err := exec.ExecuteWithRelations(ctx, q, inputRelations)
 	if err != nil {
 		err = fmt.Errorf("query execution failed: %w", err)
-		if closeErr := errjoin.Join(ctx.ScanRegistry().Close(), session.Close()); closeErr != nil {
+		if closeErr := session.Close(); closeErr != nil {
 			err = errjoin.Join(err, closeErr)
 		}
 		return nil, nil, err
 	}
 
-	return q, newSessionBoundRelation(result, session, ctx.ScanRegistry(), completion), nil
+	return q, newSessionBoundRelation(result, session, completion), nil
 }
 
 // sessionMatcher mints the default-source matcher with a fresh read session

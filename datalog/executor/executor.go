@@ -6,6 +6,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -310,14 +311,24 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 	}
 	// The registry lists the sites at which the plan reads each shared scan
 	// before any phase runs; the sharing matcher serves those sites alone.
-	if e.options.EnableScanSharing {
-		ctx.ScanRegistry().expect(sharedScanSites(realizedPlan))
+	// The result closes the registry's open scans when its iterator is
+	// exhausted or closed, and a failure after the sites are listed closes
+	// them here, so a shared scan no reader read to its end closes at the
+	// query's end.
+	if !e.options.EnableScanSharing {
+		result, err := executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
+		if err != nil {
+			return failed(err)
+		}
+		return result, nil
 	}
+	scans := ctx.ScanRegistry()
+	scans.expect(sharedScanSites(realizedPlan))
 	result, err := executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
 	if err != nil {
-		return failed(err)
+		return failed(errjoin.Join(err, scans.Close()))
 	}
-	return result, nil
+	return newRegistryBoundRelation(result, scans), nil
 }
 
 // ExecuteRealized executes a RealizedPlan (Stage B: Query-based execution)

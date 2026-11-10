@@ -179,6 +179,9 @@ func TestScanRegistryGetOrCreateConcurrent(t *testing.T) {
 	require.Equal(t, 1, misses, "the one site that created the scan missed")
 }
 
+// The registry's Close at the query's end closes the sources still open and
+// answers their failures once: a second Close closes nothing and answers
+// nothing, the failure having reached its reader.
 func TestScanRegistryCloseReleasesPartialScans(t *testing.T) {
 	closeErr := errors.New("registry close failure")
 	source := failingRelation{
@@ -193,5 +196,95 @@ func TestScanRegistryCloseReleasesPartialScans(t *testing.T) {
 	})
 
 	require.ErrorIs(t, registry.Close(), closeErr)
-	require.ErrorIs(t, registry.Close(), closeErr)
+	require.NoError(t, registry.Close(), "a second Close closes nothing and answers nothing: the failure reached its reader")
+}
+
+// A shared scan read to its end closed its source there, and the reader that
+// reached the end answered the close failure. The registry's Close at the
+// query's end answers nothing for it.
+func TestScanRegistryCloseAnswersNothingForASourceClosedAtItsEnd(t *testing.T) {
+	closeErr := errors.New("registry close failure")
+	source := failingRelation{
+		Relation:  NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}}),
+		failAfter: 100,
+		closeErr:  closeErr,
+	}
+	seq := NewTupleSeq(source.Iterator(), false)
+	registry := NewScanRegistry()
+	registry.Put(unboundScanOf(":registry/ended"), &SharedScan{Seq: seq, Symbols: testSymbols()})
+
+	_, err := LazySeqToSlice(seq)
+	require.ErrorIs(t, err, closeErr, "the reader reaching the end answers the close failure")
+	require.NoError(t, registry.Close(), "the query's end answers nothing for a source closed at its end")
+}
+
+// registryHoldingOneOpenScan is a registry holding one shared scan over
+// source, which no reader reads, so the scan is open until the registry
+// closes it.
+func registryHoldingOneOpenScan(source Iterator) *ScanRegistry {
+	registry := NewScanRegistry()
+	registry.Put(unboundScanOf(":registry/bound"), &SharedScan{
+		Seq:     NewTupleSeq(source, false),
+		Symbols: testSymbols(),
+	})
+	return registry
+}
+
+// The executor's result closes its registry's open scans when its iterator
+// is exhausted or closed, and so does a rename of it, so a shared scan no
+// reader read to its end closes at the query's end on every route. A scan's
+// close failure reaches the reader once, through the iterator's Close.
+func TestTheExecutorsResultClosesItsRegistry(t *testing.T) {
+	twoTuples := func() Relation {
+		return NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}})
+	}
+
+	t.Run("exhausted", func(t *testing.T) {
+		source := newLazySeqTestIterator([]Tuple{{1}, {2}, {3}})
+		result := newRegistryBoundRelation(twoTuples(), registryHoldingOneOpenScan(source))
+
+		tuples, err := CollectTuples(result, nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{{int64(1)}, {int64(2)}}, tuples)
+		require.True(t, source.IsClosed(), "the result read to its end closed the scan no reader read")
+	})
+
+	t.Run("closed early", func(t *testing.T) {
+		source := newLazySeqTestIterator([]Tuple{{1}, {2}, {3}})
+		result := newRegistryBoundRelation(twoTuples(), registryHoldingOneOpenScan(source))
+
+		it := result.Iterator()
+		require.True(t, it.Next())
+		require.False(t, source.IsClosed(), "the scan is open while the result is being read")
+		require.NoError(t, it.Close())
+		require.True(t, source.IsClosed(), "the result closed before its end closed the scan")
+	})
+
+	t.Run("renamed", func(t *testing.T) {
+		source := newLazySeqTestIterator([]Tuple{{1}, {2}, {3}})
+		result := newRegistryBoundRelation(twoTuples(), registryHoldingOneOpenScan(source))
+		subst, err := query.SubstitutionOf([]query.Symbol{datalog.NewSymbol("?x")}, []query.Symbol{datalog.NewSymbol("?a")})
+		require.NoError(t, err)
+
+		renamed, err := result.Rename(subst)
+		require.NoError(t, err)
+		require.Equal(t, []query.Symbol{datalog.NewSymbol("?a")}, renamed.Symbols())
+		tuples, err := CollectTuples(renamed, nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{{int64(1)}, {int64(2)}}, tuples)
+		require.True(t, source.IsClosed(), "the renamed result read to its end closed the scan")
+	})
+
+	t.Run("a close failure reaches the reader once", func(t *testing.T) {
+		closeErr := errors.New("registry close failure")
+		source := failingRelation{
+			Relation:  NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}}),
+			failAfter: 100,
+			closeErr:  closeErr,
+		}
+		result := newRegistryBoundRelation(twoTuples(), registryHoldingOneOpenScan(source.Iterator()))
+
+		_, err := CollectTuples(result, nil)
+		require.EqualError(t, err, closeErr.Error(), "the scan's close failure is the reader's whole error")
+	})
 }
