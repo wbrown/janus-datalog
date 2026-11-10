@@ -97,25 +97,20 @@ present in correct order.
 
 ### Project
 
-**Compile:** Not compiled from clauses directly — created by the `:find` clause
-or by optimization passes.
+**Compile:** Not compiled from clauses. The compiler makes one `Project`,
+childless: the placeholder a scope's branches compile against for the symbols
+the scope is given. No pass builds a `Project` over clauses.
 
-**Decompile:** `Project([?e])(child)` →
+**Decompile:** a childless `Project` → no clause.
 
-```clojure
-[(q [:find ?e
-     :in $
-     :where <decompiled child clauses>]
-    $) [[?e] ...]]
-```
+A `Project` over clauses has no clause form: Datalog states a projection at a
+scope's find alone, and `Decompile` refuses one, naming that
+(`docs/ideas/JOIN_PROJECT_INSERTION.md`).
 
-The relation-binding subquery preserves the projection as logical Datalog scope;
-it does not create a physical planner phase.
+**Round-trip invariant:** The placeholder adds no clause to the scope it seeds.
 
-**Round-trip invariant:** Child semantics and projected symbol order are
-preserved. Symbols outside the projection cannot escape the nested query.
-
-**Test:** `TestDecompileProjectProducesRelationBindingSubquery`.
+**Tests:** `TestDecompileSchemaPlaceholderProjectProducesNoClause`,
+`TestAProjectOverClausesHasNoClauseForm`.
 
 ### Map
 

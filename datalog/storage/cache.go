@@ -10,9 +10,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// CacheKey identifies a unique (entity, attribute) pair for caching, by the
-// interned identity and keyword a reader holds, so the key compares by pointer
-// and a hit reads the attribute's rules from the keyword in hand.
+// CacheKey identifies an (entity, attribute) pair for caching, by the interned
+// identity and keyword a reader holds, so the key compares by pointer. The rule
+// an entry was resolved under is the entry's own, its cardinality and unique
+// fields, compared on a hit with the definition the reader passes
+// (GetOrResolve).
 //
 // The key names no view. A database's cache holds the latest resolutions, and
 // a view as of a target holds its own in a cache of its own (Cache.ForView).

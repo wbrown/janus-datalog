@@ -54,7 +54,7 @@ A downstream build runs fixpoints over its store, and a least fixpoint requires 
   - the constant true and a blank answer the pattern's first four positions
   - a variable is bound to true beside each of their tuples
   - false and any other constant answer nothing
-- A change of a cardinality-one value is a supersession: the store records the new value alone and no withdrawal of the old one, and History records nothing more. So `[?e :a ?v _ false]` answers the values `Remove` withdrew, and nothing for a superseded value. `DATOMIC_COMPATIBILITY.md` states the difference from Datomic's history, which carries the old value's retraction.
+- A change of a cardinality-one value is a supersession: the store records the new value alone and no withdrawal of the old one, and History records nothing more. So `[?e :a ?v _ false]` answers one tuple per `Remove`, binding the value the call named, and nothing for a superseded value. A cardinality-one `Remove` withdraws whatever value the attribute holds, so the value it names need not be one the attribute held, and the false tuple binds the named value, not the value the view lost (`TestAWithdrawalBindsTheValueTheRemoveNamed`). `DATOMIC_COMPATIBILITY.md` states the difference from Datomic's history, which carries the old value's retraction.
 - `executor.MockPatternMatcher`, which reads datoms as written, reads the position from the datom's operation.
 - The explain rendering names a bound fifth position on its `Bound:` line (`planner.BoundMask.Added`).
 - `qb.Pat` builds a pattern of five elements, and `QUERY_BUILDER.md`, the `qb` docs and `DATOMIC_COMPATIBILITY.md` list the form.

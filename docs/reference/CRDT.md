@@ -384,10 +384,12 @@ type CacheEntry struct {
 
 ```go
 type CacheKey struct {
-    E Entity    // 20-byte entity hash
-    A Attribute // 32-byte attribute
+    E datalog.Identity // the interned entity identity a reader holds
+    A datalog.Keyword  // the interned attribute keyword a reader holds
 }
 ```
+
+The key compares by pointer, and the trie routes it on the entity hash's first word folded with the keyword's FNV-1a hash, computed once where the keyword is interned.
 
 ### Read Flow
 

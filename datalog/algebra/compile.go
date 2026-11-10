@@ -595,17 +595,15 @@ func compilePredicate(p query.Predicate, current *Node) *Node {
 	}
 }
 
-// compileDatabaseFunctionPredicate compiles database function predicates.
-// missing?($ ?e :attr) compiles to AntiJoin(current, Scan([?e :attr _])).
-// Other database function predicates fall back to Select.
+// compileDatabaseFunctionPredicate compiles a database function predicate
+// (missing?, get-some) to a Select node over the current relation, the
+// predicate kept as it is through the round-trip. The executor evaluates it
+// through the function's EvaluationThrough over the lookup of the source the
+// function names.
 func compileDatabaseFunctionPredicate(p *query.DatabaseFunctionPredicate, current *Node) (*Node, error) {
 	if current == nil {
 		return nil, fmt.Errorf("database function predicate requires prior relation")
 	}
-
-	// Compile all database function predicates (missing?, get-some, etc.)
-	// as Select nodes. The executor handles them via EvalWithLookup.
-	// The predicate is preserved as-is through the round-trip.
 	return compilePredicate(p, current), nil
 }
 

@@ -693,9 +693,10 @@ statistically unchanged: 48.37 → 47.94 ms/op (`p=0.143`), with memory
 
 The first compositional algebra step is now complete with logical/physical
 separation intact: the optimizer validates schemas/free requirements after every
-rewrite and lowers the optimized tree back into nested Datalog. `Project`
-becomes a relation-binding subquery; only `ClauseBasedPlanner` constructs
-`RealizedPlan`.
+rewrite and lowers the optimized tree back into nested Datalog. The one
+`Project` the compiler makes is childless and lowers to no clause, and a
+`Project` over clauses has no clause form; only `ClauseBasedPlanner`
+constructs `RealizedPlan`.
 
 The July 13 checkpoint measured 46.89 ms/op median (44.26–52.90 ms), 84.04
 MiB/op, and 1.043M allocations/op. Relative to

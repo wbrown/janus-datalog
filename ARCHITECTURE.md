@@ -146,7 +146,7 @@ The planner is the bridge between a declarative query (an unordered set of claus
 **Algebra-preserving logical optimization.** Before physical planning, the optimizer builds and validates a relational-algebra tree:
 
 - **Algebra IR optimization** (`EnableAlgebraOptimizer`, default-active): `algebra.Compile(q, rules)` takes the prepared query and the rule set its invocations are ordered under, compiles the clauses to a relational-algebra tree, and the tree passes through transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, scan rewrites for `get-else` with vector defaults). The engine infers nothing: every nested form arrives as a header form, and the header is where each operator's keys come from. A schema-aware immutable rebuild refreshes derived outputs after every pass.
-- **Nested Datalog lowering**: the optimized tree is lowered back into a cloned `query.Query`. `Project` becomes a relation-binding subquery; aggregate/OR/NOT/lateral scope remains explicit in Datalog, each nested form decompiled with its header. The optimizer contract is therefore `Query → Query`, an optional rewrite from a prepared query to an equivalent one, and the two planner paths phase the same prepared text.
+- **Nested Datalog lowering**: the optimized tree is lowered back into a cloned `query.Query`. The one `Project` the compiler makes is childless and lowers to no clause; aggregate/OR/NOT/lateral scope remains explicit in Datalog, each nested form decompiled with its header. The optimizer contract is therefore `Query → Query`, an optional rewrite from a prepared query to an equivalent one, and the two planner paths phase the same prepared text.
 
 - **Constant-bindable scalar detection**: Scalar inputs that only appear in predicates/expressions (not data patterns) are flagged in phase metadata. The executor resolves these as constants rather than creating separate relation groups, avoiding unnecessary joins.
 
@@ -377,9 +377,12 @@ custom sources may ignore them and return no ordering guarantee.
 **Extended variants**:
 - `PredicateAwareMatcher` adds `MatchWithConstraints()` — predicate pushdown into storage
 - `EntityLookupMatcher` adds error-returning `LookupAttribute()` — single-value
-  lookups distinguish absence from storage/decode failure — and `LookupSource()`,
-  the lookup of the source a `get-else`, `missing?` or `get-some` names; a source
-  the matcher does not hold, or one without the capability, is an error naming it
+  lookups distinguish absence from storage/decode failure — `AttributeLookup()`,
+  the lookup of one attribute from the default source, which answers at each
+  entity what `LookupAttribute()` answers for that entity and attribute and
+  through which a `get-else`, `missing?` or `get-some` evaluates — and
+  `LookupSource()`, the lookup of the source such a function names; a source the
+  matcher does not hold, or one without the capability, is an error naming it
 
 ### Relation — Tuple Set Abstraction
 
