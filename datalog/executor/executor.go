@@ -166,7 +166,15 @@ func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan 
 // input), in the :in's order, and none for a source or the rule set. Any
 // other count is refused before planning, naming the count given and the
 // count the :in binds. A query whose :in binds nothing takes an empty slice.
+//
+// The query runs on a context derived from ctx with a scan registry of its
+// own, so ctx is read and never written, and queries given one context, at
+// once or in turn, share no scan.
 func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelations []Relation) (Relation, error) {
+	// The registry is this query's: the sites it lists, the scans it shares
+	// and the scopes it ends are kept where no other query reads them.
+	ctx = forkContext(ctx)
+
 	// Apply decorator pattern: wrap matcher with annotations if one is registered
 	matcher := e.matcher
 

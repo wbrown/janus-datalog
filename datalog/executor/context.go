@@ -17,8 +17,11 @@ import (
 // emit already hold it, and a second copy here could only disagree with the
 // first.
 //
-// Not safe for concurrent use — the lazily created scanRegistry is mutable per
-// query; forkContext derives a context with a scan registry of its own.
+// A query runs on a context ExecuteWithRelations derives from the one given,
+// with a scan registry of its own (forkContext), so one Context may be given
+// to any number of queries, at once or in turn, and none writes it. The
+// lazily created scanRegistry is the one field a reader writes, so a Context
+// whose registry is read directly (ScanRegistry) is one goroutine's.
 type Context struct {
 	scanRegistry *ScanRegistry
 	env          Relation
