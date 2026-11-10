@@ -188,16 +188,11 @@ func (d *Database) replayEDN(r io.Reader) error {
 		}
 	}
 
-	// Advance the Lamport clock past the highest ElementID in storage.
-	// Without this, subsequent writes (Add/Remove) get Lamport values
-	// lower than imported data, causing CRDT resolution failures.
 	maxElementID, err := d.store.MaxElementID()
 	if err != nil {
 		return fmt.Errorf("failed to get max ElementID after import: %w", err)
 	}
-	if !maxElementID.IsZero() {
-		d.clock.Restore(maxElementID)
-	}
+	d.completeReplay(maxElementID)
 	return nil
 }
 

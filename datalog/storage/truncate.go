@@ -122,18 +122,21 @@ func (d *Database) TruncateTo(name string) error {
 		d.cache.BeginInFlight(keys)
 	}
 
-	if _, err := d.store.DeleteDatoms(datoms); err != nil {
-		if d.cache != nil {
-			d.cache.InvalidateRewind(keys) // close the window even on failure
-		}
-		return fmt.Errorf("TruncateTo %q: delete: %w", name, err)
+	_, deleteErr := d.store.DeleteDatoms(datoms)
+	if deleteErr == nil {
+		// No writer holds a Lamport above markerMax now; the rewind is collision-free.
+		d.clock.Restore(markerMax)
 	}
 
-	// No writer holds a Lamport above markerMax now; the rewind is collision-free.
-	d.clock.Restore(markerMax)
-
+	// The window closes whether or not the delete succeeded, and every entry
+	// under a unique attribute among the erased datoms drops with the erased
+	// keys: those entries were resolved from claims the rewind erased.
 	if d.cache != nil {
 		d.cache.InvalidateRewind(keys)
+		d.invalidateUniqueAttributesAmong(keys)
+	}
+	if deleteErr != nil {
+		return fmt.Errorf("TruncateTo %q: delete: %w", name, deleteErr)
 	}
 
 	// The database runs with the declarations that survive the rewind, until

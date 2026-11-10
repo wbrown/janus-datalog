@@ -303,9 +303,7 @@ func (d *Database) replayBinary(r io.ReadSeeker, opts ...BinaryImportOptions) er
 			return fmt.Errorf("binary import max ElementID: %w", err)
 		}
 	}
-	if !maxElementID.IsZero() {
-		d.clock.Restore(maxElementID)
-	}
+	d.completeReplay(maxElementID)
 	return nil
 }
 

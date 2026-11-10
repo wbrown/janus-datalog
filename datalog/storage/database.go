@@ -2995,20 +2995,10 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 	if t.db.cache != nil {
 		arrival := t.db.clock.Next()
 
-		// Attributes written in this commit that are declared Unique.
-		// Writes to these attributes can silently supersede other entities'
-		// cached values under (A, V)-LWW fallback, so we invalidate all
-		// cached (E, A) entries for the attribute after per-key updates.
-		uniqueAttrsWritten := make(map[datalog.Keyword]bool)
-		sch := t.db.Schema()
-
 		// Record the arrival on every (E, A) the asserted and retracted datoms
 		// touch.
 		for _, key := range touched {
 			t.db.cache.UpdateMaxVersion(key, arrival)
-			if sch.GetAttribute(key.A).HasUniqueConstraint() {
-				uniqueAttrsWritten[key.A] = true
-			}
 		}
 
 		// Invalidate cache entries for all touched (E, A) pairs. This also
@@ -3017,12 +3007,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		// value, and each key's slot version already records the arrival.
 		t.db.cache.Invalidate(touched)
 
-		// Conservative unique-attr invalidation: for each unique attribute
-		// written in this commit, invalidate every cached entry for that
-		// attribute across all entities. See CRDT_UNIQUE_SEMANTICS.md D3.
-		for a := range uniqueAttrsWritten {
-			t.db.cache.InvalidateAttribute(a)
-		}
+		t.db.invalidateUniqueAttributesAmong(touched)
 	}
 
 	// Clean up
@@ -3032,6 +3017,26 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 	// Return the metadata ElementID - it has the highest Lamport in this tx,
 	// making it the correct high-water mark for as-of queries
 	return metadataElemID, nil
+}
+
+// invalidateUniqueAttributesAmong drops every entity's entry under each
+// unique attribute among keys. A unique entry is resolved from other entities'
+// claims of its value, so a change to any key under the attribute stales
+// every entry under it (CRDT_UNIQUE_SEMANTICS.md D3). A commit applies it to
+// the keys it touched and a rewind to the keys it erased. The caller holds a
+// cache.
+func (d *Database) invalidateUniqueAttributesAmong(keys []CacheKey) {
+	sch := d.Schema()
+	checked := make(map[datalog.Keyword]bool)
+	for _, key := range keys {
+		if checked[key.A] {
+			continue
+		}
+		checked[key.A] = true
+		if sch.GetAttribute(key.A).HasUniqueConstraint() {
+			d.cache.InvalidateAttribute(key.A)
+		}
+	}
 }
 
 // deregister removes the transaction from the database's open transactions

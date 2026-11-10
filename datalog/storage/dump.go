@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // IsDumpPath reports whether path names an exported dump rather than a store
@@ -49,4 +51,19 @@ func (d *Database) replayDump(r io.ReadSeeker) error {
 		return d.replayBinary(r)
 	}
 	return d.replayEDN(r)
+}
+
+// completeReplay ends a replay whose datoms are in the store. The clock is
+// restored past maxElementID, the highest among them, so a later write orders
+// after the imported data; a zero maxElementID is a store holding no datoms,
+// whose clock stands. The cache is cleared once, whatever the replay's batches
+// and chunks touched, so no entry resolved before the import is served after
+// it.
+func (d *Database) completeReplay(maxElementID datalog.ElementID) {
+	if !maxElementID.IsZero() {
+		d.clock.Restore(maxElementID)
+	}
+	if d.cache != nil {
+		d.cache.Clear()
+	}
 }

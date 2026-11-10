@@ -1,62 +1,78 @@
 # In-process import leaves stale cache entries
 
-**Status**: Open, out of scope by owner ruling (2026-07-25). The mechanism is
-real and reproduced; the scenario is unreachable in current deployment, and the
-structural fix belongs to [TRANSACTION_ENVELOPES.md](../proposals/TRANSACTION_ENVELOPES.md).
-Recorded so the derivation does not have to be repeated. Do not treat as
-scheduled work.
+**Status**: Instance fixed; class open.
+
+- Each import's replay ends through `Database.completeReplay`, which restores
+  the clock and clears the whole EA cache once, after the last batch.
+- `TestAReadAfterAnImportAnswersTheImportedFacts` (`datalog/storage`) reads
+  after an import into a warm cache through every entry point, and passes.
+- The class, a writer through `Store.Assert` that notifies no cache, stays
+  open.
+- The class's structural fix belongs to
+  [TRANSACTION_ENVELOPES.md](../proposals/TRANSACTION_ENVELOPES.md).
+- Recorded so the derivation does not have to be repeated.
+- Do not treat the class fix as scheduled work.
 
 ## Summary
 
 `Database.ImportBinary` and `Database.Import` write through `Store.Assert`
-directly and never touch `d.cache`. An entry cached before the import still
-compares fresh afterwards, so a reader is served the pre-import value even
-though storage holds a newer datom that wins CRDT resolution.
+directly, and no batch notifies `d.cache`. An entry cached before the import
+compares fresh against every batch, so a reader is served the pre-import value
+even though storage holds a newer datom that wins CRDT resolution.
+`Database.completeReplay`, the ending both replays share, clears the whole
+cache once after the last batch, and the entry is dropped there.
 
 ## Mechanism
 
 Cache freshness is `slot.entry.version == slot.version` (`cache.go`,
 `GetOrResolve`). That is a **write-notification** design: `slot.version`
-advances only when a writer tells the cache. The complete production
-notification surface is five methods (cited by enclosing function — earlier
-revisions of this document cited line numbers twice, and both times they had
-drifted within a month):
+advances only when a writer tells the cache. The production notification
+surface, cited by enclosing function (earlier revisions of this document cited
+line numbers twice, and both times they had drifted within a month):
 
-Four are called from `Transaction.Commit`:
+Called from `Transaction.Commit`:
 
-- `Cache.UpdateMaxVersion` — twice, once per cardinality arm. **This is the only
-  call that advances `slot.version`**, and therefore the only one whose absence
-  can make a stale entry read as fresh.
+- `Cache.UpdateMaxVersion` — once per (E, A) the commit touched. **This is the
+  only call that advances `slot.version`**, and therefore the only one whose
+  absence can make a stale entry read as fresh.
 - `Cache.Invalidate` — once on the commit path, and once on the failure path to
   clear in-flight sentinels. Drops the entry and *keeps* `slot.version`.
-- `Cache.InvalidateAttribute` — for schema-affecting writes.
+- `Cache.InvalidateAttribute` — through
+  `Database.invalidateUniqueAttributesAmong`, for every unique attribute among
+  the touched keys, since a unique entry is resolved from other entities'
+  claims of its value. The schema install calls it for an attribute whose
+  definition's rule changed.
 - `Cache.BeginInFlight` — opens the uncached window before the write lands.
 
-The fifth is not on the commit path at all:
+Not on the commit path:
 
 - `Cache.InvalidateRewind` — called from `Database.TruncateTo`, on both the
-  success and failure paths. A rewind *retreats* the version high-water, which
-  monotonic `UpdateMaxVersion` cannot express, so it drops cached state outright.
-  Any survey of "who notifies the cache" that starts from `Transaction.Commit`
+  success and failure paths, beside `invalidateUniqueAttributesAmong` over the
+  erased keys. A rewind *retreats* the version high-water, which monotonic
+  `UpdateMaxVersion` cannot express, so it drops cached state outright. Any
+  survey of "who notifies the cache" that starts from `Transaction.Commit`
   misses it, which is the same open-world hazard this bug is an instance of.
+- `Cache.Clear` — called from `Database.completeReplay`, the ending both import
+  replays share, once after the last batch. It raises the floor and drops every
+  entry, so a resolution read before the clear is not stored after it.
 
-(`Cache.Clear` has no production callers.) Invalidation is driven off
-`t.datoms` / `t.retracts`, the transaction's own buffer.
+Commit's invalidation is driven off `t.datoms` / `t.retracts`, the
+transaction's own buffer.
 
-Both import entry points bypass that path entirely: `Database.Import` (EDN, in
+Both import entry points bypass the commit path: `Database.Import` (EDN, in
 `export.go`) and `Database.ImportBinary` (JDZL, in `export_bin.go`). Neither
-constructs a `Transaction`; both call `d.store.Assert` on batches and never
-reference `d.cache`. Because nothing called `UpdateMaxVersion`, `slot.version`
-never advanced, so a pre-import entry satisfies `entry.version == slot.version`
-and reads as fresh.
+constructs a `Transaction`; both call `d.store.Assert` on batches, and no batch
+references `d.cache`. Because nothing calls `UpdateMaxVersion`, `slot.version`
+never advances, so a pre-import entry satisfies `entry.version == slot.version`
+and reads as fresh until `completeReplay` clears it.
 Neither guard in `GetOrResolve` helps: the in-flight sentinel is only set by
-`BeginInFlight`, which import never calls, and the snapshot bound only refuses
-entries that are too *new* — a pre-import entry sits below any bound and
-passes.
+`BeginInFlight`, which import does not call, and the snapshot bound only
+refuses entries that are too *new* — a pre-import entry sits below any bound
+and passes.
 
-`TruncateTo` (`truncate.go:76-92`) demonstrates the same hazard handled
-correctly, bracketing its delete with `BeginInFlight` before and
-`InvalidateRewind` after, on both the success and failure paths.
+`TruncateTo` (`truncate.go`) demonstrates the same hazard handled correctly,
+bracketing its delete with `BeginInFlight` before and `InvalidateRewind` after,
+on both the success and failure paths.
 
 ## What was verified
 
@@ -89,12 +105,15 @@ assertion was replaced with the direct EATV read for exactly this reason.
 
 ## Scope ruling (2026-07-25)
 
-Out of scope, on two grounds from the owner:
+Ruled out of scope on two grounds from the owner:
 
 1. Import runs only as a separate process against a database nothing is
    querying. There is no warm cache to serve stale values, so the sequence the
    defect requires does not occur.
 2. The structural fix belongs to the transaction-envelope work.
+
+The first ground scoped out the instance, which the `completeReplay` clear
+closes (Status). The second ground scopes the class, and stands.
 
 ## The correct fix
 
@@ -127,9 +146,12 @@ that enabling it must not change any answer — holds by construction.
 
 ## Reproducer
 
-Was `datalog/storage/import_cache_invalidation_test.go`; moved here rather than
-committed red, since the scenario is ruled unreachable. Fails on the final
-assertion with `expected: "after-import", actual: "before-import"`.
+Was `datalog/storage/import_cache_invalidation_test.go`, moved here under the
+scope ruling rather than committed red. Its final assertion is the one
+`TestAReadAfterAnImportAnswersTheImportedFacts`
+(`datalog/storage/import_cache_test.go`) makes through `Import`, `ImportDump`
+(EDN and JDZL) and `ImportBinary`, for a superseded cardinality-one value, a
+set the import adds to, and a unique value another entity claims in the dump.
 
 ```go
 package storage
