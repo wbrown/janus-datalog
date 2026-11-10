@@ -163,8 +163,20 @@ func (sr *SourceRouter) UnknownAttributes(source query.Symbol, attrs []datalog.K
 	return nil
 }
 
+// PrefetchEntities implements EntityPrefetcher from the default source, the
+// source a fallback's prefetched branch reads: the default source's own
+// prefetch fills its EA cache with the entities. A default source without the
+// capability prefetches nothing.
+func (sr *SourceRouter) PrefetchEntities(entities []datalog.Identity) error {
+	if ep, ok := sr.sources[datalog.SymDollar].(EntityPrefetcher); ok {
+		return ep.PrefetchEntities(entities)
+	}
+	return nil
+}
+
 // Compile-time verification that SourceRouter implements all matcher interfaces
 var _ PatternMatcher = (*SourceRouter)(nil)
 var _ PredicateAwareMatcher = (*SourceRouter)(nil)
 var _ EntityLookupMatcher = (*SourceRouter)(nil)
 var _ AttributeVocabulary = (*SourceRouter)(nil)
+var _ EntityPrefetcher = (*SourceRouter)(nil)
