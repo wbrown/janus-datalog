@@ -50,31 +50,15 @@ func reportJoin(handler annotations.Handler, left, right Relation, fn func() Rel
 		data["amplification"] = float64(resultSize) / float64(leftSize+rightSize)
 	}
 
-	if left != nil && right != nil {
-		data["left.symbols"] = left.Symbols()
-		data["right.symbols"] = right.Symbols()
-	}
-
+	// Each relation's symbols are the slice it holds; a reader renders them.
 	if left != nil {
-		leftAttrs := make([]string, len(left.Symbols()))
-		for i, sym := range left.Symbols() {
-			leftAttrs[i] = sym.String()
-		}
-		data["left.attrs"] = leftAttrs
+		data["left.symbols"] = left.Symbols()
 	}
 	if right != nil {
-		rightAttrs := make([]string, len(right.Symbols()))
-		for i, sym := range right.Symbols() {
-			rightAttrs[i] = sym.String()
-		}
-		data["right.attrs"] = rightAttrs
+		data["right.symbols"] = right.Symbols()
 	}
 	if result != nil {
-		resultAttrs := make([]string, len(result.Symbols()))
-		for i, sym := range result.Symbols() {
-			resultAttrs[i] = sym.String()
-		}
-		data["result.attrs"] = resultAttrs
+		data["result.symbols"] = result.Symbols()
 	}
 
 	handler(annotations.TimedEvent(annotations.JoinHash, start, data))

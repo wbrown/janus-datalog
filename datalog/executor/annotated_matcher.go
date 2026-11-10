@@ -46,19 +46,13 @@ func (m *AnnotatedMatcher) Match(q *query.Query, bindings Relations) (Relation, 
 	}
 	start := time.Now()
 
-	// Collect binding information if present
-	var bindingSymbols []string
+	var bindingSymbols []query.Symbol
 	var bindingSize int
 
-	if bindings != nil && len(bindings) > 0 {
-		// Find best binding relation for context
+	if len(bindings) > 0 {
 		bindingRel := bindings.FindBestForPattern(pattern)
 		if bindingRel != nil {
-			bindingSyms := bindingRel.Symbols()
-			bindingSymbols = make([]string, len(bindingSyms))
-			for i, sym := range bindingSyms {
-				bindingSymbols[i] = sym.String()
-			}
+			bindingSymbols = bindingRel.Symbols()
 			bindingSize = bindingRel.Size()
 		}
 	}
@@ -81,13 +75,7 @@ func (m *AnnotatedMatcher) Match(q *query.Query, bindings Relations) (Relation, 
 
 	if result != nil {
 		data["match.count"] = result.Size()
-
-		// Add symbol order information for rendering
-		symbolOrder := make([]string, len(result.Symbols()))
-		for i, sym := range result.Symbols() {
-			symbolOrder[i] = sym.String()
-		}
-		data["symbol.order"] = symbolOrder
+		data["symbol.order"] = result.Symbols()
 	}
 
 	if err != nil {
@@ -114,18 +102,13 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 	if pm, ok := m.underlying.(PredicateAwareMatcher); ok {
 		start := time.Now()
 
-		// Collect binding information if present
-		var bindingSymbols []string
+		var bindingSymbols []query.Symbol
 		var bindingSize int
 
-		if bindings != nil && len(bindings) > 0 {
+		if len(bindings) > 0 {
 			bindingRel := bindings.FindBestForPattern(pattern)
 			if bindingRel != nil {
-				bindingSyms := bindingRel.Symbols()
-				bindingSymbols = make([]string, len(bindingSyms))
-				for i, sym := range bindingSyms {
-					bindingSymbols[i] = sym.String()
-				}
+				bindingSymbols = bindingRel.Symbols()
 				bindingSize = bindingRel.Size()
 			}
 		}
@@ -149,12 +132,7 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 
 		if result != nil {
 			data["match.count"] = result.Size()
-
-			symbolOrder := make([]string, len(result.Symbols()))
-			for i, sym := range result.Symbols() {
-				symbolOrder[i] = sym.String()
-			}
-			data["symbol.order"] = symbolOrder
+			data["symbol.order"] = result.Symbols()
 		}
 
 		if err != nil {

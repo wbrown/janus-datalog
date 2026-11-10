@@ -1478,9 +1478,9 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 				Schema: s,
 				AnnotationHandler: func(event annotations.Event) {
 					if event.Name == annotations.JoinHash {
-						t.Logf("ANNOTATION [%s]: left.attrs=%v right.attrs=%v result.attrs=%v left.size=%v right.size=%v result.size=%v",
+						t.Logf("ANNOTATION [%s]: left.symbols=%v right.symbols=%v result.symbols=%v left.size=%v right.size=%v result.size=%v",
 							event.Name,
-							event.Data["left.attrs"], event.Data["right.attrs"], event.Data["result.attrs"],
+							event.Data["left.symbols"], event.Data["right.symbols"], event.Data["result.symbols"],
 							event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
 					}
 				},

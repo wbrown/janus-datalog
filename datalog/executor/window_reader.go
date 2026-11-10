@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -174,7 +173,8 @@ func (w *windowReader) close() error {
 	return w.subject.Close()
 }
 
-// reportTuple emits the event for a subject tuple read into a window.
+// reportTuple emits the event for a subject tuple read into a window: the
+// tuple the window holds, which no pull after it writes.
 func (w *windowReader) reportTuple(tuple Tuple) {
 	if w.options.Handler == nil {
 		return
@@ -184,7 +184,7 @@ func (w *windowReader) reportTuple(tuple Tuple) {
 		Start: time.Now(),
 		Data: map[string]interface{}{
 			annotations.KeyForm: w.form,
-			"tuple":             fmt.Sprintf("%v", tuple),
+			"tuple":             tuple,
 		},
 	})
 }
