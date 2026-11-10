@@ -1,13 +1,12 @@
-package db
+package db_test
 
 import (
-	"fmt"
-	"reflect"
 	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/db"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -15,12 +14,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// A database opened on disk through db.Open holds :t/a, declared cardinality-one, at "old" and then
-// "new" on the entity named "one". A bound invocation's body holds a
-// subquery that invokes a rule and reads a get-else of :t/a on its inner $,
-// which the call binds to $src, the history handle. Through Query, Analyze
-// and QueryInto, the optimizer-on path answers what the optimizer-off path
-// answers.
+// A database opened on disk through db.Open holds :t/a, declared
+// cardinality-one, at "old" and then "new" on the entity named "one". A bound
+// invocation's body holds a subquery that invokes a rule and reads a get-else
+// of :t/a on its inner $, which the call binds to $src, the history handle.
+// Through Query, Analyze and QueryInto, every leg answers what the reference
+// leg answers.
 func TestRefutePlanCache_AnOnDiskDatabasesRuleBodySubqueryReadsTheHistoryHandleItsCallPasses(t *testing.T) {
 	name := datalog.NewKeyword(":t/name")
 	a := datalog.NewKeyword(":t/a")
@@ -34,12 +33,13 @@ func TestRefutePlanCache_AnOnDiskDatabasesRuleBodySubqueryReadsTheHistoryHandleI
 		E datalog.Identity `datalog:"?e"`
 		V string           `datalog:"?v"`
 	}
-	answers := map[bool]map[string][][]interface{}{}
-	for _, algebra := range []bool{false, true} {
-		opts := storage.DefaultPlannerOptions()
-		opts.EnableAlgebraOptimizer = algebra
-		d, err := Open(t.TempDir(), WithSchema(s), WithPlannerOptions(opts))
+	routes := []string{"Query", "Analyze", "QueryInto"}
+	// answers is what the text answers on a mode through each route, on a
+	// database opened on disk, each route's tuples sorted by value.
+	answers := func(t *testing.T, mode optimizerMode) map[string][][]interface{} {
+		d, err := db.Open(t.TempDir(), db.WithSchema(s), db.WithPlannerOptions(mode.plannerOptions()))
 		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, d.Close()) })
 		tx := d.NewTransaction()
 		require.NoError(t, tx.Add(one, name, "one"))
 		require.NoError(t, tx.Add(one, a, "old"))
@@ -54,15 +54,15 @@ func TestRefutePlanCache_AnOnDiskDatabasesRuleBodySubqueryReadsTheHistoryHandleI
 		sources := storage.WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): d.History()})
 		byRoute := map[string][][]interface{}{}
 		queried, err := executor.CollectTuples(d.Query(text, rs, sources))
-		require.NoError(t, err, "algebra %v", algebra)
+		require.NoError(t, err)
 		byRoute["Query"] = queried
 		analyzed, err := d.Analyze(text, rs, sources)
-		require.NoError(t, err, "algebra %v", algebra)
+		require.NoError(t, err)
 		analyzedTuples, err := executor.CollectTuples(analyzed.Result, nil)
 		require.NoError(t, err)
 		byRoute["Analyze"] = analyzedTuples
 		var into []answer
-		require.NoError(t, d.QueryInto(&into, text, rs, sources), "algebra %v", algebra)
+		require.NoError(t, d.QueryInto(&into, text, rs, sources))
 		var intoTuples [][]interface{}
 		for _, x := range into {
 			intoTuples = append(intoTuples, []interface{}{x.E, x.V})
@@ -71,14 +71,15 @@ func TestRefutePlanCache_AnOnDiskDatabasesRuleBodySubqueryReadsTheHistoryHandleI
 		for route := range byRoute {
 			slices.SortFunc(byRoute[route], func(x, y []interface{}) int { return datalog.CompareValues(x[1], y[1]) })
 		}
-		answers[algebra] = byRoute
-		require.NoError(t, d.Close())
+		return byRoute
 	}
-	differ := map[string]string{}
-	for _, route := range []string{"Query", "Analyze", "QueryInto"} {
-		if !reflect.DeepEqual(answers[false][route], answers[true][route]) {
-			differ[route] = fmt.Sprintf("off %v, on %v", answers[false][route], answers[true][route])
-		}
+	reference := answers(t, referenceMode)
+	for _, mode := range legsFor(t, optimizerModes) {
+		t.Run(mode.name, func(t *testing.T) {
+			got := answers(t, mode)
+			for _, route := range routes {
+				require.Equal(t, reference[route], got[route], "%s answers what the reference leg answers", route)
+			}
+		})
 	}
-	require.Empty(t, differ, "routes where the optimizer-on answer differs from the optimizer-off answer")
 }

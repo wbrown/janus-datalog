@@ -71,9 +71,9 @@ func TestSubqueryRelationBinding_ScalesWithInputSize(t *testing.T) {
 				)
 			}
 
-			for _, mode := range LegsFor(t, AllOptions...) {
+			for _, mode := range LegsFor(t, FusionOption) {
 				t.Run(mode.Name(), func(t *testing.T) {
-					got := runExecute(t, datoms, buildQuery(), mode.Algebra())
+					got := runExecute(t, datoms, buildQuery(), mode.ZeroPlannerOptions())
 					assert.Len(t, got, numPeople,
 						"each per-?e subquery returns exactly 1 tuple; outer produces %d tuples, expected %d results",
 						numPeople, numPeople)
@@ -83,16 +83,13 @@ func TestSubqueryRelationBinding_ScalesWithInputSize(t *testing.T) {
 	}
 }
 
-// runExecute executes q over datoms and returns [name, age] pairs for
-// comparison. algebra selects the optimizerModes mode under test — see
-// docs/wip/OPTIMIZER_MODE_MATRIX.md.
-func runExecute(t *testing.T, datoms []datalog.Datom, q *query.Query, algebra bool) [][2]interface{} {
+// runExecute executes q over datoms under opts, a leg's zero-value profile
+// (docs/wip/OPTIMIZER_MODE_MATRIX.md), and returns [name, age] pairs for
+// comparison.
+func runExecute(t *testing.T, datoms []datalog.Datom, q *query.Query, opts planner.PlannerOptions) [][2]interface{} {
 	t.Helper()
 
 	matcher := factsDatabase(t, datoms)
-	opts := planner.PlannerOptions{
-		EnableAlgebraOptimizer: algebra,
-	}
 	exec := NewExecutorWithOptions(matcher, nil, opts)
 
 	rel, err := exec.Execute(q)
