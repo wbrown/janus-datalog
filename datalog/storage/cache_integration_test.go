@@ -327,11 +327,12 @@ func TestCacheResolverInterface(t *testing.T) {
 
 			// Test ResolveLWW
 			lww := &scanReport{}
-			val, maxID, present, err := matcher.ResolveLWW(e, name, matcher.schema.GetAttribute(name), lww)
+			val, resolvedTx, maxID, present, err := matcher.ResolveLWW(e, name, matcher.schema.GetAttribute(name), lww)
 			require.NoError(t, err)
 			assert.True(t, present, "the (E, A) carries datoms, so it is present")
 			assert.Equal(t, "Alice", val)
 			assert.NotZero(t, maxID.Lamport)
+			assert.Equal(t, maxID, resolvedTx, "under the plain rule the resolved datom's Tx is the version")
 			assert.Positive(t, lww.scanned, "resolution read the index and must report it")
 
 			// Test ResolveAddWins

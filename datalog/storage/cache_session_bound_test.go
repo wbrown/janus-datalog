@@ -59,7 +59,7 @@ func TestSessionBoundedCacheRead(t *testing.T) {
 				"a sessioned read must not be served cache content newer than its snapshot")
 
 			report := &scanReport{}
-			raw, _, present, err := sessioned.ResolveLWW(e, attr, sessioned.schema.GetAttribute(attr), report)
+			raw, _, _, present, err := sessioned.ResolveLWW(e, attr, sessioned.schema.GetAttribute(attr), report)
 			require.NoError(t, err)
 			require.True(t, present, "a datom exists within the session's bound")
 			require.Equal(t, int64(1), raw, "storage path defines the snapshot answer")

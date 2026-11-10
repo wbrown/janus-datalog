@@ -538,10 +538,10 @@ func TestVBoundValidation_AsOfRespectsSnapshot(t *testing.T) {
 	}
 }
 
-// Unique attributes must NOT use the cache fast path: ResolveLWW walks for unique
-// attrs (CRDT-unique fallback semantics) which differs from the naive first-entry
-// the fast path mirrors. Unique V-bound queries short-circuit via the unique
-// winner path before validation, so we assert correctness AND zero cache-resolved.
+// A V-bound query on a unique attribute with the attribute bound resolves the
+// value's claimant through the unique winner path (tryEmitUniqueWinner) before
+// any candidate reaches validation, so it answers the claimant and emits no
+// cache-resolved validation event, cache on or off.
 func TestVBoundCache_UniqueSkipsCacheBranch(t *testing.T) {
 	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {

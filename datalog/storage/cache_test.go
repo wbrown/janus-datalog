@@ -93,10 +93,10 @@ func (f *cacheFixture) resolve(cache *Cache, attr datalog.Keyword, report *scanR
 func (f *cacheFixture) version(t *testing.T, attr datalog.Keyword) datalog.ElementID {
 	t.Helper()
 	key := f.key(attr)
-	_, maxID, present, err := f.matcher.ResolveLWW(key.E, key.A, f.matcher.schema.GetAttribute(attr), DiscardIntake)
+	_, _, version, present, err := f.matcher.ResolveLWW(key.E, key.A, f.matcher.schema.GetAttribute(attr), DiscardIntake)
 	require.NoError(t, err)
 	require.True(t, present, "the entity carries %s", attr)
-	return maxID
+	return version
 }
 
 // TestCacheEntryCarriesResolutionIntake pins that the index intake a resolution

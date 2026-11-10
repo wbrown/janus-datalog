@@ -264,11 +264,11 @@ func TestPrefetchEntitiesSurfacesScanErrors(t *testing.T) {
 	}
 }
 
-// TestValidateCandidateSurfacesScanErrors pins the V-bound validation error
-// contract: a failed or partially-decodable EATV point scan must surface as
-// an error, never collapse to "candidate doesn't match" — that silently
-// drops valid results.
-func TestValidateCandidateSurfacesScanErrors(t *testing.T) {
+// TestResolvedDatomSurfacesScanErrors pins the candidate resolution's error
+// contract for a cardinality-one pair: a failed or partially-decodable EATV
+// point scan must surface as an error, never collapse to "the pair resolves
+// to no datom" — that silently drops valid results.
+func TestResolvedDatomSurfacesScanErrors(t *testing.T) {
 	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
@@ -280,20 +280,85 @@ func TestValidateCandidateSurfacesScanErrors(t *testing.T) {
 				index: EATV,
 				iter:  iter,
 			})
-			// NewPatternMatcher attaches no cache, so validation takes the
-			// EATV point-scan branch.
+			// NewPatternMatcher attaches no cache, so the pair resolves through
+			// ResolveLWW's EATV scan.
 			it := &validatingVBoundIterator{
-				matcher:         matcher,
-				validationIndex: EATV,
-				currentBoundV:   "bound-value",
+				matcher:       matcher,
+				currentBoundV: "bound-value",
 			}
 
-			ok, err := it.validateCandidate(datalog.NewIdentity("user:alice"), datalog.NewKeyword(":user/email"), nil)
+			resolved, _, err := it.resolvedDatom(datalog.NewIdentity("user:alice"), datalog.NewKeyword(":user/email"), nil)
 			if err == nil {
 				t.Fatal("expected the scan failure to surface, got nil error")
 			}
-			if ok {
-				t.Fatal("a failed validation scan must not report a match")
+			if resolved != nil {
+				t.Fatal("a failed resolution scan must not report a resolved datom")
+			}
+		})
+	}
+}
+
+// TestResolvedMemberDatomSurfacesScanErrors pins the same contract for a
+// many member's resolution from a T-narrowed run: a failed or
+// partially-decodable EAVT scan of the member's own run surfaces as an error,
+// never as "the member resolves to no datom".
+func TestResolvedMemberDatomSurfacesScanErrors(t *testing.T) {
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
+	t.Cleanup(func() { _ = store.Close() })
+
+	injected := fmt.Errorf("simulated EAVT scan failure")
+	for name, iter := range scanFailureShapes(injected) {
+		t.Run(name, func(t *testing.T) {
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
+				Store: store,
+				index: EAVT,
+				iter:  iter,
+			})
+			it := &validatingVBoundIterator{matcher: matcher, candidatePosition: 3}
+
+			resolved, err := it.resolvedMemberDatom(datalog.NewIdentity("user:alice"), datalog.NewKeyword(":user/tags"), "reader")
+			if err == nil {
+				t.Fatal("expected the scan failure to surface, got nil error")
+			}
+			if resolved != nil {
+				t.Fatal("a failed resolution scan must not report a resolved datom")
+			}
+		})
+	}
+}
+
+// TestResolvedVectorDatomSurfacesScanErrors pins the same contract for a
+// vector's resolution from a T-narrowed run: a failed or partially-decodable
+// scan of the group's elements surfaces as an error, never as "the vector
+// resolves to no datom".
+func TestResolvedVectorDatomSurfacesScanErrors(t *testing.T) {
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
+	t.Cleanup(func() { _ = store.Close() })
+
+	s, err := schema.NewBuilder().
+		Attribute(":user/tags").Type(schema.TypeString).Vector().Add().
+		Build()
+	if err != nil {
+		t.Fatalf("build schema: %v", err)
+	}
+	injected := fmt.Errorf("simulated EATV scan failure")
+	for name, iter := range scanFailureShapes(injected) {
+		t.Run(name, func(t *testing.T) {
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
+				Store: store,
+				index: EATV,
+				iter:  iter,
+			})
+			matcher.SetSchema(s)
+			it := &validatingVBoundIterator{matcher: matcher, candidatePosition: 3}
+
+			attr := datalog.NewKeyword(":user/tags")
+			resolved, err := it.resolvedVectorDatom(datalog.NewIdentity("user:alice"), attr, s.GetAttribute(attr))
+			if err == nil {
+				t.Fatal("expected the scan failure to surface, got nil error")
+			}
+			if resolved != nil {
+				t.Fatal("a failed resolution scan must not report a resolved datom")
 			}
 		})
 	}

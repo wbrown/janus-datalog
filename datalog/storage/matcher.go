@@ -818,7 +818,7 @@ func (m *PatternMatcher) lookupAttribute(
 			Prefix: []datalog.Value{entity, attr},
 		}
 		run = &bound
-		v, _, _, err := m.ResolveLWW(entity, attr, def, report)
+		v, _, _, _, err := m.ResolveLWW(entity, attr, def, report)
 		if err != nil {
 			return nil, false, err
 		}

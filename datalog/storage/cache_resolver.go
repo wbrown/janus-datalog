@@ -34,16 +34,23 @@ func (m *PatternMatcher) GetCardinality(attr datalog.Keyword) datalog.Keyword {
 // state, it delegates to walkUniqueEntityValue for walk-based resolution: the
 // returned value is the entity's first non-superseded assertion, which may
 // fall back to an older entry if the latest has been claimed by another
-// entity, and the returned ElementID is the walk's version, the highest among
-// the datoms it read, other entities' superseding claims included.
-func (m *PatternMatcher) ResolveLWW(e datalog.Identity, a datalog.Keyword, def *schema.AttributeDefinition, report *scanReport) (v any, tx datalog.ElementID, present bool, resolveErr error) {
+// entity.
+//
+// tx is the Tx of the datom the pair resolves to, the assertion the value was
+// read from or the withdrawal that left it nil, and is what a pattern's
+// transaction position reads. version is the highest ElementID the
+// resolution read, the datom's own Tx under the plain rule and, under the
+// walk, other entities' superseding claims included; it is what the cache's
+// freshness reads. A unique pair no assertion of which survives the rule
+// resolves to no datom, so its tx is the zero ElementID.
+func (m *PatternMatcher) ResolveLWW(e datalog.Identity, a datalog.Keyword, def *schema.AttributeDefinition, report *scanReport) (v any, tx datalog.ElementID, version datalog.ElementID, present bool, resolveErr error) {
 	if m.mode != historyMode && def.HasUniqueConstraint() {
 		// The walk acquires through report, so its intake — the deepest read
 		// on this path — reaches the arm whether or not the walk goes on to
 		// fail.
-		v, _, version, found, present, err := m.walkUniqueEntityValue(newUniqueWalkState(), e, a, report)
+		v, walkTx, version, found, present, err := m.walkUniqueEntityValue(newUniqueWalkState(), e, a, report)
 		if err != nil {
-			return nil, datalog.ElementID{}, false, err
+			return nil, datalog.ElementID{}, datalog.ElementID{}, false, err
 		}
 		if !found {
 			// No value survived the unique rule, which is not the same as no
@@ -53,9 +60,9 @@ func (m *PatternMatcher) ResolveLWW(e datalog.Identity, a datalog.Keyword, def *
 			// none falls through to the plain EATV first-entry scan — which
 			// never applies the unique rule and hands back the superseded
 			// value.
-			return nil, version, present, nil
+			return nil, datalog.ElementID{}, version, present, nil
 		}
-		return v, version, true, nil
+		return v, walkTx, version, true, nil
 	}
 
 	// Scan EATV for the first entry visible in this matcher mode (highest
@@ -66,7 +73,7 @@ func (m *PatternMatcher) ResolveLWW(e datalog.Identity, a datalog.Keyword, def *
 		Prefix: []datalog.Value{e, a},
 	})
 	if err != nil {
-		return nil, datalog.ElementID{}, false, err
+		return nil, datalog.ElementID{}, datalog.ElementID{}, false, err
 	}
 	defer func() {
 		resolveErr = errjoin.Join(resolveErr, iter.Close())
@@ -75,7 +82,7 @@ func (m *PatternMatcher) ResolveLWW(e datalog.Identity, a datalog.Keyword, def *
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return nil, datalog.ElementID{}, false, err
+			return nil, datalog.ElementID{}, datalog.ElementID{}, false, err
 		}
 		if m.shouldFilterTx(datom.Tx) {
 			continue
@@ -85,16 +92,16 @@ func (m *PatternMatcher) ResolveLWW(e datalog.Identity, a datalog.Keyword, def *
 		// The (E, A) is still present — a tombstone is a datom, and the entry it
 		// produces holds no value rather than standing for no attribute.
 		if datom.Op == datalog.OpCRDTRemove {
-			return nil, datom.Tx, true, nil
+			return nil, datom.Tx, datom.Tx, true, nil
 		}
-		return datom.V, datom.Tx, true, nil
+		return datom.V, datom.Tx, datom.Tx, true, nil
 	}
 	if err := iter.Error(); err != nil {
-		return nil, datalog.ElementID{}, false, err
+		return nil, datalog.ElementID{}, datalog.ElementID{}, false, err
 	}
 
 	// No datom survived the temporal bound: the attribute does not exist here.
-	return nil, datalog.ElementID{}, false, nil
+	return nil, datalog.ElementID{}, datalog.ElementID{}, false, nil
 }
 
 // ResolveAddWins returns the current set members for cardinality-many, each

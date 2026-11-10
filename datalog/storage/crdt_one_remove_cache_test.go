@@ -505,7 +505,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(db.Schema())
 
-			val, _, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
+			val, _, _, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 			require.NoError(t, err)
 			assert.True(t, present, "precondition: the (E, A) carries datoms")
 			assert.Equal(t, "Alice", val, "precondition: ResolveLWW should return value")
@@ -517,7 +517,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 			require.NoError(t, err)
 
 			// ResolveLWW should return nil after Remove
-			val, _, present, err = matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
+			val, _, _, present, err = matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 			require.NoError(t, err)
 			assert.True(t, present,
 				"a tombstone is a datom: the (E, A) stays present and holds no value")
@@ -723,7 +723,7 @@ func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(db.Schema())
 
-			val, _, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
+			val, _, _, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 			require.NoError(t, err)
 			assert.True(t, present,
 				"a tombstone is a datom: the (E, A) stays present and holds no value")
@@ -839,7 +839,7 @@ func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(db.Schema())
 
-			val, elemID, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
+			val, _, elemID, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 			require.NoError(t, err, "ResolveLWW should not error after Remove")
 			assert.True(t, present,
 				"a tombstone is a datom: the (E, A) stays present and holds no value")
@@ -1041,11 +1041,11 @@ func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keywor
 	t.Helper()
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	val, eid, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
+	val, _, version, present, err := matcher.ResolveLWW(e, a, matcher.schema.GetAttribute(a), DiscardIntake)
 	require.NoError(t, err)
 	require.True(t, present,
 		"(e, a) was written before this read, so it is present whether or not a value survived")
-	return val, eid
+	return val, version
 }
 
 func TestCacheRemove_ResolveLWW_AfterOverwrite(t *testing.T) {

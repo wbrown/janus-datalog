@@ -32,12 +32,14 @@ func (rt ReuseType) String() string {
 
 // ReuseStrategy describes how iterator reuse can be applied
 type ReuseStrategy struct {
-	Type            ReuseType
-	Position        int       // Which position is changing (0=E, 1=A, 2=V, 3=T)
-	Index           IndexType // Which index to use
-	NeedsValidation bool      // If true, V-bound query needs CRDT validation
-	ValidationIndex IndexType // Index to use for validation (EATV for point lookups)
-	BoundA          any       // The bound A value (for validation lookups)
+	Type     ReuseType
+	Position int       // Which position is changing (0=E, 1=A, 2=V, 3=T)
+	Index    IndexType // Which index to use
+	// NeedsValidation is set when the run is narrowed to the binding's V or T
+	// and so holds no pair's group whole: each datom it emits is a candidate
+	// validated against its pair's resolved datom (matchWithVValidation).
+	NeedsValidation bool
+	BoundA          any // The bound A value (for validation lookups)
 }
 
 // analyzeReuseStrategy determines if and how iterator reuse can be applied.
@@ -154,7 +156,6 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 					Position:        position,
 					Index:           indexType,
 					NeedsValidation: card == schema.CardinalityOne && m.mode != historyMode,
-					ValidationIndex: EATV,         // Point lookup on (E, A)
 					BoundA:          aConst.Value, // For validation lookups
 				}, bindingRel, nil
 			} else {
@@ -167,11 +168,30 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 					Position:        position,
 					Index:           indexType,
 					NeedsValidation: m.mode != historyMode,
-					ValidationIndex: EATV,
 				}, bindingRel, nil
 			}
 
 		case 3: // T is bound
+			// A run narrowed to T holds one operation's datoms and no pair's
+			// group whole, so outside History its datoms are candidates
+			// validated against their pair's resolution
+			// (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T3, T6):
+			// ATEV under a constant attribute, TAEV under an open one. Under
+			// History every datom is read as written and the run is the
+			// answer.
+			if m.mode != historyMode {
+				strategy := ReuseStrategy{
+					Type:            SinglePositionReuse,
+					Position:        position,
+					Index:           TAEV,
+					NeedsValidation: true,
+				}
+				if aConst, ok := pattern.GetA().(query.Constant); ok {
+					strategy.Index = ATEV
+					strategy.BoundA = aConst.Value
+				}
+				return strategy, bindingRel, nil
+			}
 			indexType = TAEV // T is primary sort key ✓
 			canReuse = true
 		}
@@ -187,9 +207,19 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 		return ReuseStrategy{Type: NoReuse}, bindingRel, nil
 	}
 
-	// Multiple positions bound - choose the most selective position for reuse
+	// Multiple positions bound - choose the most selective position for reuse.
+	// A seek on T outside History is the T-narrowed candidate run above.
 	if len(boundPositions) > 1 {
-		return chooseBestMultiPositionStrategy(pattern, boundPositions, bindingRel, bindingSet, card == schema.CardinalityMany)
+		strategy, bindingRel, err := chooseBestMultiPositionStrategy(pattern, boundPositions, bindingRel, bindingSet, card == schema.CardinalityMany)
+		if err == nil && strategy.Type == SinglePositionReuse && strategy.Position == 3 && m.mode != historyMode {
+			strategy.Index = TAEV
+			strategy.NeedsValidation = true
+			if aConst, ok := pattern.GetA().(query.Constant); ok {
+				strategy.Index = ATEV
+				strategy.BoundA = aConst.Value
+			}
+		}
+		return strategy, bindingRel, err
 	}
 
 	return ReuseStrategy{Type: NoReuse}, bindingRel, nil

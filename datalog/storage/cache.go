@@ -47,6 +47,14 @@ type CacheEntry struct {
 	vectorList  []any               // Cardinality-Vector: ordered elements
 	vectorIndex []datalog.ElementID // Cardinality-Vector: position → ElementID for O(1) access
 
+	// oneTx is the Tx of the datom a cardinality-one entry resolves to: the
+	// one oneValue was read from, or the withdrawal that left it nil. Under
+	// the plain rule it is the version. Under the unique rule the walk may
+	// settle on an older assertion than the highest datom it read, so the two
+	// differ, and a pattern's transaction position reads this one
+	// (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T5).
+	oneTx datalog.ElementID
+
 	// scanned is the index intake the resolution that built this entry spent.
 	// It belongs on the entry rather than on the call that triggered the build:
 	// the entry is what the cost bought, so a later reader of the same entry can
@@ -98,6 +106,11 @@ func (e *CacheEntry) Cardinality() datalog.Keyword {
 // OneValue returns the value for cardinality-one attributes
 func (e *CacheEntry) OneValue() any {
 	return e.oneValue
+}
+
+// OneTx returns the Tx of the datom a cardinality-one entry resolves to.
+func (e *CacheEntry) OneTx() datalog.ElementID {
+	return e.oneTx
 }
 
 // ManySet returns the set for cardinality-many attributes, each member under
@@ -658,11 +671,14 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []
 
 	switch card {
 	case schema.CardinalityOne:
+		// Under the plain rule the highest datom is the one the pair resolves
+		// to, so its Tx is the version and the resolved datom's Tx at once.
 		value, maxID := ResolveLWWFromDatoms(datoms)
 		entry = &CacheEntry{
 			version:     maxID,
 			cardinality: schema.CardinalityOne,
 			oneValue:    value,
+			oneTx:       maxID,
 		}
 
 	case schema.CardinalityMany:
@@ -688,6 +704,7 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []
 			version:     maxID,
 			cardinality: schema.CardinalityOne,
 			oneValue:    value,
+			oneTx:       maxID,
 		}
 	}
 
@@ -740,7 +757,7 @@ func rebuildOne(key CacheKey, def *schema.AttributeDefinition, resolver CacheRes
 	if report != nil {
 		before = report.scanned
 	}
-	value, maxID, present, err := resolver.ResolveLWW(key.E, key.A, def, report)
+	value, tx, version, present, err := resolver.ResolveLWW(key.E, key.A, def, report)
 	if err != nil {
 		return nil, fmt.Errorf("resolve LWW value: %w", err)
 	}
@@ -749,10 +766,11 @@ func rebuildOne(key CacheKey, def *schema.AttributeDefinition, resolver CacheRes
 	}
 
 	entry := &CacheEntry{
-		version:     maxID,
+		version:     version,
 		cardinality: schema.CardinalityOne,
 		unique:      def.HasUniqueConstraint(),
 		oneValue:    value,
+		oneTx:       tx,
 	}
 	if report != nil {
 		entry.scanned = report.scanned - before
@@ -838,8 +856,12 @@ type CacheResolver interface {
 	// under the unique rule when def declares a unique and the resolver reads
 	// resolved state: the entity's first assertion no other entity's later
 	// claim supersedes.
-	// Returns (value, maxElementID, present, error); intake accrues into the report.
-	ResolveLWW(e datalog.Identity, a datalog.Keyword, def *schema.AttributeDefinition, report *scanReport) (any, datalog.ElementID, bool, error)
+	// Returns (value, tx, version, present, error): tx is the Tx of the datom
+	// the pair resolves to, the assertion the value was read from or the
+	// withdrawal that left it nil, and version is the highest ElementID the
+	// resolution read, other entities' claims included under the unique rule.
+	// Intake accrues into the report.
+	ResolveLWW(e datalog.Identity, a datalog.Keyword, def *schema.AttributeDefinition, report *scanReport) (any, datalog.ElementID, datalog.ElementID, bool, error)
 
 	// ResolveAddWins returns the current set members for cardinality-many,
 	// each under its memberKey.
