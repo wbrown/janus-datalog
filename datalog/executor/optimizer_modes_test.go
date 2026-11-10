@@ -2,10 +2,12 @@ package executor
 
 import (
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
@@ -35,7 +37,8 @@ import (
 // via plannerOptions(), and the bare planner.PlannerOptions{} zero-value
 // profile via zeroPlannerOptions(). Under -reach legsFor hands a test modes
 // that record its reach, recordsReach naming the test, and the options a
-// mode applies carry the recorder as the handler.
+// mode applies carry the recorder as the handler; a test's own handler
+// carries it ahead through recording.
 type optimizerMode struct {
 	name         string
 	algebra      bool
@@ -84,6 +87,20 @@ func (m optimizerMode) apply(opts planner.PlannerOptions) planner.PlannerOptions
 		opts.Handler = reachRecorder(m.recordsReach)
 	}
 	return opts
+}
+
+// recording wraps handler so the recorder receives every event the handler
+// does, or returns handler unchanged when the mode records no reach or when
+// handler is nil, annotations off, under which no event is emitted.
+func (m optimizerMode) recording(handler annotations.Handler) annotations.Handler {
+	if m.recordsReach == "" || handler == nil {
+		return handler
+	}
+	record := reachRecorder(m.recordsReach)
+	return func(event annotations.Event) {
+		record(event)
+		handler(event)
+	}
 }
 
 // plannerOptions is NewExecutor's default profile with the mode's setting of
@@ -239,8 +256,10 @@ func defaultProfileMode() optimizerMode {
 // of the reach is one the legs taken before it do not hold, and the rest are
 // the first legs of optimizerModes with a setting not yet held. A reach of
 // no option, a test the options cannot change, runs the default profile
-// alone. Under -reach every mode runs, each recording t's reach, so the
-// record covers them all.
+// alone. Under js/wasm, where a test binary runs on one thread, a reach of
+// one or more options runs the default profile and, where it differs from
+// the default profile on the reach, the reference. Under -reach every mode
+// runs, each recording t's reach, so the record covers them all.
 func legsFor(t testing.TB, reach ...option) []optimizerMode {
 	if *reachReport != "" {
 		test, _, _ := strings.Cut(t.Name(), "/")
@@ -266,6 +285,17 @@ func legsFor(t testing.TB, reach ...option) []optimizerMode {
 	}
 	if len(distinct) == 0 {
 		return []optimizerMode{defaultProfileMode()}
+	}
+	if runtime.GOOS == "js" && runtime.GOARCH == "wasm" {
+		profile := defaultProfileMode()
+		var legs []optimizerMode
+		for _, o := range distinct {
+			if o.on(profile) != o.on(optimizerModes[0]) {
+				legs = append(legs, optimizerModes[0])
+				break
+			}
+		}
+		return append(legs, profile)
 	}
 	// A mode's setting of the reach, one bit per reached option.
 	setting := func(mode optimizerMode) (s uint8) {
@@ -360,7 +390,10 @@ func reachCovered(reach []option, legs []optimizerMode) bool {
 // no two legs alike on the reach, the reference among them, and the default
 // profile, the ninth leg, wherever its setting of the reach is one no leg of
 // the array holds, one leg more. A reach of none runs the default profile
-// alone. Under -reach every leg runs, each recording the test's reach.
+// alone. Under js/wasm, where a test binary runs on one thread, a reach of
+// one or more options runs the default profile and, where it differs from
+// the default profile on the reach, the reference. Under -reach every leg
+// runs, each recording the test's reach.
 func TestLegsForRunsOneLegPerSettingOfTheReach(t *testing.T) {
 	reference := optimizerModes[0]
 	profile := defaultProfileMode()
@@ -384,6 +417,21 @@ func TestLegsForRunsOneLegPerSettingOfTheReach(t *testing.T) {
 				for _, leg := range legs {
 					require.Equal(t, "TestLegsForRunsOneLegPerSettingOfTheReach", leg.recordsReach, "each leg records this test's reach")
 				}
+				return
+			}
+			if runtime.GOOS == "js" && runtime.GOARCH == "wasm" {
+				wantLegs := []string{profile.name}
+				for _, o := range reach {
+					if o.on(profile) != o.on(reference) {
+						wantLegs = append(wantLegs, reference.name)
+						break
+					}
+				}
+				var got []string
+				for _, leg := range legs {
+					got = append(got, leg.name)
+				}
+				require.ElementsMatch(t, wantLegs, got, "under js/wasm a reach of %d options runs the default profile and, where it differs on the reach, the reference", len(reach))
 				return
 			}
 			want := 8

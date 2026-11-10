@@ -240,6 +240,12 @@ func (m optimizerMode) PlannerOptions() planner.PlannerOptions { return m.planne
 // every option.
 func (m optimizerMode) ZeroPlannerOptions() planner.PlannerOptions { return m.zeroPlannerOptions() }
 
+// Recording wraps handler so the mode's reach recorder receives every event
+// the handler does.
+func (m optimizerMode) Recording(handler annotations.Handler) annotations.Handler {
+	return m.recording(handler)
+}
+
 // ApplyFindPulls renders each pull find element of a result.
 var ApplyFindPulls = applyFindPulls
 

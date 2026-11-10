@@ -38,12 +38,12 @@ func TestAWindowedClauseReadsItsFrameFromThePlan(t *testing.T) {
 		{"a pattern after a join", `[:find ?x ?z :in $ % :where [?x :page/kind "leaf"] [?x :page/next ?y] [?y :page/next ?z]]`},
 		{"an invocation after a join", `[:find ?x ?z :in $ % :where [?x :page/kind "leaf"] [?x :page/next ?y] (follows ?y ?z)]`},
 	}
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		for _, c := range cases {
 			t.Run(mode.Name()+"/"+c.name, func(t *testing.T) {
 				made := &plansMade{recording: true}
 				opts := mode.PlannerOptions()
-				opts.Handler = made.handle
+				opts.Handler = mode.Recording(made.handle)
 				exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts)
 				exec.SetPlanCache(planner.NewPlanCache(64, 0))
 				q := MustParse(t, c.text)

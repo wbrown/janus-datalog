@@ -68,11 +68,11 @@ func pairsFrom(from, n int) map[[2]datalog.Identity]bool {
 // pairs its keys reach that the sets do not hold enter a delta once, and a
 // window whose keys the sets already hold runs no iteration.
 func TestRuleEvaluation_ALaterSeedDerivesTheNewKeysAlone(t *testing.T) {
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			exec, planned, ctx := boundClosure(t, FollowsRulesText, factsDatabase(t, ChainDatoms(6)), opts)
 			rules, seed := planned.Magic.Rules, planned.Magic.Seed
 			ev := NewRuleEvaluation(exec, planned)
@@ -168,7 +168,7 @@ func TestRunStratum_ACopyMatchesItsPatternUnderTheWholeDelta(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 2
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			matcher := &edgeKeysMatcher{Database: factsDatabase(t, ChainDatoms(6)), keys: map[query.Symbol]int{}}
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
@@ -200,11 +200,11 @@ func TestRuleEvaluation_ABodysInvocationBesideAValueConstantPatternDerivesWhatTh
 	follows := datalog.NewSymbol("follows")
 	rs := MustRules(t, leafwardRulesText)
 	q := MustParse(t, `[:find ?x :in $ % :where (leafward #id "page1" ?x)]`)
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			exec := NewExecutorWithOptions(factsDatabase(t, ChainDatoms(6)), nil, opts)
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
 			require.NoError(t, err)
@@ -238,7 +238,7 @@ func TestRunStratum_ACopysJoinIntoAHeldPredicateProbesTheDeltaAlone(t *testing.T
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			exec := NewExecutorWithOptions(factsDatabase(t, ChainDatoms(6)), nil, opts)
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
 			require.NoError(t, err)
@@ -288,11 +288,11 @@ func TestRunStratum_APassCarriesAChainOfDerivations(t *testing.T) {
 	                     [(c ?x ?y) (b ?x ?y)]
 	                     [(a ?x ?z) (c ?x ?y) [?y :page/next ?z]]]`)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (a ?x ?y)]`)
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			exec := NewExecutorWithOptions(factsDatabase(t, ChainDatoms(6)), nil, opts)
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
 			require.NoError(t, err)
@@ -365,11 +365,11 @@ func TestRuleEvaluation_ALaterWindowReadsALowerStratumsNewTuplesAlone(t *testing
 // evaluation completes, each with its iterations summed over the windows and
 // its sets' tuples; completing again reports nothing.
 func TestRuleEvaluation_CompleteReportsEachStratumOnce(t *testing.T) {
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			exec, planned, ctx := boundClosure(t, FollowsRulesText, factsDatabase(t, ChainDatoms(6)), opts)
 			rules, seed := planned.Magic.Rules, planned.Magic.Seed
 			ev := NewRuleEvaluation(exec, planned)
@@ -406,7 +406,7 @@ func TestRuleEvaluation_AWholeEvaluationRunsOnce(t *testing.T) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			exec := NewExecutorWithOptions(factsDatabase(t, ChainDatoms(6)), nil, opts)
 			rs := MustRules(t, FollowsRulesText)
 			ctx := NewContext().WithRules(rs)
@@ -468,11 +468,11 @@ func TestDeriveInvocation_ContinuesTheClausesEvaluationUnderContinuations(t *tes
 		}
 		return []Relation{NewMaterializedRelation([]query.Symbol{x}, tuples)}
 	}
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			ex := NewExecutorWithOptions(factsDatabase(t, ChainDatoms(6)), nil, opts)
 			rs := MustRules(t, FollowsRulesText)
 			planned, err := planner.PlanEvaluation(ex.GetPlanner(), rs, follows, []bool{true, false}, nil)
@@ -515,12 +515,12 @@ func TestFormInsideAFormContinuesOneEvaluationAcrossTheOuterWindows(t *testing.T
 	matcher := factsDatabase(t, ChainDatoms(pages))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where [?x :page/kind "leaf"] (or-join [[?x] ?y] (or-default-join [[?x] ?y] (follows ?x ?y) [(ground :end) ?y]) [(ground :none) ?y])]`)
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 2
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			inputs, err := CreateInputRelationsFromValuesWithOptions(q, []interface{}{datalog.SymDollar, datalog.NewSymbol("%")}, exec.Options())
 			require.NoError(t, err)
@@ -549,12 +549,12 @@ func TestOrFallbackIteratorClosedBeforeExhaustionCompletesItsEvaluations(t *test
 	for i := 1; i <= pages; i++ {
 		subjects = append(subjects, Tuple{Page(i)})
 	}
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			events := &RuleEvents{}
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 2
-			opts.Handler = events.Handle
+			opts.Handler = mode.Recording(events.Handle)
 			exec := NewExecutorWithOptions(matcher, nil, opts).QueryExecutor(nil)
 			subject := NewStreamingRelation([]query.Symbol{x}, NewMaterializedRelation([]query.Symbol{x}, subjects).Iterator())
 			groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: form}, []Relation{subject})

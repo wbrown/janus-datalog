@@ -49,15 +49,15 @@ func TestSimpleSubquery(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range legsFor(t) {
+	for _, mode := range legsFor(t, algebraOption, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			builds := 0
 			opts := mode.plannerOptions()
-			opts.Handler = func(event annotations.Event) {
+			opts.Handler = mode.recording(func(event annotations.Event) {
 				if event.Name == annotations.ScopeBranchBuild && event.Data[annotations.KeyForm] == "subquery" {
 					builds++
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 
 			result, err := exec.Execute(q)

@@ -1,10 +1,12 @@
 package db_test
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
@@ -61,7 +63,8 @@ import (
 // setting of every planner option a test can turn on, named backend/leg. The
 // leg's fields are the mode's by promotion. Under -reach legsFor hands a test
 // modes that record its reach, recordsReach naming the test, and the mode's
-// plannerOptions carry the recorder as the handler.
+// plannerOptions carry the recorder as the handler; a test's own handler,
+// given at open, carries it ahead through recording.
 type optimizerMode struct {
 	name string
 	optionLeg
@@ -77,6 +80,20 @@ func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 		opts.Handler = reachRecorder(m.recordsReach)
 	}
 	return opts
+}
+
+// recording wraps handler so the recorder receives every event the handler
+// does, or returns handler unchanged when the mode records no reach or when
+// handler is nil, annotations off, under which no event is emitted.
+func (m optimizerMode) recording(handler annotations.Handler) annotations.Handler {
+	if m.recordsReach == "" || handler == nil {
+		return handler
+	}
+	record := reachRecorder(m.recordsReach)
+	return func(event annotations.Event) {
+		record(event)
+		handler(event)
+	}
 }
 
 // optionLeg is one setting of the six options, named by the options on, in
@@ -144,11 +161,32 @@ func buildOptimizerModes(backends []storage.Backend) []optimizerMode {
 // legsWhere is the legs of modes keep admits, in their order: the axis of a
 // test pinning one option's mechanism, still a leg per backend and per
 // setting of the other options, because pinning one option pins neither a
-// store nor another option.
+// store nor another option. Where keep admits none of modes, it is the first
+// leg of optionLegs keep admits, on each backend of modes: under js/wasm
+// legsFor answers the default profile and the reference, and a pin neither
+// holds still runs on a leg that holds it.
 func legsWhere(modes []optimizerMode, keep func(optimizerMode) bool) []optimizerMode {
 	var legs []optimizerMode
 	for _, mode := range modes {
 		if keep(mode) {
+			legs = append(legs, mode)
+		}
+	}
+	if len(legs) > 0 {
+		return legs
+	}
+	var backends []storage.Backend
+	seen := map[string]bool{}
+	for _, mode := range modes {
+		if !seen[mode.backend.Name] {
+			seen[mode.backend.Name] = true
+			backends = append(backends, mode.backend)
+		}
+	}
+	taken := map[string]bool{}
+	for _, mode := range buildOptimizerModes(backends) {
+		if keep(mode) && !taken[mode.backend.Name] {
+			taken[mode.backend.Name] = true
 			legs = append(legs, mode)
 		}
 	}
@@ -276,8 +314,11 @@ func defaultProfileLeg() optionLeg {
 // where a sub-design of that size holds both, and the rest are the first
 // legs of optionLegs with a setting not yet held. A reach of no option, a
 // test the options cannot change, runs the default profile alone. Under
-// several backends the same legs are taken on each. Under -reach every leg
-// of modes runs, each recording t's reach, so the record covers them all.
+// js/wasm, where a test binary runs on one thread, a reach of one or more
+// options runs the default profile and, where it differs from the default
+// profile on the reach, the reference. Under several backends the same legs
+// are taken on each. Under -reach every leg of modes runs, each recording
+// t's reach, so the record covers them all.
 func legsFor(t testing.TB, modes []optimizerMode, reach ...option) []optimizerMode {
 	if *reachReport != "" {
 		test, _, _ := strings.Cut(t.Name(), "/")
@@ -288,7 +329,7 @@ func legsFor(t testing.TB, modes []optimizerMode, reach ...option) []optimizerMo
 		}
 		return recording
 	}
-	chosen := legsOfReach(reach)
+	chosen := legsOfReach(reach, !(runtime.GOOS == "js" && runtime.GOARCH == "wasm"))
 	var legs []optimizerMode
 	for _, mode := range modes {
 		if chosen[mode.optionLeg.name] {
@@ -299,8 +340,10 @@ func legsFor(t testing.TB, modes []optimizerMode, reach ...option) []optimizerMo
 }
 
 // legsOfReach is the names of the legs of optionLegs legsFor takes for a
-// reach.
-func legsOfReach(reach []option) map[string]bool {
+// reach. Under the pairwise design they are one leg per setting of the reach
+// the design needs. Otherwise they are the default profile and, where it
+// differs from the default profile on the reach, the reference.
+func legsOfReach(reach []option, pairwise bool) map[string]bool {
 	var distinct []option
 	for _, o := range reach {
 		held := false
@@ -317,6 +360,17 @@ func legsOfReach(reach []option) map[string]bool {
 	chosen := map[string]bool{}
 	if len(distinct) == 0 {
 		chosen[defaultProfileLeg().name] = true
+		return chosen
+	}
+	if !pairwise {
+		profile := defaultProfileLeg()
+		chosen[profile.name] = true
+		for _, o := range distinct {
+			if o.on(profile) != o.on(optionLegs[0]) {
+				chosen[optionLegs[0].name] = true
+				break
+			}
+		}
 		return chosen
 	}
 	if len(distinct) >= 4 {
@@ -482,13 +536,50 @@ func TestTheOptionLegsCarryTheReferenceAndTheDefaultProfile(t *testing.T) {
 	require.True(t, carried, "a leg is DefaultPlannerOptions' profile: %+v", profile)
 }
 
+// A pin none of the legs given carries runs on the first leg of optionLegs
+// carrying it, on each backend of the legs given. Under js/wasm legsFor
+// answers the default profile and the reference, and a test pinning a
+// setting neither holds still runs on a leg that holds it.
+func TestLegsWhereCarriesAPinTheLegsGivenDoNot(t *testing.T) {
+	var given []optimizerMode
+	for _, mode := range backendModes {
+		if mode.optionLeg.name == optionLegs[0].name || mode.optionLeg.name == defaultProfileLeg().name {
+			given = append(given, mode)
+		}
+	}
+	keep := func(m optimizerMode) bool { return m.prefetch && !m.fusion }
+	for _, mode := range given {
+		require.False(t, keep(mode), "the fixture's pin is one the legs given do not carry: %s", mode.name)
+	}
+	var first string
+	for _, leg := range optionLegs {
+		if keep(optimizerMode{optionLeg: leg}) {
+			first = leg.name
+			break
+		}
+	}
+	require.NotEmpty(t, first, "a leg of optionLegs carries the pin")
+
+	legs := legsWhere(given, keep)
+	byBackend := map[string]string{}
+	for _, leg := range legs {
+		require.True(t, keep(leg), "%s carries the pin", leg.name)
+		require.Equal(t, first, leg.optionLeg.name, "the first leg of optionLegs carrying the pin, on %s", leg.backend.Name)
+		byBackend[leg.backend.Name] = leg.optionLeg.name
+	}
+	require.Len(t, byBackend, len(storage.AvailableBackends()), "one leg on each backend of the legs given")
+	require.Len(t, legs, len(byBackend), "one leg per backend")
+}
+
 // A test runs on one leg per setting of its reach the pairwise design needs:
 // two legs for one option, four for two or three, every leg for four or
 // more, each reached option at both settings and each pair at all four, no
 // two legs alike on the reach, the reference among them and the default
 // profile where a sub-design of that size holds both. A reach of none runs
-// the default profile alone. Under -reach every leg runs, each recording
-// the test's reach.
+// the default profile alone. Under js/wasm, where a test binary runs on one
+// thread, a reach of one or more options runs the default profile and, where
+// it differs from the default profile on the reach, the reference. Under
+// -reach every leg runs, each recording the test's reach.
 func TestLegsForRunsOneLegPerSettingOfTheReach(t *testing.T) {
 	reference := optionLegs[0]
 	profile := defaultProfileLeg()
@@ -512,6 +603,22 @@ func TestLegsForRunsOneLegPerSettingOfTheReach(t *testing.T) {
 				for _, leg := range legs {
 					require.Equal(t, "TestLegsForRunsOneLegPerSettingOfTheReach", leg.recordsReach, "each leg records this test's reach")
 				}
+				return
+			}
+			if runtime.GOOS == "js" && runtime.GOARCH == "wasm" {
+				wantLegs := []string{profile.name}
+				for _, o := range reach {
+					if o.on(profile) != o.on(reference) {
+						wantLegs = append(wantLegs, reference.name)
+						break
+					}
+				}
+				var got []string
+				for _, leg := range legs {
+					require.Equal(t, engineBackends()[0].Name, leg.backend.Name, "the engine axis's backend")
+					got = append(got, leg.optionLeg.name)
+				}
+				require.ElementsMatch(t, wantLegs, got, "under js/wasm a reach of %d options runs the default profile and, where it differs on the reach, the reference", len(reach))
 				return
 			}
 			want := len(optionLegs)

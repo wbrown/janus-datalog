@@ -123,14 +123,14 @@ func runCountingLookups(t *testing.T, f lookupItems, fuses bool, text string, ch
 				t.Cleanup(func() { require.NoError(t, d.Close()) })
 				run := countedRun{mode: mode, matcher: newLookupCountingMatcher(d, fuses), fused: make(map[datalog.Keyword]bool)}
 				opts := mode.PlannerOptions()
-				opts.Handler = func(e annotations.Event) {
+				opts.Handler = mode.Recording(func(e annotations.Event) {
 					switch e.Name {
 					case annotations.PatternFusedFetch, annotations.PatternFusedConstraint:
 						run.fused[e.Data["attr"].(datalog.Keyword)] = true
 					case annotations.PrefetchTrigger:
 						run.prefetched = true
 					}
-				}
+				})
 				rel, err := NewExecutorWithOptions(run.matcher, nil, opts).Execute(MustParse(t, text))
 				require.NoError(t, err)
 				run.tuples, err = CollectTuples(rel, nil)
@@ -193,7 +193,7 @@ func TestAFusedFetchReadsEachAttributeThroughOneLookup(t *testing.T) {
 			require.Equal(t, 1, run.matcher.attributeLookups[attr], "the fused fetch of %s makes one lookup of it", attr)
 			require.Zero(t, run.matcher.entityLookups[attr], "no entity's %s is looked up one entity at a time", attr)
 		}
-	})
+	}, FusionOption)
 }
 
 func TestAnOrDefaultBranchBuiltFromTheCacheReadsItsAttributeThroughALookup(t *testing.T) {
@@ -228,5 +228,5 @@ func TestAnOrDefaultBranchBuiltFromTheCacheReadsItsAttributeThroughALookup(t *te
 			require.False(t, run.prefetched, "nothing is prefetched with the option off")
 			require.Zero(t, run.matcher.attributeLookups[f.kind], "the branch over %s is matched through the pattern, with no lookup of it", f.kind)
 		}
-	})
+	}, PrefetchOption, FusionOption)
 }

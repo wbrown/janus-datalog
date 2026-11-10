@@ -22,12 +22,12 @@ func TestEvaluateRules_CancelledAtIteration(t *testing.T) {
 			defer cancel()
 			iterations := 0
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				if e.Name == annotations.RulesIteration {
 					iterations++
 					cancel()
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs).WithCancellation(ctx), q, nil)
 			if !errors.Is(err, context.Canceled) {

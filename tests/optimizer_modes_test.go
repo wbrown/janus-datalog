@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -83,7 +84,10 @@ var optimizerModes = []optimizerMode{
 
 // legsWhere is the legs of modes keep admits, in their order: the axis of a
 // test pinning one option's mechanism, still a leg per setting of the other
-// options its reach needs, because pinning one option pins no other.
+// options its reach needs, because pinning one option pins no other. Where
+// keep admits none of modes, it is the first leg of optimizerModes keep
+// admits: under js/wasm legsFor answers the default profile and the
+// reference, and a pin neither holds still runs on a leg that holds it.
 func legsWhere(modes []optimizerMode, keep func(optimizerMode) bool) []optimizerMode {
 	var legs []optimizerMode
 	for _, mode := range modes {
@@ -91,7 +95,15 @@ func legsWhere(modes []optimizerMode, keep func(optimizerMode) bool) []optimizer
 			legs = append(legs, mode)
 		}
 	}
-	return legs
+	if len(legs) > 0 {
+		return legs
+	}
+	for _, mode := range optimizerModes {
+		if keep(mode) {
+			return []optimizerMode{mode}
+		}
+	}
+	return nil
 }
 
 // plannerOptions returns the default planner options with this leg's setting
@@ -214,8 +226,10 @@ func defaultProfileMode() optimizerMode {
 // The reference leg is among them, the default profile is where a sub-design
 // of that size holds both, and the rest are the first legs of optimizerModes
 // with a setting not yet held. A reach of no option, a test the options
-// cannot change, runs the default profile alone. Under -reach every leg runs,
-// so the record covers them all.
+// cannot change, runs the default profile alone. Under js/wasm, where a test
+// binary runs on one thread, a reach of one or more options runs the default
+// profile and, where it differs from the default profile on the reach, the
+// reference. Under -reach every leg runs, so the record covers them all.
 func legsFor(reach ...option) []optimizerMode {
 	if *reachReport != "" {
 		return optimizerModes
@@ -235,6 +249,17 @@ func legsFor(reach ...option) []optimizerMode {
 	}
 	if len(distinct) == 0 {
 		return []optimizerMode{defaultProfileMode()}
+	}
+	if runtime.GOOS == "js" && runtime.GOARCH == "wasm" {
+		profile := defaultProfileMode()
+		var legs []optimizerMode
+		for _, o := range distinct {
+			if o.on(profile) != o.on(optimizerModes[0]) {
+				legs = append(legs, optimizerModes[0])
+				break
+			}
+		}
+		return append(legs, profile)
 	}
 	if len(distinct) >= 4 {
 		return optimizerModes
@@ -404,12 +429,39 @@ func TestTheOptimizerModesCarryTheReferenceAndTheDefaultProfile(t *testing.T) {
 	require.True(t, carried, "a mode is DefaultPlannerOptions' profile: %+v", profile)
 }
 
+// A pin none of the legs given carries runs on the first leg of
+// optimizerModes carrying it. Under js/wasm legsFor answers the default
+// profile and the reference, and a test pinning a setting neither holds
+// still runs on a leg that holds it.
+func TestLegsWhereCarriesAPinTheLegsGivenDoNot(t *testing.T) {
+	given := []optimizerMode{optimizerModes[0], defaultProfileMode()}
+	keep := func(m optimizerMode) bool { return m.prefetch && !m.fusion }
+	for _, mode := range given {
+		require.False(t, keep(mode), "the fixture's pin is one the legs given do not carry: %s", mode.name)
+	}
+	var first string
+	for _, mode := range optimizerModes {
+		if keep(mode) {
+			first = mode.name
+			break
+		}
+	}
+	require.NotEmpty(t, first, "a leg of optimizerModes carries the pin")
+
+	legs := legsWhere(given, keep)
+	require.Len(t, legs, 1, "one leg carries the pin")
+	require.Equal(t, first, legs[0].name, "the first leg of optimizerModes carrying the pin")
+}
+
 // A test runs on one leg per setting of its reach the pairwise design needs:
 // two legs for one option, four for two or three, every leg for four or
 // more, each reached option at both settings and each pair at all four, no
 // two legs alike on the reach, the reference among them and the default
 // profile where a sub-design of that size holds both. A reach of none runs
-// the default profile alone. Under -reach every leg runs.
+// the default profile alone. Under js/wasm, where a test binary runs on one
+// thread, a reach of one or more options runs the default profile and, where
+// it differs from the default profile on the reach, the reference. Under
+// -reach every leg runs.
 func TestLegsForRunsOneLegPerSettingOfTheReach(t *testing.T) {
 	reference := optimizerModes[0]
 	profile := defaultProfileMode()
@@ -430,6 +482,21 @@ func TestLegsForRunsOneLegPerSettingOfTheReach(t *testing.T) {
 			legs := legsFor(reach...)
 			if *reachReport != "" {
 				require.Len(t, legs, len(optimizerModes), "under -reach every leg runs")
+				return
+			}
+			if runtime.GOOS == "js" && runtime.GOARCH == "wasm" {
+				wantLegs := []string{profile.name}
+				for _, o := range reach {
+					if o.on(profile) != o.on(reference) {
+						wantLegs = append(wantLegs, reference.name)
+						break
+					}
+				}
+				var got []string
+				for _, leg := range legs {
+					got = append(got, leg.name)
+				}
+				require.ElementsMatch(t, wantLegs, got, "under js/wasm a reach of %d options runs the default profile and, where it differs on the reach, the reference", len(reach))
 				return
 			}
 			want := len(optimizerModes)

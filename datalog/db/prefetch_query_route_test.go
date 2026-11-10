@@ -29,7 +29,7 @@ func TestPrefetchFillsTheCacheOnTheQueryRoute(t *testing.T) {
 	s.Add(&schema.AttributeDefinition{Ident: a, ValueType: schema.TypeLong, Cardinality: schema.CardinalityOne})
 	s.Add(&schema.AttributeDefinition{Ident: x, ValueType: schema.TypeLong, Cardinality: schema.CardinalityOne})
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range legsFor(t, optimizerModes, prefetchOption) {
+	for _, mode := range legsFor(t, optimizerModes, prefetchOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var mu sync.Mutex
 			triggers := 0
@@ -48,7 +48,7 @@ func TestPrefetchFillsTheCacheOnTheQueryRoute(t *testing.T) {
 			}
 			opts := mode.plannerOptions()
 			opts.ScopeWindowCap = 128
-			d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(handler))
+			d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(mode.recording(handler)))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, d.Close()) })
 			tx := d.NewTransaction()

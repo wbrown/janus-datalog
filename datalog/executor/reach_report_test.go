@@ -56,7 +56,8 @@ func optionReached(event annotations.Event) (option, bool) {
 // option every event it receives reaches under the test named, which enters
 // the record when the handler is made whether or not an event fires. An
 // executor built under the mode's options, and the planner it builds, carry
-// it as the handler.
+// it as the handler, and a test's own handler carries it ahead through the
+// mode's recording.
 func reachRecorder(test string) annotations.Handler {
 	reachRecorded.Lock()
 	if reachRecorded.byTest[test] == nil {

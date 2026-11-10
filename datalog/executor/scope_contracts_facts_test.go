@@ -150,12 +150,12 @@ func TestFormReportsItsExecution(t *testing.T) {
 			inputs: subject(),
 		},
 	}
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		for _, form := range forms {
 			t.Run(mode.Name()+"/"+form.name, func(t *testing.T) {
 				var events []annotations.Event
 				opts := mode.PlannerOptions()
-				opts.Handler = func(e annotations.Event) { events = append(events, e) }
+				opts.Handler = mode.Recording(func(e annotations.Event) { events = append(events, e) })
 				exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
 				groups, err := exec.Execute(NewContext(), &query.Query{Where: []query.Clause{form.clause}}, form.inputs)
 				require.NoError(t, err)
@@ -237,18 +237,18 @@ func TestScopeRunReportsNoPhase(t *testing.T) {
 			},
 		},
 	}
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var begins, completes int
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				switch e.Name {
 				case annotations.PhaseBegin:
 					begins++
 				case annotations.PhaseComplete:
 					completes++
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts)
 			prepared, err := query.Prepare(q, nil)
 			require.NoError(t, err)
@@ -426,12 +426,12 @@ func TestNotJoinBodyIsBuiltOncePerWindowOverTheKeysNotYetRun(t *testing.T) {
 			query.Variable{Name: entity}, query.Constant{Value: itemOther}, query.Variable{Name: value},
 		}}},
 	}}}
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			opts.Handler = mode.Recording(func(e annotations.Event) { events = append(events, e) })
 			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
 			subject := NewStreamingRelation([]query.Symbol{entity, n}, NewMaterializedRelation([]query.Symbol{entity, n}, tuples).Iterator())
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
@@ -485,9 +485,9 @@ func TestNotJoinBodyHoldingAnInvocationIsContinuedAcrossTheWindows(t *testing.T)
 	rs := MustRules(t, `[[(other ?e) [?e :item/other _]]]`)
 	form := MustParse(t, `[:find ?entity :in $ % :where (not-join [?entity] (other ?entity))]`).Where
 	type counts struct{ begins, completes, rewrites, windows int }
-	run := func(t *testing.T, opts planner.PlannerOptions) counts {
+	run := func(t *testing.T, mode OptimizerMode, opts planner.PlannerOptions) counts {
 		var c counts
-		opts.Handler = func(e annotations.Event) {
+		opts.Handler = mode.Recording(func(e annotations.Event) {
 			switch e.Name {
 			case annotations.RulesStratumBegin:
 				c.begins++
@@ -498,7 +498,7 @@ func TestNotJoinBodyHoldingAnInvocationIsContinuedAcrossTheWindows(t *testing.T)
 			case annotations.ScopeWindow:
 				c.windows++
 			}
-		}
+		})
 		exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
 		subject := NewStreamingRelation([]query.Symbol{entity}, NewMaterializedRelation([]query.Symbol{entity}, tuples).Iterator())
 		groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: form}, []Relation{subject})
@@ -513,13 +513,13 @@ func TestNotJoinBodyHoldingAnInvocationIsContinuedAcrossTheWindows(t *testing.T)
 		t.Run(mode.Name(), func(t *testing.T) {
 			single := mode.PlannerOptions()
 			single.ScopeWindowCap = 1
-			twenty := run(t, single)
+			twenty := run(t, mode, single)
 			require.Equal(t, items, twenty.windows, "under a cap of one each subject tuple is a window")
 			require.GreaterOrEqual(t, twenty.begins, 1, "the body's invocation evaluates its predicate")
 
 			windowed := mode.PlannerOptions()
 			windowed.ScopeWindowCap = 8
-			five := run(t, windowed)
+			five := run(t, mode, windowed)
 			require.Equal(t, 5, five.windows, "twenty subject tuples under a cap of eight span five windows")
 			require.Equal(t, twenty.begins, five.begins, "each stratum begins once, whatever the windows")
 			require.Equal(t, twenty.completes, five.completes, "each stratum completes once, at the last window")
@@ -762,9 +762,9 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 	// run plans text under the rule set, its pattern producing the group of
 	// produced's matches and its invocation read in windows of that group,
 	// and runs the plan's phase, counting the pulls of the group.
-	run := func(t *testing.T, opts planner.PlannerOptions, text string, produced datalog.Keyword) (Relation, *CountingIterator, *counts) {
+	run := func(t *testing.T, mode OptimizerMode, opts planner.PlannerOptions, text string, produced datalog.Keyword) (Relation, *CountingIterator, *counts) {
 		c := &counts{}
-		opts.Handler = func(e annotations.Event) {
+		opts.Handler = mode.Recording(func(e annotations.Event) {
 			switch e.Name {
 			case annotations.RulesStratumBegin:
 				c.begins++
@@ -773,7 +773,7 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 			case annotations.ScopeWindow:
 				c.windows++
 			}
-		}
+		})
 		db := &pullCountingDatabase{Database: factsDatabase(t, datoms), attr: produced}
 		executor := NewExecutorWithOptions(db, nil, opts)
 		q, err := query.Prepare(MustParse(t, text), rs)
@@ -795,11 +795,11 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 		return groups[0], db.pulls, c
 	}
 	const withAnOutput = `[:find ?a ?c :in $ % :where [?a :page/kind _] (follows ?a ?c)]`
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name()+"/with an output", func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			result, pulls, three := run(t, opts, withAnOutput, PageKind)
+			result, pulls, three := run(t, mode, opts, withAnOutput, PageKind)
 			require.Equal(t, -1, result.Size(), "the result over a streaming group reports no size")
 			syms := result.Symbols()
 			ai, ci := query.SymbolIndex(syms, a), query.SymbolIndex(syms, c)
@@ -824,7 +824,7 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 
 			single := mode.PlannerOptions()
 			single.ScopeWindowCap = 1
-			result, _, six := run(t, single, withAnOutput, PageKind)
+			result, _, six := run(t, mode, single, withAnOutput, PageKind)
 			_, err := CollectTuples(result, nil)
 			require.NoError(t, err)
 			require.Equal(t, pages, six.windows, "under a cap of one each subject tuple is a window")
@@ -835,7 +835,7 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 		t.Run(mode.Name()+"/as a verdict per key", func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			result, pulls, _ := run(t, opts, `[:find ?a ?c :in $ % :where [?a :page/check ?c] (follows ?a ?c)]`, pageCheck)
+			result, pulls, _ := run(t, mode, opts, `[:find ?a ?c :in $ % :where [?a :page/check ?c] (follows ?a ?c)]`, pageCheck)
 			require.Equal(t, -1, result.Size(), "the result over a streaming group reports no size")
 			require.ElementsMatch(t, []query.Symbol{a, c}, result.Symbols(), "a verdict adds no symbol")
 			require.NotEmpty(t, result.Properties().Keys, "a verdict per key keeps the subject's keys")

@@ -106,7 +106,9 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
 
    `optimizerModes` is the engine axis, the tree store crossed with the legs, and `backendModes` is the store axis, `AvailableBackends()` crossed with them.
 
-   A test loops the legs `legsFor` answers over its axis for the options its queries reach. `legsFor(modes, reach...)` answers one leg per setting of the reach the pairwise design needs: two legs for a reach of one option, four for two or three, every leg for four or more, and the default profile alone for a reach of none. The reference leg is always among them, and the default profile wherever a sub-design of that size holds both.
+   A test loops the legs `legsFor` answers over its axis for the options its queries reach. `legsFor(modes, reach...)` answers one leg per setting of the reach the pairwise design needs, two legs agreeing on the reach being one leg: two legs for a reach of one option, four for two or three, one per setting the legs hold for four or more, and the default profile alone for a reach of none. For a reach of one or more options the reference leg is among them, and the default profile wherever a sub-design of that size holds both.
+
+   Under js/wasm a test binary runs on one thread, so there `legsFor` answers, for a reach of one or more options, the default profile and, where it differs from the default profile on the reach, the reference. The pairwise design runs natively. Each copy of `legsFor` reads the build from `runtime.GOOS` and `runtime.GOARCH` at its one call.
 
    A test of the engine passes `optimizerModes` and its measured reach. A test of the store, what it persists or how it reads, passes `backendModes` and no reach, one leg per backend, since no optimizer option changes what the store persists or how it reads. A test that fixes its own store loops `optionLegs`.
 
@@ -130,12 +132,13 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
 
    - In `datalog/storage` and `tests/` it wraps the annotation handler of every database the package's constructor opens, so every test opening through the constructor is in the record.
    - In the other packages the mode carries `recordsReach`, the test's name, which `legsFor` sets under `-reach`, and the mode's planner options carry the recorder as their handler. A database opened under them, or an executor built under them, carries it on.
+   - A test that installs a handler of its own, on the options or at the database's open, installs it through `recording`, the mode's method: with `recordsReach` set it returns the handler with the recorder ahead of it, so the recorder receives every event the handler does, and with it empty it returns the handler itself.
 
-   Each package's `reach_report_test.go` holds the flag, the record and the report written at the end of the run, and the loops take their reaches from it. A test absent from the report, one that opens its database outside the constructor or builds its executor under a handler of its own, keeps every option.
+   Each package's `reach_report_test.go` holds the flag, the record and the report written at the end of the run, and the loops take their reaches from it. A test absent from the report, one that opens its database outside the constructor or loops the modes directly, keeps every option.
 
    Two narrowings, each naming what it gives up:
 
-   - `legsWhere(modes, keep)` — the legs of the given set a predicate admits. A test pinning one option's mechanism names the option in its reach, so a leg carrying it is among `legsFor`'s legs, and keeps those legs through `legsWhere(legsFor(modes, reach...), keep)` in place of setting the option. That is still a leg per backend and per setting of the other options the reach names, because pinning one option pins neither a store nor another option.
+   - `legsWhere(modes, keep)` — the legs of the given set a predicate admits. A test pinning one option's mechanism names the option in its reach, so a leg carrying it is among `legsFor`'s legs, and keeps those legs through `legsWhere(legsFor(modes, reach...), keep)` in place of setting the option. That is still a leg per backend and per setting of the other options the reach names, because pinning one option pins neither a store nor another option. Where the predicate admits none of the legs given, it admits the first leg of `optionLegs` that carries the pin, on each backend of the legs given: under js/wasm `legsFor` answers the default profile and the reference, and a pin neither holds, `prefetch && !fusion` for one, still runs on a leg that holds it.
    - `byteKeyBackends(t)` — badger and badger-emulator out of the store axis, not memory-trees. The tree store hands out the datom it already holds, so a property of the encoded index key, or of anything downstream of it such as the Tier-3 blob tier, is not a property it has. The switch has no silent default: a new backend fails there until someone says which side of the line it falls on.
 
    Packages that cannot import storage's test files carry their own copy of the eight legs and of `legsFor`, each pinned to the design by its own copies of the pair-coverage, reference-and-default-profile, options-carry and legs-by-reach tests — the Go-testing reality for cross-package test code:

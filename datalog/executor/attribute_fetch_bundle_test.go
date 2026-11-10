@@ -92,14 +92,14 @@ func TestASameEntityAttributeRunFusesAndAnswersAsUnfused(t *testing.T) {
 		attr    datalog.Keyword
 		in, out int
 	}
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var fetches []fetch
-			d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(mode.PlannerOptions()), db.WithAnnotationHandler(func(e annotations.Event) {
+			d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(mode.PlannerOptions()), db.WithAnnotationHandler(mode.Recording(func(e annotations.Event) {
 				if e.Name == annotations.PatternFusedFetch {
 					fetches = append(fetches, fetch{attr: e.Data["attr"].(datalog.Keyword), in: e.Data["in"].(int), out: e.Data["out"].(int)})
 				}
-			}))
+			})))
 			require.NoError(t, err)
 			defer func() { require.NoError(t, d.Close()) }()
 			tx := d.NewTransaction()

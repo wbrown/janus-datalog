@@ -70,7 +70,7 @@ func TestFormFailureCompletesWithSuccessFalse(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.plannerOptions()
-			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			opts.Handler = mode.recording(func(e annotations.Event) { events = append(events, e) })
 			matcher := &failingScanMatcher{
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{entity, value}, nil),
@@ -108,11 +108,11 @@ func TestInvocationOfAHeldPredicateOverAStreamingGroupJoinsAtTheCollapse(t *test
 		t.Run(mode.name, func(t *testing.T) {
 			windows := 0
 			opts := mode.plannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.recording(func(e annotations.Event) {
 				if e.Name == annotations.ScopeWindow {
 					windows++
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(nil, nil, opts).queryExecutor(&planner.RealizedPlan{})
 			pulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{a}, []Tuple{{page(1)}, {page(2)}, {page(6)}}).Iterator())
 			subject := NewStreamingRelationWithProperties([]query.Symbol{a}, pulls, exec.options, deduplicatedProperties([]query.Symbol{a}))

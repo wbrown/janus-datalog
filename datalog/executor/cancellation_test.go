@@ -23,7 +23,7 @@ func TestExecuteWithRelations_RefusedWhenContextDone(t *testing.T) {
 			cancel()
 			var events []annotations.Event
 			opts := mode.plannerOptions()
-			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			opts.Handler = mode.recording(func(e annotations.Event) { events = append(events, e) })
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			_, err := exec.ExecuteWithRelations(NewContext().WithCancellation(ctx), q, nil)
 			if !errors.Is(err, context.Canceled) {

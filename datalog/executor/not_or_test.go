@@ -1335,16 +1335,16 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Register an annotation handler to debug OR fallback behavior
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(event annotations.Event) {
+			opts.Handler = mode.Recording(func(event annotations.Event) {
 				if strings.HasPrefix(event.Name, "or-fallback/") {
 					events = append(events, event)
 				}
-			}
+			})
 			queryExecutor := NewExecutorWithOptions(matcher, nil, opts)
 
 			// Build the query:
@@ -1471,14 +1471,14 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Register an annotation handler to see what's happening
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(event annotations.Event) {
+			opts.Handler = mode.Recording(func(event annotations.Event) {
 				events = append(events, event)
-			}
+			})
 			executor := NewExecutorWithOptions(matcher, nil, opts)
 
 			// Query:
@@ -2234,11 +2234,11 @@ func TestMissingOnASliceSourceAnswersAlikeBareAndAnnotated(t *testing.T) {
 		{"annotated", func(annotations.Event) {}},
 	}
 
-	for _, mode := range LegsFor(t) {
+	for _, mode := range LegsFor(t, FusionOption) {
 		for _, tc := range handlers {
 			t.Run(mode.Name()+"/"+tc.name, func(t *testing.T) {
 				opts := mode.PlannerOptions()
-				opts.Handler = tc.handler
+				opts.Handler = mode.Recording(tc.handler)
 				executor := NewExecutorWithOptions(matcher, nil, opts)
 				inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
 
@@ -2294,7 +2294,7 @@ func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
 		for _, tc := range handlers {
 			t.Run(mode.Name()+"/"+tc.name, func(t *testing.T) {
 				opts := mode.PlannerOptions()
-				opts.Handler = tc.handler
+				opts.Handler = mode.Recording(tc.handler)
 				executor := NewExecutorWithOptions(matcher, nil, opts)
 				inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
 
