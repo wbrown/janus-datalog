@@ -688,6 +688,33 @@ func replaceConsumedGroups(groups Relations, consumed []int, relation Relation, 
 	return result
 }
 
+// lookupShape reports whether a data pattern is the one a lookup of its
+// attribute answers per entity, [?e attr ?v] on the default source: three
+// elements, the entity a variable and the attribute a constant keyword, naming
+// both. The value position is the caller's. A pattern reading its fourth or
+// fifth position is not of the shape, since a lookup carries no Tx and decides
+// no fifth position; the matcher decides those positions once for every route,
+// and such a pattern takes a match. Attribute-fetch fusion and the or-fallback's
+// EA arm read the shape here and nowhere else.
+func lookupShape(dp *query.DataPattern) (entity query.Symbol, attr datalog.Keyword, ok bool) {
+	if dp.Source != nil || len(dp.Elements) != 3 {
+		return nil, nil, false
+	}
+	eVar, eIsVar := dp.GetE().(query.Variable)
+	if !eIsVar {
+		return nil, nil, false
+	}
+	aConst, aIsConst := dp.GetA().(query.Constant)
+	if !aIsConst {
+		return nil, nil, false
+	}
+	aKw, aIsKeyword := aConst.Value.(datalog.Keyword)
+	if !aIsKeyword {
+		return nil, nil, false
+	}
+	return eVar.Name, aKw, true
+}
+
 // tryFuseAttributeFetchBundle recognizes a contiguous run of same-entity
 // cardinality-one patterns and executes all of them as one per-tuple attribute
 // attach. It preserves the existing single-pattern gates and event stream while
@@ -704,11 +731,11 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 		return nil, 0, nil
 	}
 	first, ok := clauses[0].(*query.DataPattern)
-	if !ok || len(first.Elements) != 3 || first.Source != nil {
+	if !ok {
 		return nil, 0, nil
 	}
-	entityVar, ok := first.GetE().(query.Variable)
-	if !ok {
+	entityName, _, isShape := lookupShape(first)
+	if !isShape {
 		return nil, 0, nil
 	}
 
@@ -726,7 +753,7 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 	for groupIndex, group := range groups {
 		for _, symbol := range group.Symbols() {
 			boundSymbols[symbol] = true
-			if symbol == entityVar.Name {
+			if symbol == entityName {
 				if entityGroup >= 0 {
 					return nil, 0, nil
 				}
@@ -749,19 +776,11 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 fetchLoop:
 	for _, clause := range clauses {
 		pattern, ok := clause.(*query.DataPattern)
-		if !ok || len(pattern.Elements) != 3 || pattern.Source != nil {
-			break
-		}
-		candidateEntity, ok := pattern.GetE().(query.Variable)
-		if !ok || candidateEntity.Name != entityVar.Name {
-			break
-		}
-		attrConstant, ok := pattern.GetA().(query.Constant)
 		if !ok {
 			break
 		}
-		attr, ok := attrConstant.Value.(datalog.Keyword)
-		if !ok || !fusable.CanFuseAttributeFetch(datalog.SymDollar, attr) {
+		candidateEntity, attr, isShape := lookupShape(pattern)
+		if !isShape || candidateEntity != entityName || !fusable.CanFuseAttributeFetch(datalog.SymDollar, attr) {
 			break
 		}
 		spec := attributeFetchSpec{attr: attr}
@@ -794,7 +813,7 @@ fetchLoop:
 
 	input := groups[entityGroup]
 	inputSymbols := input.Symbols()
-	entityIndex := query.SymbolIndex(inputSymbols, entityVar.Name)
+	entityIndex := query.SymbolIndex(inputSymbols, entityName)
 
 	outputSymbols := make([]query.Symbol, 0, len(inputSymbols)+len(fetches))
 	outputSymbols = append(outputSymbols, inputSymbols...)
@@ -901,8 +920,8 @@ fetchLoop:
 		properties = properties.addSymbol(fetch.output)
 	}
 	// The bundle answers an input tuple only where its entity is an identity.
-	if !query.ContainsSymbol(properties.Identities, entityVar.Name) {
-		properties.Identities = append(properties.Identities, entityVar.Name)
+	if !query.ContainsSymbol(properties.Identities, entityName) {
+		properties.Identities = append(properties.Identities, entityName)
 	}
 	newGroups[entityGroup] = newMaterializedRelationFromSet(
 		outputSymbols,

@@ -602,36 +602,30 @@ type OrFallbackIterator struct {
 	unionBranchIdx int
 }
 
-// eaArmShape reports whether a branch is one the EA arm builds, one data
-// pattern on the default source whose entity position is a key symbol, whose
-// attribute is a constant keyword and whose value is a variable, naming the
-// entity symbol, the attribute and the value symbol; the fallback's prefetch
-// and its build read the one shape.
+// eaArmShape reports whether a branch is one the EA arm builds: one data
+// pattern of the shape a lookup answers (lookupShape), [?e attr ?v] on the
+// default source, whose entity is a key symbol and whose value is a variable,
+// naming the entity symbol, the attribute and the value symbol. The
+// fallback's prefetch and its build read the one shape. A branch reading its
+// fourth or fifth position is not of it and takes the planned build, where
+// the matcher decides every position.
 func eaArmShape(branch []query.Clause, key []query.Symbol) (entity query.Symbol, attr datalog.Keyword, value query.Symbol, ok bool) {
 	if len(branch) != 1 {
 		return nil, nil, nil, false
 	}
 	dp, isPattern := branch[0].(*query.DataPattern)
-	if !isPattern || dp.Source != nil {
+	if !isPattern {
 		return nil, nil, nil, false
 	}
-	eVar, eIsVar := dp.GetE().(query.Variable)
-	if !eIsVar || !query.ContainsSymbol(key, eVar.Name) {
-		return nil, nil, nil, false
-	}
-	aConst, aIsConst := dp.GetA().(query.Constant)
-	if !aIsConst {
-		return nil, nil, nil, false
-	}
-	aKw, aIsKeyword := aConst.Value.(datalog.Keyword)
-	if !aIsKeyword {
+	entity, attr, isShape := lookupShape(dp)
+	if !isShape || !query.ContainsSymbol(key, entity) {
 		return nil, nil, nil, false
 	}
 	vVar, vIsVar := dp.GetV().(query.Variable)
 	if !vIsVar {
 		return nil, nil, nil, false
 	}
-	return eVar.Name, aKw, vVar.Name, true
+	return entity, attr, vVar.Name, true
 }
 
 // prefetchWindow is the fallback's trigger of Rule 6
