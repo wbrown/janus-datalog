@@ -105,15 +105,16 @@ func (m *PatternMatcher) ResolveLWW(e datalog.Identity, a datalog.Keyword, def *
 }
 
 // ResolveAddWins returns the current set members for cardinality-many, each
-// under its memberKey, through resolveAddWinsSet.
-func (m *PatternMatcher) ResolveAddWins(e datalog.Identity, a datalog.Keyword, report *scanReport) (map[string]any, datalog.ElementID, bool, error) {
+// under its memberKey, and each member's newest assertion's Tx under the same
+// key, through resolveAddWinsSet.
+func (m *PatternMatcher) ResolveAddWins(e datalog.Identity, a datalog.Keyword, report *scanReport) (map[string]any, map[string]datalog.ElementID, datalog.ElementID, bool, error) {
 	result, err := m.resolveAddWinsSet(e, a, report)
 	if err != nil {
 		// The scan read the index before it failed, and the report kept that
 		// where the result struct it never built could not.
-		return nil, datalog.ElementID{}, false, err
+		return nil, nil, datalog.ElementID{}, false, err
 	}
-	return result.Members, result.MaxElementID, result.Present, nil
+	return result.Members, result.MemberTx, result.MaxElementID, result.Present, nil
 }
 
 // ResolveRGA returns the ordered vector for cardinality-vector

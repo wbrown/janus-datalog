@@ -556,22 +556,22 @@ func (m *PatternMatcher) matchUnboundScan(
 
 	// For cardinality-many with E+A bound, V unbound: use add-wins resolution
 	if useAddWinsResolution {
-		return m.matchCardinalityManyAsRelation(pattern, symbols, e.(datalog.Identity), a.(datalog.Keyword))
+		return m.matchCardinalityManyAsRelation(pattern, symbols, e.(datalog.Identity), a.(datalog.Keyword), tx)
 	}
 
 	// For cardinality-many with E+A+V bound: use membership check
 	if useMembershipCheck {
-		return m.matchCardinalityManyMembership(pattern, symbols, e.(datalog.Identity), a.(datalog.Keyword), v)
+		return m.matchCardinalityManyMembership(pattern, symbols, e.(datalog.Identity), a.(datalog.Keyword), v, tx)
 	}
 
 	// For cardinality-many with A bound, E unbound, V unbound: scan all entities
 	if useAddWinsScanAllEntities {
-		return m.matchCardinalityManyScanAllEntities(pattern, symbols, a.(datalog.Keyword), def)
+		return m.matchCardinalityManyScanAllEntities(pattern, symbols, a.(datalog.Keyword), def, tx)
 	}
 
 	// For cardinality-many with A bound, E unbound, V bound: find entities with value
 	if useAddWinsScanAllEntitiesWithValue {
-		return m.matchCardinalityManyFindEntitiesWithValue(pattern, symbols, a, v)
+		return m.matchCardinalityManyFindEntitiesWithValue(pattern, symbols, a.(datalog.Keyword), v, tx)
 	}
 
 	// Choose index and create scan bound
@@ -1003,7 +1003,9 @@ func (it *validatingVBoundIterator) Next() bool {
 						// member's resolved datom.
 						resolved = datom
 					} else {
-						resolved, err = it.resolvedMemberDatom(datom.E, datom.A, datom.V)
+						// A run narrowed to T holds one operation's datom of the
+						// member, so the member resolves over its own EAVT run.
+						resolved, err = it.matcher.resolvedMemberDatom(ScanBound{Index: EAVT, Prefix: []datalog.Value{datom.E, datom.A, datom.V}}, it.report)
 						if err != nil {
 							it.err = err
 							return false
@@ -1205,56 +1207,6 @@ func (it *validatingVBoundIterator) resolvedDatom(e datalog.Identity, a datalog.
 		return nil, false, nil
 	}
 	return &datalog.Datom{E: e, A: a, V: v, Tx: tx}, false, nil
-}
-
-// resolvedMemberDatom is the datom a many member (E, A, V) resolves to in the
-// matcher's view: the member's newest assertion when the add-wins rule keeps
-// it, an assertion at a withdrawal's Lamport counting as later, and no datom
-// when the member is withdrawn or was never asserted. It reads the member's
-// own EAVT run, which holds the whole add-wins decision of the value
-// (docs/reference/INDEX_SELECTION_PROOF.md Theorem 3); a string or bytes
-// value makes the run inexact, so each datom's value is compared as it is
-// read. A storage or decode failure surfaces as an error.
-func (it *validatingVBoundIterator) resolvedMemberDatom(e datalog.Identity, a datalog.Keyword, v any) (resolved *datalog.Datom, err error) {
-	iter, err := OpenScan(it.matcher.reader, it.report, ScanBound{Index: EAVT, Prefix: []datalog.Value{e, a, v}})
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err = errjoin.Join(err, iter.Close())
-	}()
-
-	var newestAdd *datalog.Datom
-	var removeLamport uint64
-	withdrawn := false
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			return nil, err
-		}
-		if it.matcher.shouldFilterTx(datom.Tx) || !datalog.ValuesEqual(datom.V, v) {
-			continue
-		}
-		switch datom.Op {
-		case datalog.OpCRDTAdd:
-			if newestAdd == nil || newestAdd.Tx.Less(datom.Tx) {
-				held := *datom
-				newestAdd = &held
-			}
-		case datalog.OpCRDTRemove:
-			if !withdrawn || removeLamport < datom.Tx.Lamport {
-				withdrawn = true
-				removeLamport = datom.Tx.Lamport
-			}
-		}
-	}
-	if err := iter.Error(); err != nil {
-		return nil, err
-	}
-	if newestAdd == nil || (withdrawn && newestAdd.Tx.Lamport < removeLamport) {
-		return nil, nil
-	}
-	return newestAdd, nil
 }
 
 // resolvedVectorDatom is the datom a vector pair resolves to in the matcher's
@@ -1542,21 +1494,36 @@ func (m *PatternMatcher) matchFromCache(
 		if len(set) == 0 {
 			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 		}
+		// Each member's resolved datom is its newest assertion, whose Tx the
+		// entry holds under the member's key; it is admitted when the bound V
+		// and T hold on it (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md,
+		// T11).
+		memberTx := entry.ManyTx()
 		if v != nil {
 			// V is bound: the set holds each member under its memberKey, so
 			// any representation of the bound value finds its member.
-			if _, exists := set[memberKey(v)]; exists {
-				tuple := buildTuple(v, entry.Version())
+			key := memberKey(v)
+			if _, exists := set[key]; exists {
+				datomBuf.V = v
+				datomBuf.Tx = memberTx[key]
+				if !m.matchesDatom(&datomBuf, nil, nil, v, tx, nil) {
+					return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
+				}
+				tuple := buildTuple(v, memberTx[key])
 				matched = 1
 				return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true, nil
 			}
 			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 		}
-		// V is unbound - return all set members
+		// V is unbound: every member the bound T admits
 		tuples := make([]executor.Tuple, 0, len(set))
-		for _, val := range set {
-			tuple := buildTuple(val, entry.Version())
-			tuples = append(tuples, tuple)
+		for key, val := range set {
+			datomBuf.V = val
+			datomBuf.Tx = memberTx[key]
+			if !m.matchesDatom(&datomBuf, nil, nil, v, tx, nil) {
+				continue
+			}
+			tuples = append(tuples, buildTuple(val, memberTx[key]))
 		}
 		matched = len(tuples)
 		return executor.NewMaterializedRelationWithOptions(symbols, tuples, m.options), true, nil
@@ -1670,8 +1637,9 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 
 	// The bound T: the pattern's constant, or the binding's value at the
 	// pattern's T variable when the binding carries it. A cardinality-one
-	// entry's datom is admitted under it as under the bound V
-	// (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T5).
+	// entry's datom, and each member of a cardinality-many entry, is admitted
+	// under it as under the bound V
+	// (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T5, T11).
 	var txConst interface{}
 	txSymIdx := -1
 	if elem := pattern.GetT(); elem != nil {
@@ -1833,6 +1801,13 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			served += entry.valueCount()
 		}
 
+		// The transaction the binding bounds this match to: its own, when it
+		// carries the pattern's T variable, else the pattern's constant.
+		boundT := txConst
+		if txSymIdx >= 0 {
+			boundT = tuple[txSymIdx]
+		}
+
 		// Process based on cardinality
 		switch tupleCard {
 		case schema.CardinalityOne:
@@ -1842,10 +1817,6 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			}
 			// The pair's resolved datom, admitted when the bound V and T hold
 			// on it.
-			boundT := txConst
-			if txSymIdx >= 0 {
-				boundT = tuple[txSymIdx]
-			}
 			datomBuf.E = eIdent
 			datomBuf.V = val
 			datomBuf.Tx = entry.OneTx()
@@ -1859,16 +1830,32 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			if len(set) == 0 {
 				continue
 			}
+			// Each member's resolved datom is its newest assertion, whose Tx
+			// the entry holds under the member's key; it is admitted when the
+			// bound V and T hold on it.
+			memberTx := entry.ManyTx()
+			datomBuf.E = eIdent
 			if boundV != nil {
 				// The set holds each member under its memberKey, so any
 				// representation of the bound value finds its member.
-				if _, exists := set[memberKey(boundV)]; exists {
-					resultTuples = append(resultTuples, buildTuple(eIdent, boundV, entry.Version()))
+				key := memberKey(boundV)
+				if _, exists := set[key]; !exists {
+					continue
 				}
+				datomBuf.V = boundV
+				datomBuf.Tx = memberTx[key]
+				if !m.matchesDatom(&datomBuf, nil, nil, boundV, boundT, nil) {
+					continue
+				}
+				resultTuples = append(resultTuples, buildTuple(eIdent, boundV, memberTx[key]))
 			} else {
-				// Return all set members
-				for _, val := range set {
-					resultTuples = append(resultTuples, buildTuple(eIdent, val, entry.Version()))
+				for key, val := range set {
+					datomBuf.V = val
+					datomBuf.Tx = memberTx[key]
+					if !m.matchesDatom(&datomBuf, nil, nil, boundV, boundT, nil) {
+						continue
+					}
+					resultTuples = append(resultTuples, buildTuple(eIdent, val, memberTx[key]))
 				}
 			}
 
@@ -1919,12 +1906,16 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 	return executor.NewMaterializedRelationWithProperties(symbols, resultTuples, m.options, properties), true, nil
 }
 
-// matchCardinalityManyAsRelation handles cardinality-many patterns using add-wins resolution
+// matchCardinalityManyAsRelation answers a pattern binding E and A on a
+// cardinality-many attribute with V free: each member the add-wins rule keeps
+// in the set, as its resolved datom, the member's newest assertion, when the
+// bound T, when the pattern binds one, holds on that assertion.
 func (m *PatternMatcher) matchCardinalityManyAsRelation(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	e datalog.Identity,
 	a datalog.Keyword,
+	tx interface{},
 ) (rel executor.Relation, matchErr error) {
 	// The resolver acquires its scan through this report, so the run it walks is
 	// recorded here without the arm holding an iterator or writing an emit.
@@ -1947,38 +1938,27 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 	}
 	if report != nil {
 		report.resolved += len(result.Members)
-		report.matched += len(result.Members)
 		m.emitIndexSelection(pattern, result.Bound)
 	}
 
-	// Build tuples from resolved members
-	// We need to map the values to the correct symbol positions
+	// Each member's resolved datom is its newest assertion, whose Tx the
+	// resolution holds under the member's key; it is admitted when the bound
+	// T holds on it (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T11).
+	tupleBuilder := m.getTupleBuilder(pattern, symbols)
+	datom := datalog.Datom{E: e, A: a}
 	tuples := make([]executor.Tuple, 0, len(result.Members))
-
-	for _, member := range result.Members {
-		tuple := make(executor.Tuple, len(symbols))
-		for i, sym := range symbols {
-			switch {
-			case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
-				pattern.GetE().(query.Variable).Name == sym:
-				tuple[i] = e
-			case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
-				pattern.GetA().(query.Variable).Name == sym:
-				tuple[i] = a
-			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
-				pattern.GetV().(query.Variable).Name == sym:
-				tuple[i] = member
-			case pattern.GetT().IsVariable() &&
-				pattern.GetT().(query.Variable).Name == sym:
-				// For cardinality-many, we don't have a single Tx
-				// Use the max ElementID as the "current" transaction
-				tuple[i] = result.MaxElementID
-			}
+	for key, member := range result.Members {
+		datom.V = member
+		datom.Tx = result.MemberTx[key]
+		if !m.matchesDatom(&datom, nil, nil, nil, tx, nil) {
+			continue
 		}
-		tuples = append(tuples, tuple)
+		tuples = append(tuples, tupleBuilder.BuildTupleInterned(&datom))
+	}
+	if report != nil {
+		report.matched += len(tuples)
 	}
 
-	// Return materialized relation with the resolved set members
 	return executor.NewMaterializedRelation(symbols, tuples), nil
 }
 
@@ -2214,13 +2194,17 @@ func (m *PatternMatcher) matchVectorWithBindings(
 		executor.RelationProperties{Identities: executor.AnswerIdentities(pattern)}), nil
 }
 
-// matchCardinalityManyMembership checks if a specific value is in a cardinality-many set
+// matchCardinalityManyMembership answers a pattern binding E, A and V on a
+// cardinality-many attribute: the member's resolved datom, its newest
+// assertion, when the add-wins rule keeps the value in the set and the bound
+// T, when the pattern binds one, holds on that assertion.
 func (m *PatternMatcher) matchCardinalityManyMembership(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	e datalog.Identity,
 	a datalog.Keyword,
 	v interface{},
+	tx interface{},
 ) (executor.Relation, error) {
 	// Bind [E][A][V] on EAVT, which covers every op recorded for this value.
 	// A string or bytes V makes the run inexact, so the store steps over the
@@ -2242,16 +2226,23 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 		}
 	}
 
-	// Check if the value is in the set using add-wins semantics
-	isMember, err := m.checkSetMembership(bound, report)
+	// The member's resolved datom under add-wins, nil when the value is not
+	// in the set.
+	resolved, err := m.resolvedMemberDatom(bound, report)
 	if err != nil {
 		return nil, fmt.Errorf("membership check failed: %w", err)
 	}
+	// The run selected E, A and V, so the datom is admitted when the bound T
+	// holds on it.
+	matched := resolved != nil && m.matchesDatom(resolved, nil, nil, v, tx, nil)
 	if report != nil {
-		// A membership check resolves to the one value it asked about or to
-		// nothing, and the pattern binds V, so resolution and match agree.
-		if isMember {
+		// A membership check resolves to the one member it asked about or to
+		// nothing, and the member matches when the bound T holds on its
+		// assertion.
+		if resolved != nil {
 			report.resolved = 1
+		}
+		if matched {
 			report.matched = 1
 		}
 		// Closed inline, past the error return above, so the scan's outcome is
@@ -2260,43 +2251,27 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 		report.close(true)
 	}
 
-	// If not a member, return empty relation
-	if !isMember {
+	if !matched {
 		return executor.NewMaterializedRelation(symbols, nil), nil
 	}
 
-	// Value is in set - build result tuple
-	tuple := make(executor.Tuple, len(symbols))
-	for i, sym := range symbols {
-		switch {
-		case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
-			pattern.GetE().(query.Variable).Name == sym:
-			tuple[i] = e
-		case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
-			pattern.GetA().(query.Variable).Name == sym:
-			tuple[i] = a
-		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
-			pattern.GetV().(query.Variable).Name == sym:
-			tuple[i] = v
-		case pattern.GetT().IsVariable() &&
-			pattern.GetT().(query.Variable).Name == sym:
-			// For membership queries, we don't have a specific Tx
-			tuple[i] = datalog.ElementID{}
-		}
-	}
-
+	tuple := m.getTupleBuilder(pattern, symbols).BuildTupleInterned(resolved)
 	return executor.NewMaterializedRelation(symbols, []executor.Tuple{tuple}), nil
 }
 
-// cardinalityManyScanAllEntitiesIterator streams results for [?e :attr ?v] patterns
-// where E is unbound and cardinality is many. It iterates through entities at the
-// entity level - for each entity, it resolves the add-wins set and yields members one by one.
+// cardinalityManyScanAllEntitiesIterator streams results for [?e :attr ?v]
+// patterns where E is unbound and cardinality is many. It iterates through
+// entities at the entity level: for each entity it resolves the add-wins set
+// and yields each member the bound T admits as the member's resolved datom,
+// its newest assertion.
 type cardinalityManyScanAllEntitiesIterator struct {
 	matcher      *PatternMatcher
 	pattern      *query.DataPattern
 	symbols      []query.Symbol
 	a            datalog.Keyword
 	def          *schema.AttributeDefinition
+	tx           interface{} // the bound T, nil when the pattern binds none
+	tupleBuilder *query.InternedTupleBuilder
 	storageIter  Iterator
 	seenEntities map[datalog.Identity]bool
 
@@ -2308,41 +2283,25 @@ type cardinalityManyScanAllEntitiesIterator struct {
 	// down with the result it never built.
 	report *scanReport
 
-	// Current entity state
-	currentEntity       datalog.Identity
-	currentSetMembers   []interface{} // Resolved set members for current entity
-	currentMaxElementID datalog.ElementID
-	currentMemberIdx    int
-	currentTuple        executor.Tuple
-	err                 error // First error from storage operations
+	// Current entity state: each member of the entity's set as its resolved
+	// datom, the member's newest assertion
+	// (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T11).
+	currentMembers   []datalog.Datom
+	currentMemberIdx int
+	currentTuple     executor.Tuple
+	err              error // First error from storage operations
 }
 
 func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 	for {
-		// If we have members remaining for current entity, yield next
-		if it.currentMemberIdx < len(it.currentSetMembers) {
-			member := it.currentSetMembers[it.currentMemberIdx]
+		// Yield the current entity's next member the bound T admits.
+		for it.currentMemberIdx < len(it.currentMembers) {
+			member := &it.currentMembers[it.currentMemberIdx]
 			it.currentMemberIdx++
-
-			// Build tuple
-			tuple := make(executor.Tuple, len(it.symbols))
-			for i, sym := range it.symbols {
-				switch {
-				case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
-					it.pattern.GetE().(query.Variable).Name == sym:
-					tuple[i] = it.currentEntity
-				case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
-					it.pattern.GetA().(query.Variable).Name == sym:
-					tuple[i] = it.a
-				case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
-					it.pattern.GetV().(query.Variable).Name == sym:
-					tuple[i] = member
-				case it.pattern.GetT().IsVariable() &&
-					it.pattern.GetT().(query.Variable).Name == sym:
-					tuple[i] = it.currentMaxElementID
-				}
+			if !it.matcher.matchesDatom(member, nil, nil, nil, it.tx, nil) {
+				continue
 			}
-			it.currentTuple = tuple
+			it.currentTuple = it.tupleBuilder.BuildTupleInterned(member)
 			if it.report != nil {
 				it.report.matched++
 			}
@@ -2363,14 +2322,14 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			}
 			it.seenEntities[datom.E] = true
 
-			// The entity's current set under add-wins: through the cache when
-			// the matcher has one and its view is served by it (cacheKey), as
-			// the route for a bound entity reads it, and from storage otherwise.
-			// A hit reads no index; a build and a storage resolution accrue
-			// their intake into the report at scan time, so it survives the
-			// error return below.
+			// The entity's current set under add-wins, each member beside its
+			// newest assertion's Tx: through the cache when the matcher has one
+			// and its view is served by it (cacheKey), as the route for a bound
+			// entity reads it, and from storage otherwise. A hit reads no
+			// index; a build and a storage resolution accrue their intake into
+			// the report at scan time, so it survives the error return below.
 			var members map[string]any
-			var version datalog.ElementID
+			var memberTx map[string]datalog.ElementID
 			key, cached := it.matcher.cacheKey(datom.E, it.a)
 			if cached && it.matcher.cache != nil {
 				entry, err := it.matcher.cache.GetOrResolve(key, it.def, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
@@ -2380,7 +2339,7 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 				}
 				if entry != nil {
 					members = entry.ManySet()
-					version = entry.Version()
+					memberTx = entry.ManyTx()
 				}
 			} else {
 				result, err := it.matcher.resolveAddWinsSet(datom.E, it.a, it.report)
@@ -2389,27 +2348,25 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 					return false
 				}
 				members = result.Members
-				version = result.MaxElementID
+				memberTx = result.MemberTx
 			}
 			if it.report != nil {
 				it.report.resolved += len(members)
 			}
 
-			// If set has members, set up iteration
+			// If set has members, set up iteration over their resolved datoms
 			if len(members) > 0 {
-				it.currentEntity = datom.E
-				it.currentSetMembers = make([]interface{}, 0, len(members))
-				for _, member := range members {
-					it.currentSetMembers = append(it.currentSetMembers, member)
+				it.currentMembers = make([]datalog.Datom, 0, len(members))
+				for valueKey, member := range members {
+					it.currentMembers = append(it.currentMembers, datalog.Datom{E: datom.E, A: it.a, V: member, Tx: memberTx[valueKey]})
 				}
-				it.currentMaxElementID = version
 				it.currentMemberIdx = 0
 				break // Go back to top of outer loop to yield first member
 			}
 		}
 
 		// If no more entities or we just found one with members
-		if it.currentMemberIdx < len(it.currentSetMembers) {
+		if it.currentMemberIdx < len(it.currentMembers) {
 			continue // Yield first member
 		}
 
@@ -2649,12 +2606,14 @@ func (m *PatternMatcher) matchVectorUnderOpenAttribute(
 }
 
 // matchCardinalityManyScanAllEntities handles [?e :attr ?v] where E is unbound
-// Scans all entities with the attribute and resolves each set using add-wins
+// Scans all entities with the attribute and resolves each set using add-wins;
+// each member is admitted under the bound T, when the pattern binds one.
 func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	a datalog.Keyword,
 	def *schema.AttributeDefinition,
+	tx interface{},
 ) (executor.Relation, error) {
 	// Scan AEVT to find all entities with this attribute
 	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{a}}
@@ -2681,6 +2640,8 @@ func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 		symbols:      symbols,
 		a:            a,
 		def:          def,
+		tx:           tx,
+		tupleBuilder: m.getTupleBuilder(pattern, symbols),
 		storageIter:  storageIter,
 		seenEntities: make(map[datalog.Identity]bool),
 		report:       report,
@@ -2692,19 +2653,24 @@ func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 
 // cardinalityManyAVETValueIterator streams results for [?e :attr "value"] patterns
 // using the AVET index for O(k) lookup. It scans entries with [A][V] prefix and applies
-// add-wins resolution per entity to determine if the value is currently in each entity's set.
+// add-wins resolution per entity to determine if the value is currently in each entity's
+// set, and answers each member entity as the member's resolved datom, the value's
+// newest assertion, when the bound T holds on it
+// (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T11).
 //
 // AVET key order: [A][V][E][Op][Tx↓]
 // - Same A and V (from prefix)
 // - Entities grouped together
 // - Within entity: Op=0 (Add) before Op=1 (Remove), then by Tx descending
 type cardinalityManyAVETValueIterator struct {
-	matcher     *PatternMatcher
-	pattern     *query.DataPattern
-	symbols     []query.Symbol
-	indexer     *query.TupleIndexer
-	a, v        interface{}
-	storageIter Iterator
+	matcher      *PatternMatcher
+	pattern      *query.DataPattern
+	symbols      []query.Symbol
+	tupleBuilder *query.InternedTupleBuilder
+	a            datalog.Keyword
+	v            interface{}
+	tx           interface{} // the bound T, nil when the pattern binds none
+	storageIter  Iterator
 
 	// report accounts for this arm, and carries the run whole rather than as
 	// its index alone. Here the difference is the whole reading: this scan
@@ -2721,11 +2687,13 @@ type cardinalityManyAVETValueIterator struct {
 	currentEntity    datalog.Identity
 	hasCurrentEntity bool
 
-	// Add-wins state for current entity
-	highestAddLamport    uint64
-	highestRemoveLamport uint64
-	hasAdd               bool
-	hasRemove            bool
+	// Add-wins state for the current entity: the value's newest assertion and
+	// newest withdrawal. Membership compares their Lamports, and the newest
+	// assertion is the member's resolved datom.
+	highestAddTx    datalog.ElementID
+	highestRemoveTx datalog.ElementID
+	hasAdd          bool
+	hasRemove       bool
 
 	// Result
 	currentTuple executor.Tuple
@@ -2740,18 +2708,14 @@ func (it *cardinalityManyAVETValueIterator) Next() bool {
 
 	for {
 		if !it.storageIter.Next() {
-			// End of scan - emit final entity if it's a member.
-			// Also surface any deferred error from the inner iterator
-			// so Error() reflects deep failures.
+			// End of scan: the last entity is answered when it is a member the
+			// bound T admits. Also surface any deferred error from the inner
+			// iterator so Error() reflects deep failures.
 			if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
 				it.err = srcErr
 			}
-			if it.hasCurrentEntity && it.isCurrentEntityMember() {
-				it.buildTuple()
-				it.done = true
-				return true
-			}
-			return false
+			it.done = true
+			return it.hasCurrentEntity && it.emitCurrentEntity()
 		}
 
 		datom, err := it.storageIter.Datom()
@@ -2768,47 +2732,46 @@ func (it *cardinalityManyAVETValueIterator) Next() bool {
 		// Check if this is a new entity
 		if !it.hasCurrentEntity {
 			// First entity
-			it.startNewEntity(datom.E, datom.Op, datom.Tx.Lamport)
+			it.startNewEntity(datom.E, datom.Op, datom.Tx)
 			continue
 		}
 
 		if datom.E != it.currentEntity {
-			// Moving to new entity - check if previous entity is a member
-			if it.isCurrentEntityMember() {
-				it.buildTuple()
-				// Start tracking new entity for next iteration
-				it.startNewEntity(datom.E, datom.Op, datom.Tx.Lamport)
+			// Moving to a new entity: the previous one is answered when it is
+			// a member the bound T admits, and the new one is tracked from
+			// this datom.
+			emitted := it.emitCurrentEntity()
+			it.startNewEntity(datom.E, datom.Op, datom.Tx)
+			if emitted {
 				return true
 			}
-			// Previous entity not a member, start tracking new entity
-			it.startNewEntity(datom.E, datom.Op, datom.Tx.Lamport)
 			continue
 		}
 
 		// Same entity - update add-wins state
-		it.updateAddWinsState(datom.Op, datom.Tx.Lamport)
+		it.updateAddWinsState(datom.Op, datom.Tx)
 	}
 }
 
-func (it *cardinalityManyAVETValueIterator) startNewEntity(e datalog.Identity, op datalog.CRDTOp, lamport uint64) {
+func (it *cardinalityManyAVETValueIterator) startNewEntity(e datalog.Identity, op datalog.CRDTOp, tx datalog.ElementID) {
 	it.currentEntity = e
 	it.hasCurrentEntity = true
-	it.highestAddLamport = 0
-	it.highestRemoveLamport = 0
+	it.highestAddTx = datalog.ElementID{}
+	it.highestRemoveTx = datalog.ElementID{}
 	it.hasAdd = false
 	it.hasRemove = false
-	it.updateAddWinsState(op, lamport)
+	it.updateAddWinsState(op, tx)
 }
 
-func (it *cardinalityManyAVETValueIterator) updateAddWinsState(op datalog.CRDTOp, lamport uint64) {
+func (it *cardinalityManyAVETValueIterator) updateAddWinsState(op datalog.CRDTOp, tx datalog.ElementID) {
 	if op == datalog.OpCRDTAdd {
-		if !it.hasAdd || lamport > it.highestAddLamport {
-			it.highestAddLamport = lamport
+		if !it.hasAdd || tx.Compare(it.highestAddTx) > 0 {
+			it.highestAddTx = tx
 			it.hasAdd = true
 		}
 	} else if op == datalog.OpCRDTRemove {
-		if !it.hasRemove || lamport > it.highestRemoveLamport {
-			it.highestRemoveLamport = lamport
+		if !it.hasRemove || tx.Compare(it.highestRemoveTx) > 0 {
+			it.highestRemoveTx = tx
 			it.hasRemove = true
 		}
 	}
@@ -2823,42 +2786,37 @@ func (it *cardinalityManyAVETValueIterator) isCurrentEntityMember() bool {
 	}
 	// Both add and remove exist - compare Lamport timestamps
 	// Add wins at same Lamport (add-wins semantics)
-	return it.highestAddLamport >= it.highestRemoveLamport
+	return it.highestAddTx.Lamport >= it.highestRemoveTx.Lamport
 }
 
-func (it *cardinalityManyAVETValueIterator) buildTuple() {
-	// Positions precomputed once at construction (query.TupleIndexer); this
-	// iterator fills from add-wins state rather than a datom, so the indexer
-	// applies directly instead of an InternedTupleBuilder.
-	tuple := make(executor.Tuple, len(it.symbols))
-	if it.indexer.EIndex >= 0 {
-		tuple[it.indexer.EIndex] = it.currentEntity
+// emitCurrentEntity answers the current entity when the value is in its set
+// and the bound T holds on the value's newest assertion, the member's resolved
+// datom: the tuple is built from that datom. The bound V is the pattern's, so
+// an entity holding the value resolves to a member by construction, and the
+// bound T decides the match.
+func (it *cardinalityManyAVETValueIterator) emitCurrentEntity() bool {
+	if !it.isCurrentEntityMember() {
+		return false
 	}
-	if it.indexer.AIndex >= 0 {
-		tuple[it.indexer.AIndex] = it.a
-	}
-	if it.indexer.VIndex >= 0 {
-		tuple[it.indexer.VIndex] = it.v
-	}
-	if it.indexer.TIndex >= 0 {
-		tuple[it.indexer.TIndex] = datalog.ElementID{}
-	}
-	it.currentTuple = tuple
-
-	// A tuple is built exactly for an entity whose add-wins state resolved to
-	// membership, so resolution and match coincide on this path: the bound V
-	// is the pattern's, and an entity that holds it matches by construction.
 	if it.report != nil {
 		it.report.resolved++
+	}
+	member := datalog.Datom{E: it.currentEntity, A: it.a, V: it.v, Tx: it.highestAddTx}
+	if !it.matcher.matchesDatom(&member, nil, nil, nil, it.tx, nil) {
+		return false
+	}
+	it.currentTuple = it.tupleBuilder.BuildTupleInterned(&member)
+	if it.report != nil {
 		it.report.matched++
 	}
+	return true
 }
 
 func (it *cardinalityManyAVETValueIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
 
-// RequiresCopy is false: buildTuple makes a fresh tuple per member entity.
+// RequiresCopy is false: emitCurrentEntity builds a fresh tuple per member entity.
 func (it *cardinalityManyAVETValueIterator) RequiresCopy() bool { return false }
 
 func (it *cardinalityManyAVETValueIterator) Close() error {
@@ -2910,10 +2868,16 @@ func (m *PatternMatcher) emitIndexSelection(pattern *query.DataPattern, bound Sc
 	})
 }
 
+// matchCardinalityManyFindEntitiesWithValue handles [?e :attr "value"] where E
+// is unbound and the attribute is cardinality-many: every entity whose set
+// holds the value, each as the value's newest assertion, admitted under the
+// bound T when the pattern binds one.
 func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
-	a, v interface{},
+	a datalog.Keyword,
+	v interface{},
+	tx interface{},
 ) (executor.Relation, error) {
 	// Bind [A][V] on AVET, which seeks straight to entries carrying this
 	// value — O(k) in those entries, not O(n) in the attribute's entities.
@@ -2938,14 +2902,15 @@ func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 
 	// Create streaming iterator that applies add-wins resolution per entity
 	iter := &cardinalityManyAVETValueIterator{
-		matcher:     m,
-		pattern:     pattern,
-		symbols:     symbols,
-		indexer:     query.NewTupleIndexer(pattern, symbols),
-		a:           a,
-		v:           v,
-		storageIter: storageIter,
-		report:      report,
+		matcher:      m,
+		pattern:      pattern,
+		symbols:      symbols,
+		tupleBuilder: m.getTupleBuilder(pattern, symbols),
+		a:            a,
+		v:            v,
+		tx:           tx,
+		storageIter:  storageIter,
+		report:       report,
 	}
 
 	return executor.NewStreamingRelationWithProperties(symbols, iter, m.options,

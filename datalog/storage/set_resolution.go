@@ -13,6 +13,11 @@ type SetResolutionResult struct {
 	// Iteration: for _, v := range Members
 	Members map[string]interface{}
 
+	// MemberTx holds, under each member's memberKey, the Tx of the member's
+	// newest assertion, the datom the member resolves to. A pattern's
+	// transaction position binds it and a bound T is compared with it.
+	MemberTx map[string]datalog.ElementID
+
 	// Present reports whether the (E, A) carries any datom at all within this
 	// matcher's temporal bound, and it is the resolved answer to whether the
 	// attribute exists.
@@ -168,7 +173,7 @@ type addWinsAccumulator struct {
 func newAddWinsAccumulator(m *PatternMatcher) *addWinsAccumulator {
 	return &addWinsAccumulator{
 		matcher: m,
-		result:  &SetResolutionResult{Members: make(map[string]interface{})},
+		result:  &SetResolutionResult{Members: make(map[string]interface{}), MemberTx: make(map[string]datalog.ElementID)},
 		states:  make(map[string]*addWinsState),
 	}
 }
@@ -253,7 +258,9 @@ func (a *addWinsAccumulator) finish(blobs BlobReader) (*SetResolutionResult, err
 			}
 			value = decoded
 		}
-		a.result.Members[memberKey(value)] = value
+		key := memberKey(value)
+		a.result.Members[key] = value
+		a.result.MemberTx[key] = state.highestAddTx
 	}
 
 	return a.result, nil
@@ -274,12 +281,17 @@ func scanAddWinsMemory(it *memoryIterator, acc *addWinsAccumulator) error {
 	return nil
 }
 
-// checkSetMembership reports whether the value the bound names is currently in
-// the set, scanning only the entries carrying that value.
+// resolvedMemberDatom is the datom a many member (E, A, V) resolves to in the
+// matcher's view: the member's newest assertion when the add-wins rule keeps
+// it, an assertion at a withdrawal's Lamport counting as later, and no datom
+// when the member is withdrawn or was never asserted. A pattern's transaction
+// position binds the datom's Tx, and a bound T is compared with it.
 //
-// With Op in the key the format is
+// The bound names the member's own EAVT run. With Op in the key the format is
 // [prefix:1][E:20][A:32][type:1][value:var][Op:1][Tx:16], so a bound binding
-// [E][A][V] on EAVT matches every op (Add/Remove) for that value.
+// [E][A][V] on EAVT holds every op (Add/Remove) recorded for that value, the
+// whole add-wins decision of the member (docs/reference/INDEX_SELECTION_PROOF.md
+// Theorem 3).
 //
 // The caller supplies the bound rather than the components, because the caller
 // is the one that announces it: passing the same ScanBound value to the
@@ -289,25 +301,25 @@ func scanAddWinsMemory(it *memoryIterator, acc *addWinsAccumulator) error {
 // A variable-width V leaves this run inexact, so the store steps over the
 // keys the byte range over-covers and the intake exceeds what the loop below
 // sees — precisely the amplification the caller has to be able to report.
-func (m *PatternMatcher) checkSetMembership(bound ScanBound, report *scanReport) (member bool, checkErr error) {
+func (m *PatternMatcher) resolvedMemberDatom(bound ScanBound, report *scanReport) (resolved *datalog.Datom, resolveErr error) {
 	iter, err := OpenScan(m.reader, report, bound)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil {
-			member, checkErr = false, errjoin.Join(checkErr, closeErr)
+			resolved, resolveErr = nil, errjoin.Join(resolveErr, closeErr)
 		}
 	}()
 
-	var highestAddTx datalog.ElementID
+	var newestAdd *datalog.Datom
 	var highestRemoveTx datalog.ElementID
-	var hasAdd, hasRemove bool
+	hasRemove := false
 
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 
 		// A datom after the view's as-of target is not read.
@@ -315,34 +327,29 @@ func (m *PatternMatcher) checkSetMembership(bound ScanBound, report *scanReport)
 			continue
 		}
 
-		elemID := datom.Tx
-
-		// Track highest Tx for each operation type
-		if datom.Op == datalog.OpCRDTAdd {
-			if !hasAdd || elemID.Compare(highestAddTx) > 0 {
-				highestAddTx = elemID
-				hasAdd = true
+		// Track the newest datom of each operation type. The iterator may
+		// reuse its datom, so the assertion kept is a copy.
+		switch datom.Op {
+		case datalog.OpCRDTAdd:
+			if newestAdd == nil || datom.Tx.Compare(newestAdd.Tx) > 0 {
+				held := *datom
+				newestAdd = &held
 			}
-		} else if datom.Op == datalog.OpCRDTRemove {
-			if !hasRemove || elemID.Compare(highestRemoveTx) > 0 {
-				highestRemoveTx = elemID
+		case datalog.OpCRDTRemove:
+			if !hasRemove || datom.Tx.Compare(highestRemoveTx) > 0 {
+				highestRemoveTx = datom.Tx
 				hasRemove = true
 			}
 		}
 	}
 	if err := iter.Error(); err != nil {
-		return false, err
+		return nil, err
 	}
-	// Determine membership using add-wins semantics
-	// CRITICAL: Compare only Lamport values for add-wins.
-	if !hasAdd {
-		return false, nil // No adds ever - not in set
+	// Add-wins compares Lamport values alone: a withdrawal at a higher Lamport
+	// than the newest assertion removes the member, and at the same Lamport
+	// (concurrent operations) the assertion wins.
+	if newestAdd == nil || (hasRemove && newestAdd.Tx.Lamport < highestRemoveTx.Lamport) {
+		return nil, nil
 	}
-	if !hasRemove {
-		return true, nil // Only adds - in set
-	}
-
-	// Both exist - compare Lamport timestamps only
-	// At same Lamport (concurrent operations), add wins
-	return highestAddTx.Lamport >= highestRemoveTx.Lamport, nil
+	return newestAdd, nil
 }

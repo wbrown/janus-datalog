@@ -291,7 +291,7 @@ func TestCheckSetMembershipDirect(t *testing.T) {
 			copy(eBytes[:], entityID.Bytes())
 			copy(aBytes[:], attr.String())
 
-			// The bound is the caller's: checkSetMembership is handed the same
+			// The bound is the caller's: resolvedMemberDatom is handed the same
 			// ScanBound the pattern arm announces, so the run it walks and the run
 			// reported to a handler cannot differ.
 			membershipBound := func(v datalog.Value) ScanBound {
@@ -305,28 +305,30 @@ func TestCheckSetMembershipDirect(t *testing.T) {
 				}
 			}
 
-			// Check membership for "present" (should be true). The intake reaches the
+			// "present" resolves to its own assertion. The intake reaches the
 			// report the scan was acquired through, so that is where it is read.
 			report := &scanReport{}
-			isMember, err := matcher.checkSetMembership(membershipBound("present"), report)
+			present, err := matcher.resolvedMemberDatom(membershipBound("present"), report)
 			if err != nil {
-				t.Fatalf("checkSetMembership failed: %v", err)
+				t.Fatalf("resolvedMemberDatom failed: %v", err)
 			}
-			t.Logf("Membership of 'present': %v (%d datoms read)", isMember, report.scanned)
-			if !isMember {
+			t.Logf("Membership of 'present': %v (%d datoms read)", present != nil, report.scanned)
+			if present == nil {
 				t.Error("Expected 'present' to be a member")
+			} else if present.V != "present" {
+				t.Errorf("Expected the member to resolve to its own assertion, got %v", present.V)
 			}
 			if report.scanned <= 0 {
 				t.Error("a membership check that found the value must report the index reads that found it")
 			}
 
-			// Check membership for "absent" (should be false)
-			isMember2, err := matcher.checkSetMembership(membershipBound("absent"), DiscardIntake)
+			// "absent" resolves to no datom.
+			absent, err := matcher.resolvedMemberDatom(membershipBound("absent"), DiscardIntake)
 			if err != nil {
-				t.Fatalf("checkSetMembership failed: %v", err)
+				t.Fatalf("resolvedMemberDatom failed: %v", err)
 			}
-			t.Logf("Membership of 'absent': %v", isMember2)
-			if isMember2 {
+			t.Logf("Membership of 'absent': %v", absent != nil)
+			if absent != nil {
 				t.Error("Expected 'absent' to NOT be a member")
 			}
 		})

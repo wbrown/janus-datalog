@@ -55,6 +55,14 @@ type CacheEntry struct {
 	// (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T5).
 	oneTx datalog.ElementID
 
+	// manyTx holds, under each member's memberKey, the Tx of the member's
+	// newest assertion, the datom a cardinality-many entry's member resolves
+	// to. A pattern's transaction position binds it and a bound T is compared
+	// with it; the version is the Tx of some operation on the group, and of no
+	// member's assertion in particular
+	// (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T11).
+	manyTx map[string]datalog.ElementID
+
 	// scanned is the index intake the resolution that built this entry spent.
 	// It belongs on the entry rather than on the call that triggered the build:
 	// the entry is what the cost bought, so a later reader of the same entry can
@@ -117,6 +125,12 @@ func (e *CacheEntry) OneTx() datalog.ElementID {
 // its memberKey.
 func (e *CacheEntry) ManySet() map[string]any {
 	return e.manySet
+}
+
+// ManyTx returns, under each member's memberKey, the Tx of the member's
+// newest assertion for cardinality-many attributes.
+func (e *CacheEntry) ManyTx() map[string]datalog.ElementID {
+	return e.manyTx
 }
 
 // VectorList returns the ordered list for cardinality-vector attributes
@@ -682,11 +696,12 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []
 		}
 
 	case schema.CardinalityMany:
-		members, maxID := ResolveAddWinsFromDatoms(datoms)
+		members, memberTx, maxID := ResolveAddWinsFromDatoms(datoms)
 		entry = &CacheEntry{
 			version:     maxID,
 			cardinality: schema.CardinalityMany,
 			manySet:     members,
+			manyTx:      memberTx,
 		}
 
 	case schema.CardinalityVector:
@@ -784,7 +799,7 @@ func rebuildMany(key CacheKey, def *schema.AttributeDefinition, resolver CacheRe
 	if report != nil {
 		before = report.scanned
 	}
-	members, maxID, present, err := resolver.ResolveAddWins(key.E, key.A, report)
+	members, memberTx, maxID, present, err := resolver.ResolveAddWins(key.E, key.A, report)
 	if err != nil {
 		return nil, fmt.Errorf("resolve add-wins set: %w", err)
 	}
@@ -797,6 +812,7 @@ func rebuildMany(key CacheKey, def *schema.AttributeDefinition, resolver CacheRe
 		cardinality: schema.CardinalityMany,
 		unique:      def.HasUniqueConstraint(),
 		manySet:     members,
+		manyTx:      memberTx,
 	}
 	if report != nil {
 		entry.scanned = report.scanned - before
@@ -864,9 +880,11 @@ type CacheResolver interface {
 	ResolveLWW(e datalog.Identity, a datalog.Keyword, def *schema.AttributeDefinition, report *scanReport) (any, datalog.ElementID, datalog.ElementID, bool, error)
 
 	// ResolveAddWins returns the current set members for cardinality-many,
-	// each under its memberKey.
-	// Returns (members, maxElementID, present, error); intake accrues into the report.
-	ResolveAddWins(e datalog.Identity, a datalog.Keyword, report *scanReport) (map[string]any, datalog.ElementID, bool, error)
+	// each under its memberKey, and under the same key the Tx of each
+	// member's newest assertion, the datom the member resolves to.
+	// Returns (members, memberTx, maxElementID, present, error); intake accrues
+	// into the report.
+	ResolveAddWins(e datalog.Identity, a datalog.Keyword, report *scanReport) (map[string]any, map[string]datalog.ElementID, datalog.ElementID, bool, error)
 
 	// ResolveRGA returns the ordered vector for cardinality-vector
 	// Returns (elements, positionIndex, maxElementID, present, error); intake

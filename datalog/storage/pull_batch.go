@@ -234,7 +234,7 @@ func (d *Database) resolveWildcardDatoms(
 
 	switch cardinality {
 	case schema.CardinalityMany:
-		members, _ := ResolveAddWinsFromDatoms(datoms)
+		members, _, _ := ResolveAddWinsFromDatoms(datoms)
 		if len(members) == 0 {
 			return nil, false
 		}

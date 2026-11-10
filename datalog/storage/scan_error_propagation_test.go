@@ -314,9 +314,9 @@ func TestResolvedMemberDatomSurfacesScanErrors(t *testing.T) {
 				index: EAVT,
 				iter:  iter,
 			})
-			it := &validatingVBoundIterator{matcher: matcher, candidatePosition: 3}
+			bound := ScanBound{Index: EAVT, Prefix: []datalog.Value{datalog.NewIdentity("user:alice"), datalog.NewKeyword(":user/tags"), "reader"}}
 
-			resolved, err := it.resolvedMemberDatom(datalog.NewIdentity("user:alice"), datalog.NewKeyword(":user/tags"), "reader")
+			resolved, err := matcher.resolvedMemberDatom(bound, DiscardIntake)
 			if err == nil {
 				t.Fatal("expected the scan failure to surface, got nil error")
 			}

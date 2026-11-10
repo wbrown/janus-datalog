@@ -337,11 +337,12 @@ func TestCacheResolverInterface(t *testing.T) {
 
 			// Test ResolveAddWins
 			addWins := &scanReport{}
-			set, maxID, present, err := matcher.ResolveAddWins(e, tags, addWins)
+			set, memberTx, maxID, present, err := matcher.ResolveAddWins(e, tags, addWins)
 			require.NoError(t, err)
 			assert.True(t, present, "the (E, A) carries datoms, so it is present")
 			_, hasDev := set[memberKey("dev")]
 			assert.True(t, hasDev)
+			assert.NotZero(t, memberTx[memberKey("dev")].Lamport, "a member carries its newest assertion's Tx")
 			assert.NotZero(t, maxID.Lamport)
 			assert.Positive(t, addWins.scanned, "resolution read the index and must report it")
 		})
