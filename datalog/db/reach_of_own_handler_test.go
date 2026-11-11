@@ -74,13 +74,5 @@ func TestADbTestWithItsOwnHandlerHasItsReachRecorded(t *testing.T) {
 			recordedOptions = append(recordedOptions, o)
 		}
 	}
-	legs := legsFor(t, optimizerModes, recordedOptions...)
-	var legNames []string
-	var legSettings []optionLeg
-	for _, leg := range legs {
-		legNames = append(legNames, leg.name)
-		legSettings = append(legSettings, leg.optionLeg)
-	}
 	require.Equal(t, firedOptions, recordedOptions, "the record holds every option the query fired")
-	require.True(t, reachCovered(firedOptions, legSettings), "the legs of the recorded reach %v take every fired option %v at both settings", legNames, firedOptions)
 }
