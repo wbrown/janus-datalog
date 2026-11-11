@@ -307,7 +307,7 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -345,7 +345,9 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 			}
 
 			t.Run("WithoutPredicatePushdown", func(t *testing.T) {
-				exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
+				popts := mode.plannerOptions()
+				popts.Handler = recordingReach(t, nil)
+				exec := executor.NewExecutorWithOptions(db.Matcher(), db, popts)
 
 				result, err := exec.Execute(q)
 				if err != nil {
@@ -374,6 +376,7 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 				// Create executor with predicate pushdown enabled (default)
 				matcher := NewPatternMatcher(db.store)
 				popts := mode.plannerOptions()
+				popts.Handler = recordingReach(t, nil)
 				exec := executor.NewExecutorWithOptions(matcher, db, popts) // Has pushdown enabled by default
 
 				result, err := exec.Execute(q)

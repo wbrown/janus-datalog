@@ -22,7 +22,7 @@ import (
 //	            [(ground 0) ?taskCount])
 //	[(> ?taskCount 0) ?complete]
 func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
-	eachModeWith(t, testComparisonBindingWithOrSubqueryE2E)
+	eachModeWith(t, testComparisonBindingWithOrSubqueryE2E, algebraOption, aggregationOption)
 }
 
 func testComparisonBindingWithOrSubqueryE2E(t *testing.T, db *storage.Database, mode optimizerMode) {
@@ -91,9 +91,9 @@ func testComparisonBindingWithOrSubqueryE2E(t *testing.T, db *storage.Database, 
 	// Register the trace handler on the options the executor and its
 	// matcher are built with.
 	opts := mode.plannerOptions()
-	opts.Handler = func(event annotations.Event) {
+	opts.Handler = recordingReach(t, func(event annotations.Event) {
 		t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
-	}
+	})
 	matcher := storage.NewPatternMatcherWithOptions(
 		db.Store(), executor.ExecutorOptionsFromPlanner(opts))
 	matcher.SetSchema(s)

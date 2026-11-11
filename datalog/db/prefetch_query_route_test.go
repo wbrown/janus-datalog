@@ -29,7 +29,8 @@ func TestPrefetchFillsTheCacheOnTheQueryRoute(t *testing.T) {
 	s.Add(&schema.AttributeDefinition{Ident: a, ValueType: schema.TypeLong, Cardinality: schema.CardinalityOne})
 	s.Add(&schema.AttributeDefinition{Ident: x, ValueType: schema.TypeLong, Cardinality: schema.CardinalityOne})
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range legsFor(t, optimizerModes, prefetchOption, fusionOption) {
+	legs := legsFor(t, optimizerModes, prefetchOption, fusionOption)
+	for _, mode := range append(legsWhere(legs, func(m optimizerMode) bool { return m.prefetch }), legsWhere(legs, func(m optimizerMode) bool { return !m.prefetch })...) {
 		t.Run(mode.name, func(t *testing.T) {
 			var mu sync.Mutex
 			triggers := 0

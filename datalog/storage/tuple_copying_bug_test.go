@@ -29,7 +29,7 @@ func TestMatcherRelationsTupleCopyingBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	require.NoError(t, err)
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -57,7 +57,9 @@ func TestMatcherRelationsTupleCopyingBug(t *testing.T) {
 			require.NoError(t, err)
 
 			matcher := NewPatternMatcher(db.store)
-			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
 			result, err := exec.Execute(q)
 			require.NoError(t, err)

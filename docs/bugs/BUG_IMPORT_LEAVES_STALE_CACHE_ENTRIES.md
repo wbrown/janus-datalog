@@ -2,10 +2,14 @@
 
 **Status**: Instance fixed; class open.
 
-- Each import's replay ends through `Database.completeReplay`, which restores
-  the clock and clears the whole EA cache once, after the last batch.
+- Each import's replay ends through `Database.completeReplay` on every exit,
+  which clears the whole EA cache once, whether or not the replay reached its
+  end, since the batches asserted before a failure are in the store, and
+  restores the clock when it did.
 - `TestAReadAfterAnImportAnswersTheImportedFacts` (`datalog/storage`) reads
-  after an import into a warm cache through every entry point, and passes.
+  after an import into a warm cache through every entry point, and
+  `TestAReadAfterAFailedImportAnswersTheStore` after an import that fails
+  after a batch; both pass.
 - The class, a writer through `Store.Assert` that notifies no cache, stays
   open.
 - The class's structural fix belongs to
@@ -19,8 +23,9 @@
 directly, and no batch notifies `d.cache`. An entry cached before the import
 compares fresh against every batch, so a reader is served the pre-import value
 even though storage holds a newer datom that wins CRDT resolution.
-`Database.completeReplay`, the ending both replays share, clears the whole
-cache once after the last batch, and the entry is dropped there.
+`Database.completeReplay`, the ending both replays reach on every exit, clears
+the whole cache once, after the last batch or after the batch a failure
+stopped at, and the entry is dropped there.
 
 ## Mechanism
 
@@ -53,8 +58,9 @@ Not on the commit path:
   survey of "who notifies the cache" that starts from `Transaction.Commit`
   misses it, which is the same open-world hazard this bug is an instance of.
 - `Cache.Clear` — called from `Database.completeReplay`, the ending both import
-  replays share, once after the last batch. It raises the floor and drops every
-  entry, so a resolution read before the clear is not stored after it.
+  replays reach on every exit, once after the last batch or after the batch a
+  failure stopped at. It raises the floor and drops every entry, so a
+  resolution read before the clear is not stored after it.
 
 Commit's invalidation is driven off `t.datoms` / `t.retracts`, the
 transaction's own buffer.
@@ -151,7 +157,10 @@ scope ruling rather than committed red. Its final assertion is the one
 `TestAReadAfterAnImportAnswersTheImportedFacts`
 (`datalog/storage/import_cache_test.go`) makes through `Import`, `ImportDump`
 (EDN and JDZL) and `ImportBinary`, for a superseded cardinality-one value, a
-set the import adds to, and a unique value another entity claims in the dump.
+set the import adds to, and a unique value another entity claims in the dump,
+and the one `TestAReadAfterAFailedImportAnswersTheStore`
+(`datalog/storage/import_failure_cache_test.go`) makes through the same entry
+points after an import the store refuses past the batch carrying the entity.
 
 ```go
 package storage

@@ -108,7 +108,9 @@ func TestHashJoinScanRangeBug(t *testing.T) {
 			}
 
 			// Same options as datalog-cli; binding-driven scans use HashJoinScan.
-			exec := db.NewExecutorWithOptions(mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := db.NewExecutorWithOptions(popts)
 
 			// Time the query - should be <100ms but currently can be 10+ seconds
 			start := time.Now()

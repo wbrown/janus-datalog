@@ -16,7 +16,7 @@ import (
 // on the leg's path: streaming on the legs with streaming aggregation, over
 // 500 tuples against a threshold of 100, and batch on the others.
 func TestStorageBackedPureAggregation(t *testing.T) {
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -48,6 +48,7 @@ func TestStorageBackedPureAggregation(t *testing.T) {
 
 func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizerMode) {
 	opts := mode.plannerOptions()
+	opts.Handler = recordingReach(t, nil)
 	exec := executor.NewExecutorWithOptions(db.Matcher(), db, opts)
 	// path is the aggregation path the leg runs over 500 tuples: streaming with
 	// streaming aggregation on, batch with it off.
@@ -92,13 +93,13 @@ func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizer
 		// produced.
 		var aggregationMode string
 		annotated := opts
-		annotated.Handler = func(event annotations.Event) {
+		annotated.Handler = recordingReach(t, func(event annotations.Event) {
 			if event.Name == annotations.AggregationExecuted {
 				if mode, ok := event.Data["aggregation_mode"].(string); ok {
 					aggregationMode = mode
 				}
 			}
-		}
+		})
 		annotatedExec := executor.NewExecutorWithOptions(
 			NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptionsFromPlanner(annotated)),
 			db, annotated)
@@ -135,13 +136,13 @@ func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizer
 		// options this executor and its matcher are built with.
 		var aggregationMode string
 		annotated := opts
-		annotated.Handler = func(event annotations.Event) {
+		annotated.Handler = recordingReach(t, func(event annotations.Event) {
 			if event.Name == annotations.AggregationExecuted {
 				if mode, ok := event.Data["aggregation_mode"].(string); ok {
 					aggregationMode = mode
 				}
 			}
-		}
+		})
 		annotatedExec := executor.NewExecutorWithOptions(
 			NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptionsFromPlanner(annotated)),
 			db, annotated)

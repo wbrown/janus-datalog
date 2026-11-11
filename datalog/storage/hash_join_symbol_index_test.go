@@ -42,7 +42,7 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -70,7 +70,9 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 			_, err = tx.Commit()
 			assert.NoError(t, err)
 
-			exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := executor.NewExecutorWithOptions(db.Matcher(), db, popts)
 
 			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
@@ -115,7 +117,7 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -138,7 +140,9 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 			_, err := tx.Commit()
 			assert.NoError(t, err)
 
-			exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := executor.NewExecutorWithOptions(db.Matcher(), db, popts)
 
 			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
@@ -223,7 +227,9 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 				_, err := tx.Commit()
 				assert.NoError(t, err)
 
-				exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
+				popts := mode.plannerOptions()
+				popts.Handler = recordingReach(t, nil)
+				exec := executor.NewExecutorWithOptions(db.Matcher(), db, popts)
 
 				tuples, err := executor.CollectTuples(exec.Execute(parsed))
 				assert.NoError(t, err)

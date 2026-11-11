@@ -209,8 +209,14 @@ func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) er
 // ElementIDs the dump carries, finishes the store's batch, runs the finalize
 // hook, and advances the Lamport clock past the dump's highest ElementID so
 // later writes order after the imported data. It declares nothing: the
-// caller composes the schema once the datoms are in.
+// caller composes the schema once the datoms are in. It ends through
+// completeReplay on every exit: the chunks asserted before a failure are in
+// the store, so the cache is cleared whether or not the replay reached its
+// end, and the clock is restored only when it did.
 func (d *Database) replayBinary(r io.ReadSeeker, opts ...BinaryImportOptions) error {
+	var maxElementID datalog.ElementID
+	defer func() { d.completeReplay(maxElementID) }()
+
 	workers := 1
 	var finalize func() error
 	if len(opts) > 0 {
@@ -296,14 +302,14 @@ func (d *Database) replayBinary(r io.ReadSeeker, opts ...BinaryImportOptions) er
 		}
 	}
 
-	maxElementID := trailer.maxTx
-	if maxElementID.IsZero() {
-		maxElementID, err = d.store.MaxElementID()
+	highest := trailer.maxTx
+	if highest.IsZero() {
+		highest, err = d.store.MaxElementID()
 		if err != nil {
 			return fmt.Errorf("binary import max ElementID: %w", err)
 		}
 	}
-	d.completeReplay(maxElementID)
+	maxElementID = highest
 	return nil
 }
 

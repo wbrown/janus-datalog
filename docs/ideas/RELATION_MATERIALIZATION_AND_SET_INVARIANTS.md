@@ -299,7 +299,9 @@ iteration:
 The join is pull-based (`docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md`, T1 to
 T6):
 
-- The join answers the streaming relation in every setting of the option.
+- The join answers the streaming relation whenever the build holds a tuple.
+- `EnableStreamingJoins` then selects nothing and is removed
+  (`docs/reference/PLANNER_OPTIONS.md`).
 - Its iterator fills one workspace of the result's width per pull and answers
   `RequiresCopy` true.
 - The probe tuple is read as its iterator hands it back.

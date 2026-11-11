@@ -52,6 +52,7 @@ The codebase discipline is first-error-wins (`if e := it.Error(); err == nil { e
 ### A4. `matchesDatom` Tx arm silently returns false where E and A arms panic
 
 **Status**: Refuted (2026-07-19). The asymmetry is correct under the boundary model. E and A panic because their bindings are validated at the user boundaries and filtered at seek construction (`filterTypedPositionBindings`), so a mistyped value there is an unreachable invariant violation. The Tx position has **no** boundary validation or construction-time filtering — its default arm is reachable by ordinary interior mixed-type data (a V→Tx join over mixed values), and `return false` is the equality join's typed non-match, exactly like the V position. Making it panic would be a data-reachable panic. Extending boundary typing to the Tx position (ElementID plus integer Lamport sugar) would be a separate design decision, not a defect fix.
+**Status**: Superseded (2026-11). The Tx position is typed ElementID as E and A are typed. An input or a constant of another type is refused at the user boundary (`query.ValidateTransactionBinding`). A binding of another type is selected out at the match's entry (`typedPositionBindingCheck`). `matchesDatom`'s Tx arm panics as its E and A arms do (`docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md`, §1 and P1).
 
 ### A5. `toStorageValue` default coerces unknown types to strings at the write boundary
 

@@ -141,8 +141,9 @@ const (
 	// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.3, §4.9), reporting
 	// under every form, each event carrying the form under KeyForm.
 	//
-	// ScopeSubjectTuple is one subject tuple read into a window, rendered;
-	// ScopeSubjectExhausted is the subject read to its end; ScopeWindow is
+	// ScopeSubjectTuple is one subject tuple read into a window, carried as
+	// the tuple the window holds; ScopeSubjectExhausted is the subject read
+	// to its end; ScopeWindow is
 	// one window of the subject the branches run over: its ordinal, counted
 	// from one, its tuple count, and the count of distinct keys it projects
 	// onto the header's required run; ScopeBranchBuild is one window's build

@@ -58,17 +58,18 @@ func TestVerifyStrategyUsed(t *testing.T) {
 			}
 
 			planOpts := mode.plannerOptions()
+			planOpts.Handler = recordingReach(t, nil)
 
 			t.Run("default_behavior", func(t *testing.T) {
 				var strategies []string
 				opts := executor.ExecutorOptionsFromPlanner(planOpts)
 				opts.DefaultHashTableSize = 256
-				opts.Handler = func(event annotations.Event) {
+				opts.Handler = recordingReach(t, func(event annotations.Event) {
 					if event.Name == "storage/join-strategy" {
 						strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
 						strategies = append(strategies, strategy)
 					}
-				}
+				})
 				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 				exec := executor.NewExecutorWithOptions(matcher, db, planOpts)
@@ -95,12 +96,12 @@ func TestVerifyStrategyUsed(t *testing.T) {
 				var strategies []string
 				opts := executor.ExecutorOptionsFromPlanner(planOpts)
 				opts.DefaultHashTableSize = 256
-				opts.Handler = func(event annotations.Event) {
+				opts.Handler = recordingReach(t, func(event annotations.Event) {
 					if event.Name == "storage/join-strategy" {
 						strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
 						strategies = append(strategies, strategy)
 					}
-				}
+				})
 				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 				// Force HashJoinScan
@@ -154,7 +155,7 @@ func TestMaterializationDetection(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -193,7 +194,9 @@ func TestMaterializationDetection(t *testing.T) {
 
 			// Create matcher with instrumentation registered on its options
 			var events []string
-			opts := executor.ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256, Handler: func(event annotations.Event) {
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			opts := executor.ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256, Handler: recordingReach(t, func(event annotations.Event) {
 				if event.Name == "storage/join-strategy" {
 					joinStrategy := event.Data["join_strategy"]
 					bindingSize := event.Data["binding_size"]
@@ -203,11 +206,11 @@ func TestMaterializationDetection(t *testing.T) {
 					strategyType := event.Data["strategy_type"]
 					events = append(events, fmt.Sprintf("Reuse strategy: %v", strategyType))
 				}
-			}}
+			})}
 
 			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
-			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
 			t.Log("Executing query...")
 			result, err := exec.Execute(q)

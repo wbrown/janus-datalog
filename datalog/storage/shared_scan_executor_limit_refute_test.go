@@ -64,17 +64,17 @@ func TestRefuteExecutorPathClosesEveryScanItOpened(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for _, c := range texts {
-		for _, mode := range legsFor(optimizerModes, allOptions...) {
+		for _, mode := range legsFor(optimizerModes, sharingOption) {
 			for _, entry := range entries {
 				t.Run("badger/"+c.name+"/"+mode.name+"/"+entry.name, func(t *testing.T) {
 					dir := t.TempDir()
 					hits := 0
 					opts := mode.plannerOptions()
-					opts.Handler = func(e annotations.Event) {
+					opts.Handler = recordingReach(t, func(e annotations.Event) {
 						if e.Name == annotations.ScanSharingCacheHit {
 							hits++
 						}
-					}
+					})
 					d, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: &opts})
 					require.NoError(t, err)
 					fill(t, d, 3000)
@@ -93,11 +93,11 @@ func TestRefuteExecutorPathClosesEveryScanItOpened(t *testing.T) {
 					var opened, closed atomic.Int32
 					hits := 0
 					opts := mode.plannerOptions()
-					opts.Handler = func(e annotations.Event) {
+					opts.Handler = recordingReach(t, func(e annotations.Event) {
 						if e.Name == annotations.ScanSharingCacheHit {
 							hits++
 						}
-					}
+					})
 					d, err := NewDatabaseWithOptions(DatabaseOptions{
 						Store:          scanTallyStore{Store: NewBadgerEmulatorStore(nil), opened: &opened, closed: &closed},
 						PlannerOptions: &opts,

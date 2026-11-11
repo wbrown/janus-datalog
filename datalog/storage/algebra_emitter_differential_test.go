@@ -89,7 +89,7 @@ func TestAlgebraBridgeOptimizedOffExactTupleDifferential(t *testing.T) {
 	// Every leg answers each shape as the reference leg does: the same tuples,
 	// in the same order where the query orders.
 	referenceDB := setupAlgebraTestDB(t, referenceMode)
-	for _, mode := range legsFor(optimizerModes, aggregationOption) {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 			for _, testCase := range testCases {
@@ -115,6 +115,7 @@ func executePlannerOptions(
 	options planner.PlannerOptions,
 ) [][]interface{} {
 	t.Helper()
+	options.Handler = recordingReach(t, options.Handler)
 	tuples, err := runPlannerOptions(db, source, inputs, options)
 	require.NoError(t, err)
 	return tuples

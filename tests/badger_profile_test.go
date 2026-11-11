@@ -94,7 +94,7 @@ func TestBadgerRelationInputProfile(t *testing.T) {
 	}
 	inputRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
-	for _, mode := range legsFor(allOptions...) {
+	for _, mode := range legsFor(fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Profile the query
 			f, err := os.Create("badger_relation_input.prof")
@@ -112,7 +112,9 @@ func TestBadgerRelationInputProfile(t *testing.T) {
 			}
 			defer pprof.StopCPUProfile()
 
-			exec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := executor.NewExecutorWithOptions(matcher, nil, popts)
 
 			start := time.Now()
 			tuples, err := executor.CollectTuples(exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel}))

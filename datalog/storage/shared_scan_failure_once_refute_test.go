@@ -97,7 +97,7 @@ func TestRefuteASharedScanAnswersEachFailureOnce(t *testing.T) {
 			return err
 		}},
 	}
-	for _, mode := range legsFor(optimizerModes, allOptions...) {
+	for _, mode := range legsFor(optimizerModes, sharingOption, aggregationOption) {
 		for _, c := range cases {
 			for _, reader := range readers {
 				t.Run(mode.name+"/"+c.name+"/"+reader.name, func(t *testing.T) {
@@ -105,11 +105,11 @@ func TestRefuteASharedScanAnswersEachFailureOnce(t *testing.T) {
 					var scans atomic.Int32
 					hits := 0
 					options := mode.plannerOptions()
-					options.Handler = func(e annotations.Event) {
+					options.Handler = recordingReach(t, func(e annotations.Event) {
 						if e.Name == annotations.ScanSharingCacheHit {
 							hits++
 						}
-					}
+					})
 					db, err := NewDatabaseWithOptions(DatabaseOptions{
 						Store:          scanCloseFailingStore{Store: NewBadgerEmulatorStore(nil), failing: &failing, failRead: &failRead, scans: &scans},
 						PlannerOptions: &options,

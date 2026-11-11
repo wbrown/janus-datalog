@@ -103,7 +103,7 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 		},
 	}
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -121,11 +121,13 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 						t.Fatalf("Parse failed: %v", err)
 					}
 
-					opts := executor.ExecutorOptionsFromPlanner(mode.plannerOptions())
+					popts := mode.plannerOptions()
+					popts.Handler = recordingReach(t, nil)
+					opts := executor.ExecutorOptionsFromPlanner(popts)
 					opts.DefaultHashTableSize = 256
 
 					matcher := NewPatternMatcherWithOptions(db.Store(), opts)
-					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+					exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
 					// Execute through full pipeline
 					result, err := exec.Execute(q)
@@ -196,7 +198,7 @@ func TestStorageBackedJoinLimitE2E(t *testing.T) {
 		},
 	}
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -213,11 +215,13 @@ func TestStorageBackedJoinLimitE2E(t *testing.T) {
 						t.Fatalf("Parse failed: %v", err)
 					}
 
-					opts := executor.ExecutorOptionsFromPlanner(mode.plannerOptions())
+					popts := mode.plannerOptions()
+					popts.Handler = recordingReach(t, nil)
+					opts := executor.ExecutorOptionsFromPlanner(popts)
 					opts.DefaultHashTableSize = 256
 
 					matcher := NewPatternMatcherWithOptions(db.Store(), opts)
-					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+					exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
 					result, err := exec.Execute(q)
 					if err != nil {

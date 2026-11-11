@@ -50,7 +50,8 @@ func TestPrefetchFillsTheCacheOnTheQueryRouteAsOnTheExecutorRoute(t *testing.T) 
 			require.NoError(t, err)
 		}},
 	}
-	for _, mode := range legsFor(optimizerModes, prefetchOption, fusionOption) {
+	legs := legsFor(optimizerModes, prefetchOption, fusionOption)
+	for _, mode := range append(legsWhere(legs, func(m optimizerMode) bool { return m.prefetch }), legsWhere(legs, func(m optimizerMode) bool { return !m.prefetch })...) {
 		for _, route := range routes {
 			t.Run(mode.name+"/"+route.name, func(t *testing.T) {
 				opts := mode.plannerOptions()

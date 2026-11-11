@@ -118,16 +118,16 @@ func TestScanSharing_OffRaisesNoSharingEvent(t *testing.T) {
 	                      $ ?e) [[?count]]]
 	                  [(ground 0) ?count])]`
 	want := scanSharingReferenceAnswer(t, q)
-	for _, mode := range legsWhere(legsFor(optimizerModes, sharingOption), func(m optimizerMode) bool { return !m.sharing }) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption), func(m optimizerMode) bool { return !m.sharing }) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupScanSharingTestDB(t, mode)
 			var sharingEvents int
 			opts := mode.plannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = recordingReach(t, func(e annotations.Event) {
 				if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {
 					sharingEvents++
 				}
-			}
+			})
 			_, rel, err := db.queryUnderPlannerOptions(opts, q)
 			require.NoError(t, err)
 			results, err := executor.CollectTuples(rel, nil)

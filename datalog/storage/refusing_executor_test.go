@@ -29,13 +29,15 @@ func TestNewExecutor_OverARefusingMatcherRefusesAndAnswers(t *testing.T) {
 			require.NoError(t, tx.Add(datalog.NewIdentity("e"), kw(":t/name"), "n"))
 			_, err := tx.Commit()
 			require.NoError(t, err)
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
 			executors := []struct {
 				name string
 				exec *executor.Executor
 			}{
 				{"the database's own", d.NewExecutor()},
 				{"built by the caller", executor.NewExecutor(d.Matcher(), d)},
-				{"built by the caller with the database's options", executor.NewExecutorWithOptions(d.Matcher(), d, mode.plannerOptions())},
+				{"built by the caller with the database's options", executor.NewExecutorWithOptions(d.Matcher(), d, popts)},
 			}
 			for _, e := range executors {
 				t.Run(e.name, func(t *testing.T) {

@@ -111,11 +111,11 @@ type countedRun struct {
 	prefetched bool
 }
 
-// runCountingLookups runs text over the item fixture on every leg of the
-// optimizer matrix, under the leg's options, with the EA cache on and off,
-// through a lookupCountingMatcher, and hands check each run.
-func runCountingLookups(t *testing.T, f lookupItems, fuses bool, text string, check func(t *testing.T, run countedRun), reach ...Option) {
-	for _, mode := range LegsFor(t, reach...) {
+// runCountingLookups runs text over the item fixture on each of legs, under
+// the leg's options, with the EA cache on and off, through a
+// lookupCountingMatcher, and hands check each run.
+func runCountingLookups(t *testing.T, f lookupItems, fuses bool, text string, check func(t *testing.T, run countedRun), legs []OptimizerMode) {
+	for _, mode := range legs {
 		for _, disableCache := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/cache-off=%v", mode.Name(), disableCache), func(t *testing.T) {
 				d, err := storage.OpenFacts(f.facts(), storage.DatabaseOptions{DisableCache: disableCache})
@@ -169,7 +169,7 @@ func TestADatabaseFunctionReadsEachAttributeThroughOneLookupPerClause(t *testing
 			require.Equal(t, 1, run.matcher.attributeLookups[attr], "the clause reading %s makes one lookup of it", attr)
 			require.Zero(t, run.matcher.entityLookups[attr], "no entity's %s is looked up one entity at a time", attr)
 		}
-	})
+	}, LegsFor(t))
 }
 
 func TestAFusedFetchReadsEachAttributeThroughOneLookup(t *testing.T) {
@@ -193,7 +193,7 @@ func TestAFusedFetchReadsEachAttributeThroughOneLookup(t *testing.T) {
 			require.Equal(t, 1, run.matcher.attributeLookups[attr], "the fused fetch of %s makes one lookup of it", attr)
 			require.Zero(t, run.matcher.entityLookups[attr], "no entity's %s is looked up one entity at a time", attr)
 		}
-	}, FusionOption)
+	}, LegsFor(t, FusionOption))
 }
 
 func TestAnOrDefaultBranchBuiltFromTheCacheReadsItsAttributeThroughALookup(t *testing.T) {
@@ -228,5 +228,5 @@ func TestAnOrDefaultBranchBuiltFromTheCacheReadsItsAttributeThroughALookup(t *te
 			require.False(t, run.prefetched, "nothing is prefetched with the option off")
 			require.Zero(t, run.matcher.attributeLookups[f.kind], "the branch over %s is matched through the pattern, with no lookup of it", f.kind)
 		}
-	}, PrefetchOption, FusionOption)
+	}, OptimizerModes)
 }

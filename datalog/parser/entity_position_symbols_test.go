@@ -11,6 +11,7 @@ func TestPositionSymbols(t *testing.T) {
 	tests := []struct {
 		name        string
 		query       string
+		rules       string
 		entity      []string
 		attr        []string
 		transaction []string
@@ -101,6 +102,43 @@ func TestPositionSymbols(t *testing.T) {
 			entity:  []string{"?e"},
 			neither: []string{"?status"},
 		},
+		{
+			name:        "rule arguments mapped to the body's entity, attribute and transaction positions",
+			query:       `[:find ?v :in $ % ?e ?a ?t :where (at ?e ?a ?v ?t)]`,
+			rules:       `[[(at ?e ?a ?v ?t) [?e ?a ?v ?t]]]`,
+			entity:      []string{"?e"},
+			attr:        []string{"?a"},
+			transaction: []string{"?t"},
+			neither:     []string{"?v"},
+		},
+		{
+			name:    "rule argument feeding only a value position is not position-bound",
+			query:   `[:find ?e :in $ % ?v :where (named ?e ?v)]`,
+			rules:   `[[(named ?e ?v) [?e :user/name ?v]]]`,
+			entity:  []string{"?e"},
+			neither: []string{"?v"},
+		},
+		{
+			name:        "rule argument mapped through a rule the body invokes",
+			query:       `[:find ?e :in $ % ?t :where (at ?e ?t)]`,
+			rules:       `[[(at ?e ?t) (atx ?e ?t)] [(atx ?e ?t) [?e :user/name _ ?t]]]`,
+			entity:      []string{"?e"},
+			transaction: []string{"?t"},
+		},
+		{
+			name:    "rule argument mapped through a recursive rule's other rule",
+			query:   `[:find ?b :in $ % ?x :where (reach ?x ?b)]`,
+			rules:   `[[(reach ?a ?c) [?a :user/next ?b] (reach ?b ?c)] [(reach ?a ?b) [?a :user/next ?b]]]`,
+			entity:  []string{"?x"},
+			neither: []string{"?b"},
+		},
+		{
+			name:        "rule argument mapped under a subquery's own rule set",
+			query:       `[:find ?e :in $ % ?t :where [(q [:find ?x :in $ % ?tx :where (at ?x ?tx)] $ % ?t) [[?e]]]]`,
+			rules:       `[[(at ?e ?t) [?e :user/name _ ?t]]]`,
+			transaction: []string{"?t"},
+			neither:     []string{"?e"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -109,7 +147,14 @@ func TestPositionSymbols(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseQuery failed: %v", err)
 			}
-			entity, attr, transaction := query.PositionSymbols(q)
+			var rules *query.RuleSet
+			if tt.rules != "" {
+				rules, err = ParseRules(tt.rules)
+				if err != nil {
+					t.Fatalf("ParseRules failed: %v", err)
+				}
+			}
+			entity, attr, transaction := query.PositionSymbols(q, rules)
 			for _, sym := range tt.entity {
 				if !entity[datalog.NewSymbol(sym)] {
 					t.Errorf("expected %s in entity-position set, got %v", sym, entity)

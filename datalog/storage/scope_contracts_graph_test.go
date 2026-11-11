@@ -558,7 +558,8 @@ func TestFallbackPrefetch_AnswersAsTheScanPathAndFires(t *testing.T) {
 		{"a union whose required value never agrees", `[:find ?e ?n :where [?e :r ?n] [(+ ?n 10) ?m] (or-join [[?e ?m]] [?e :r ?m])]`, false, nil, nil, -1, -1},
 		{"a fallback whose output the subject carries", `[:find ?e ?v :where [?e :q ?v] (or-default-join [[?e] ?v] [?e :p ?v] [(ground :none) ?v])]`, false, nil, carried, 0, -1},
 	}
-	for _, mode := range legsFor(optimizerModes, prefetchOption, fusionOption) {
+	legs := legsFor(optimizerModes, prefetchOption, fusionOption)
+	for _, mode := range append(legsWhere(legs, func(m optimizerMode) bool { return m.prefetch }), legsWhere(legs, func(m optimizerMode) bool { return !m.prefetch })...) {
 		t.Run(mode.name, func(t *testing.T) {
 			var triggers atomic.Int32
 			opts := mode.plannerOptions()

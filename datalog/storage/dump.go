@@ -53,12 +53,14 @@ func (d *Database) replayDump(r io.ReadSeeker) error {
 	return d.replayEDN(r)
 }
 
-// completeReplay ends a replay whose datoms are in the store. The clock is
-// restored past maxElementID, the highest among them, so a later write orders
-// after the imported data; a zero maxElementID is a store holding no datoms,
-// whose clock stands. The cache is cleared once, whatever the replay's batches
-// and chunks touched, so no entry resolved before the import is served after
-// it.
+// completeReplay ends a replay, on every exit of one. The clock is restored
+// past maxElementID, the highest ElementID among the dump's datoms, so a later
+// write orders after the imported data; a zero maxElementID is a replay that
+// did not reach its end, or a dump holding no datoms, and the clock stands.
+// The cache is cleared once, whatever the replay's batches and chunks touched
+// and whether or not the replay reached its end, since the batches asserted
+// before a failure are in the store, so no entry resolved before the import
+// is served after it.
 func (d *Database) completeReplay(maxElementID datalog.ElementID) {
 	if !maxElementID.IsZero() {
 		d.clock.Restore(maxElementID)

@@ -165,7 +165,7 @@ func TestEmptyDataSubqueryBug_FullOHLCQuery(t *testing.T) {
 
 // TestEmptyDataSubqueryBug_WithOptions tests with explicit planner options
 func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -197,6 +197,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 			// Test with default options
 			t.Run("default options", func(t *testing.T) {
 				opts := mode.plannerOptions()
+				opts.Handler = recordingReach(t, nil)
 
 				q, err := parser.ParseQuery(queryStr)
 				assert.NoError(t, err)
@@ -225,6 +226,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 			// Test with default options (second run)
 			t.Run("default options (second run)", func(t *testing.T) {
 				opts := mode.plannerOptions()
+				opts.Handler = recordingReach(t, nil)
 
 				q, err := parser.ParseQuery(queryStr)
 				assert.NoError(t, err)

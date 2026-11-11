@@ -129,7 +129,9 @@ func TestTemporalHandle_NewExecutorWithOptions_UsesTemporalMode(t *testing.T) {
 
 			// As-of tx1: should see "Alice", not "Alice2".
 			asOf := db.AsOf(tx1ID)
-			exec := asOf.NewExecutorWithOptions(mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := asOf.NewExecutorWithOptions(popts)
 
 			q, err := parser.ParseQuery(`[:find ?name :where [?e :person/name ?name]]`)
 			require.NoError(t, err)
@@ -181,7 +183,9 @@ func TestNewExecutorWithOptions_HasSchemaAndCache(t *testing.T) {
 			// Query via NewExecutorWithOptions — should return both tags (add-wins).
 			// Before fix: bare matcher has no schema, treats :person/tags as
 			// cardinality-one, returns only the LWW winner (one tag).
-			exec := db.NewExecutorWithOptions(mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := db.NewExecutorWithOptions(popts)
 
 			q, err := parser.ParseQuery(`[:find ?tag :where [?e :person/tags ?tag]]`)
 			require.NoError(t, err)

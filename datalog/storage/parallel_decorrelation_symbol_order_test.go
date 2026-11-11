@@ -106,7 +106,7 @@ func TestStorageBackedParallelDecorrelationSymbolOrder(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -133,7 +133,9 @@ func TestStorageBackedParallelDecorrelationSymbolOrder(t *testing.T) {
 			}
 
 			matcher := db.Matcher()
-			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
 			tuples, err := executor.CollectTuples(exec.Execute(parsedQuery))
 			if err != nil {

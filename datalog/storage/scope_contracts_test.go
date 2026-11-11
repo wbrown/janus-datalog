@@ -764,7 +764,8 @@ func TestFallbackPrefetchAnswersAsTheScanPath(t *testing.T) {
 		want = append(want, fmt.Sprintf("%s %d", e.name, i))
 	}
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range legsFor(optimizerModes, prefetchOption, fusionOption) {
+	legs := legsFor(optimizerModes, prefetchOption, fusionOption)
+	for _, mode := range append(legsWhere(legs, func(m optimizerMode) bool { return m.prefetch }), legsWhere(legs, func(m optimizerMode) bool { return !m.prefetch })...) {
 		t.Run(mode.name, func(t *testing.T) {
 			var triggersMu sync.Mutex
 			var triggers []annotations.Event
@@ -826,7 +827,8 @@ func TestFallbackPrefetchAnswersAsTheScanPathForARequiredValue(t *testing.T) {
 		}
 	}
 	const text = `[:find ?e ?v :where [?e :t/n ?v] (or-default-join [[?e ?v]] [?e :t/a ?v] [?e :t/b ?v])]`
-	for _, mode := range legsFor(optimizerModes, prefetchOption) {
+	legs := legsFor(optimizerModes, prefetchOption)
+	for _, mode := range append(legsWhere(legs, func(m optimizerMode) bool { return m.prefetch }), legsWhere(legs, func(m optimizerMode) bool { return !m.prefetch })...) {
 		t.Run(mode.name, func(t *testing.T) {
 			var triggersMu sync.Mutex
 			var triggers []annotations.Event

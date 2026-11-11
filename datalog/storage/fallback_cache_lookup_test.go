@@ -82,7 +82,8 @@ func TestFallbackServesThePrefetchedWindowFromTheCache(t *testing.T) {
 		want = append(want, fmt.Sprintf("%s %d", e.name, i))
 	}
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range legsWhere(legsFor(optimizerModes, prefetchOption, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
+	legs := legsFor(optimizerModes, prefetchOption, fusionOption)
+	for _, mode := range append(legsWhere(legs, func(m optimizerMode) bool { return m.prefetch && !m.fusion }), legsWhere(legs, func(m optimizerMode) bool { return !m.prefetch && !m.fusion })...) {
 		t.Run(mode.name, func(t *testing.T) {
 			result, events := runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"))
 			require.ElementsMatch(t, want, result, "every subject tuple takes its :t/a, from the plan before the prefetch and from the cache after it")
@@ -121,7 +122,8 @@ func TestFallbackServesAnAttributeTheSchemaDoesNotDefineFromTheCache(t *testing.
 		want = append(want, fmt.Sprintf("%s %d", e.name, i))
 	}
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range legsWhere(legsFor(optimizerModes, prefetchOption, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
+	legs := legsFor(optimizerModes, prefetchOption, fusionOption)
+	for _, mode := range append(legsWhere(legs, func(m optimizerMode) bool { return m.prefetch && !m.fusion }), legsWhere(legs, func(m optimizerMode) bool { return !m.prefetch && !m.fusion })...) {
 		t.Run(mode.name, func(t *testing.T) {
 			result, events := runFallbackRecordingLookups(t, mode, s, facts, text, kw(":t/a"))
 			if !mode.prefetch {

@@ -53,7 +53,7 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -102,6 +102,7 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 			assert.NoError(t, err)
 
 			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
 
 			// Execute (like ExecuteQueryWithInputs but with custom options)
 			exec := db.NewExecutorWithOptions(popts)

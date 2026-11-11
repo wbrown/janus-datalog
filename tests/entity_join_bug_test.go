@@ -132,11 +132,11 @@ func testEntityJoinBug(t *testing.T, backend storage.Backend, mode optimizerMode
 
 	var joinEvents []annotations.Event
 	annotatedPopts := popts
-	annotatedPopts.Handler = func(event annotations.Event) {
+	annotatedPopts.Handler = recordingReach(t, func(event annotations.Event) {
 		if event.Name == annotations.JoinStrategy {
 			joinEvents = append(joinEvents, event)
 		}
-	}
+	})
 	annotatedMatcher := storage.NewPatternMatcherWithOptions(
 		db.Store(), executor.ExecutorOptionsFromPlanner(annotatedPopts))
 	annotatedExec := executor.NewExecutorWithOptions(annotatedMatcher, nil, annotatedPopts)

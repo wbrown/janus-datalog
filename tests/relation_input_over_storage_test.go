@@ -18,7 +18,7 @@ import (
 func TestRelationInputOverStorage(t *testing.T) {
 	for _, backend := range storage.AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {
-			for _, mode := range legsFor() {
+			for _, mode := range legsFor(fusionOption, aggregationOption) {
 				t.Run(mode.name, func(t *testing.T) {
 					testRelationInputOverStorage(t, backend, mode)
 				})
@@ -88,7 +88,9 @@ func testRelationInputOverStorage(t *testing.T, backend storage.Backend, mode op
 	inputRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
 	t.Run("five hundred input tuples", func(t *testing.T) {
-		exec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+		popts := mode.plannerOptions()
+		popts.Handler = recordingReach(t, nil)
+		exec := executor.NewExecutorWithOptions(matcher, nil, popts)
 
 		start := time.Now()
 		result, err := exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})

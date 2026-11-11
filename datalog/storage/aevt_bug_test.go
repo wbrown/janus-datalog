@@ -46,7 +46,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 		}
 	}
 
-	for _, mode := range legsFor(optimizerModes) {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -77,9 +77,9 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 			// wrapper cannot see them.
 			var events []annotations.Event
 			opts := mode.plannerOptions()
-			opts.Handler = func(event annotations.Event) {
+			opts.Handler = recordingReach(t, func(event annotations.Event) {
 				events = append(events, event)
-			}
+			})
 			matcher := NewPatternMatcherWithOptions(
 				db.Store(), executor.ExecutorOptionsFromPlanner(opts))
 

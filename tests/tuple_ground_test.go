@@ -72,7 +72,7 @@ func testTupleGroundBasic(t *testing.T, db *storage.Database) {
 //
 //	[(ground [0 0]) [?count ?total]])
 func TestTupleGroundOrFallback(t *testing.T) {
-	eachModeWith(t, testTupleGroundOrFallback)
+	eachModeWith(t, testTupleGroundOrFallback, algebraOption, sharingOption, fusionOption, aggregationOption)
 }
 
 func testTupleGroundOrFallback(t *testing.T, db *storage.Database, mode optimizerMode) {
@@ -142,9 +142,9 @@ func testTupleGroundOrFallback(t *testing.T, db *storage.Database, mode optimize
 	t.Logf("Parsed query: %s", q.String())
 
 	opts := mode.plannerOptions()
-	opts.Handler = func(event annotations.Event) {
+	opts.Handler = recordingReach(t, func(event annotations.Event) {
 		t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
-	}
+	})
 	matcher := storage.NewPatternMatcherWithOptions(
 		db.Store(), executor.ExecutorOptionsFromPlanner(opts))
 	matcher.SetSchema(s)

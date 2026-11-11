@@ -3190,9 +3190,27 @@ func validateValueStorable(a datalog.Keyword, v interface{}) error {
 // relations, nil when the query declares no %.
 func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}) ([]executor.Relation, *query.RuleSet, error) {
 	inputRelations := make([]executor.Relation, 0, len(inputs))
+
+	// The % input is resolved before the position sets are collected, since
+	// an invocation's arguments reach the positions its predicate's bodies
+	// occupy.
 	var rules *query.RuleSet
+	valueIdx := 0
+	for _, inputSpec := range q.In {
+		if _, ok := inputSpec.(query.DatabaseInput); ok {
+			continue
+		}
+		if _, ok := inputSpec.(query.RulesInput); ok && valueIdx < len(inputs) {
+			resolved, err := d.resolveRules(inputs[valueIdx])
+			if err != nil {
+				return nil, nil, err
+			}
+			rules = resolved
+		}
+		valueIdx++
+	}
 	inputIdx := 0
-	entityBound, attrBound, txBound := query.PositionSymbols(q)
+	entityBound, attrBound, txBound := query.PositionSymbols(q, rules)
 
 	for _, inputSpec := range q.In {
 		if _, ok := inputSpec.(query.DatabaseInput); ok {
@@ -3214,11 +3232,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 
 		switch spec := inputSpec.(type) {
 		case query.RulesInput:
-			resolved, err := d.resolveRules(input)
-			if err != nil {
-				return nil, nil, err
-			}
-			rules = resolved
+			// Resolved above, before the position sets were collected.
 			inputIdx++
 			continue
 

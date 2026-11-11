@@ -33,7 +33,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 	priceClose := datalog.NewKeyword(":price/close")
 	priceVolume := datalog.NewKeyword(":price/volume")
 
-	for _, mode := range legsFor(optimizerModes, aggregationOption) {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -79,7 +79,9 @@ func TestOHLCRealisticQueries(t *testing.T) {
 				t.Fatalf("Failed to commit price data: %v", err)
 			}
 
-			exec := executor.NewExecutorWithOptions(db.Matcher(), db, mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := executor.NewExecutorWithOptions(db.Matcher(), db, popts)
 
 			t.Run("Test1_CountTotalDatoms", func(t *testing.T) {
 				// Query: [:find (count ?e) :where [?e ?a ?v]]

@@ -50,9 +50,13 @@ func ValidateTransactionBinding(v interface{}) error {
 
 // PositionSymbols returns the sets of symbols that occupy the entity,
 // attribute and transaction positions of a data pattern anywhere in the query
-// — directly, inside not/or containers, or transitively as an argument to a
+// — directly, inside not/or containers, transitively as an argument to a
 // subquery whose corresponding :in parameter occupies such a position in the
-// nested query. One walk collects the three sets.
+// nested query, or as an argument to a rule invocation whose corresponding
+// head position a pattern of the predicate's bodies occupies, directly,
+// through a rule a body invokes, or through a subquery a body runs. rules is
+// the set the query's invocations resolve against, nil for a query declaring
+// no %. One walk collects the three sets.
 //
 // The entity position is inhabited only by Identity, the attribute position
 // only by Keyword and the transaction position only by ElementID, so input
@@ -60,15 +64,75 @@ func ValidateTransactionBinding(v interface{}) error {
 // input boundary turns a query defect into a loud error before execution;
 // interior data flow (values joined from other positions) is never validated
 // — a mistyped value there is the equality join's ordinary typed non-match.
-func PositionSymbols(q *Query) (entity, attribute, transaction map[Symbol]bool) {
+func PositionSymbols(q *Query, rules *RuleSet) (entity, attribute, transaction map[Symbol]bool) {
+	return positionSymbolsOf(q, predicatePositions(rules))
+}
+
+// positionSymbolsOf is PositionSymbols over a query under a rule set's
+// positionTyping table.
+func positionSymbolsOf(q *Query, typing map[Symbol]positionTyping) (entity, attribute, transaction map[Symbol]bool) {
 	entity = make(map[Symbol]bool)
 	attribute = make(map[Symbol]bool)
 	transaction = make(map[Symbol]bool)
-	positionSymbolsInClauses(q.Where, entity, attribute, transaction)
+	positionSymbolsInClauses(q.Where, typing, entity, attribute, transaction)
 	return entity, attribute, transaction
 }
 
-func positionSymbolsInClauses(clauses []Clause, entity, attribute, transaction map[Symbol]bool) {
+// positionTyping is, per head position of a predicate, whether a pattern of
+// the predicate's bodies occupies the entity, attribute or transaction
+// position with that position's head variable.
+type positionTyping struct {
+	entity, attribute, transaction []bool
+}
+
+// predicatePositions is each predicate's positionTyping under rules, nil for
+// no rules. It is the least fixpoint over the set: a body's invocation reads
+// the table as it stands, so a position reached through another predicate, or
+// through the predicate's own recursion, is marked once that predicate's pass
+// marks it, and the passes repeat until none marks a new position.
+func predicatePositions(rules *RuleSet) map[Symbol]positionTyping {
+	if rules == nil {
+		return nil
+	}
+	typing := make(map[Symbol]positionTyping)
+	for _, name := range rules.Predicates() {
+		head, _ := rules.Head(name)
+		typing[name] = positionTyping{
+			entity:      make([]bool, len(head)),
+			attribute:   make([]bool, len(head)),
+			transaction: make([]bool, len(head)),
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, name := range rules.Predicates() {
+			for _, rule := range rules.Rules(name) {
+				entity := make(map[Symbol]bool)
+				attribute := make(map[Symbol]bool)
+				transaction := make(map[Symbol]bool)
+				positionSymbolsInClauses(rule.Body, typing, entity, attribute, transaction)
+				t := typing[name]
+				for i, head := range rule.Head {
+					if entity[head] && !t.entity[i] {
+						t.entity[i] = true
+						changed = true
+					}
+					if attribute[head] && !t.attribute[i] {
+						t.attribute[i] = true
+						changed = true
+					}
+					if transaction[head] && !t.transaction[i] {
+						t.transaction[i] = true
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	return typing
+}
+
+func positionSymbolsInClauses(clauses []Clause, typing map[Symbol]positionTyping, entity, attribute, transaction map[Symbol]bool) {
 	WalkClauses(clauses, func(clause Clause) bool {
 		switch c := clause.(type) {
 		case *DataPattern:
@@ -84,21 +148,50 @@ func positionSymbolsInClauses(clauses []Clause, entity, attribute, transaction m
 		case *SubqueryPattern:
 			// The subquery's inner positions map back through its argument
 			// list, not through a direct walk of its :where.
-			positionSymbolsFromSubquery(*c, entity, attribute, transaction)
+			positionSymbolsFromSubquery(*c, typing, entity, attribute, transaction)
+		case *RuleInvocation:
+			positionSymbolsFromInvocation(c, typing, entity, attribute, transaction)
 		}
 		return true
 	})
+}
+
+// positionSymbolsFromInvocation maps the predicate's typed head positions
+// onto the invocation's variable arguments: an argument at a position a
+// pattern of the predicate's bodies occupies is itself bound to that
+// position. A predicate the table does not hold, and an argument past the
+// head, map nothing; the invocation check refuses both when the query runs.
+func positionSymbolsFromInvocation(inv *RuleInvocation, typing map[Symbol]positionTyping, entity, attribute, transaction map[Symbol]bool) {
+	t, ok := typing[inv.Name]
+	if !ok {
+		return
+	}
+	for i := 0; i < len(inv.Args) && i < len(t.entity); i++ {
+		v, ok := inv.Args[i].(Variable)
+		if !ok {
+			continue
+		}
+		if t.entity[i] {
+			entity[v.Name] = true
+		}
+		if t.attribute[i] {
+			attribute[v.Name] = true
+		}
+		if t.transaction[i] {
+			transaction[v.Name] = true
+		}
+	}
 }
 
 // positionSymbolsFromSubquery maps the nested query's entity-, attribute- and
 // transaction-position :in parameters back onto the outer argument symbols:
 // an outer symbol passed into an inner typed-position parameter is itself
 // bound to that position.
-func positionSymbolsFromSubquery(p SubqueryPattern, entity, attribute, transaction map[Symbol]bool) {
+func positionSymbolsFromSubquery(p SubqueryPattern, typing map[Symbol]positionTyping, entity, attribute, transaction map[Symbol]bool) {
 	if p.Query == nil {
 		return
 	}
-	innerEntity, innerAttribute, innerTransaction := PositionSymbols(p.Query)
+	innerEntity, innerAttribute, innerTransaction := positionSymbolsOf(p.Query, typing)
 	if len(innerEntity) == 0 && len(innerAttribute) == 0 && len(innerTransaction) == 0 {
 		return
 	}

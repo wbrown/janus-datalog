@@ -41,6 +41,7 @@ func TestDatabasePlanCache(t *testing.T) {
 
 			// Test 1: Create multiple executors - they should share the cache
 			planOpts := mode.plannerOptions()
+			planOpts.Handler = recordingReach(t, nil)
 			exec1 := db.NewExecutorWithOptions(planOpts)
 			exec2 := db.NewExecutorWithOptions(planOpts)
 
@@ -187,7 +188,9 @@ func TestDatabaseWithoutCache(t *testing.T) {
 			db.SetPlanCache(nil)
 
 			// Create executor - should work without cache
-			exec := db.NewExecutorWithOptions(mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := db.NewExecutorWithOptions(popts)
 
 			// Execute should work without cache
 			_, err := exec.Execute(q)
@@ -217,9 +220,11 @@ func TestExecutorCreationOverhead(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create many executors - should be fast and low memory
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
 			executors := make([]*executor.Executor, 1000)
 			for i := 0; i < 1000; i++ {
-				executors[i] = db.NewExecutorWithOptions(mode.plannerOptions())
+				executors[i] = db.NewExecutorWithOptions(popts)
 			}
 
 			// All should share the same cache (we can't directly compare function pointers,
