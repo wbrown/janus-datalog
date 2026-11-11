@@ -99,6 +99,33 @@ func TestPrepare_RefusesAnInnerLimitAndAnInnerPull(t *testing.T) {
 	})
 }
 
+func TestPrepare_RefusesANonVectorConstantAtACollectionParameter(t *testing.T) {
+	dollar := Constant{Value: datalog.SymDollar}
+	inner := findIn([]string{"?y"}, []InputSpec{CollectionInput{Symbol: sym("?x")}}, scopePattern("?x", "page/next", "?y"))
+	outerOver := func(in []InputSpec, arg PatternElement) *Query {
+		return findIn([]string{"?y"}, in, callOver(inner, CollectionBinding{Variable: sym("?y")}, dollar, arg))
+	}
+
+	t.Run("a string constant is refused naming the argument and the parameter", func(t *testing.T) {
+		_, err := Prepare(outerOver(nil, Constant{Value: "x"}), nil)
+		if err == nil || !strings.Contains(err.Error(), `argument 2 is "x", and the collection parameter [?x ...] takes a vector`) {
+			t.Fatalf("Prepare = %v, want the refusal of a non-vector constant at a collection parameter", err)
+		}
+	})
+
+	t.Run("a vector literal is accepted", func(t *testing.T) {
+		if _, err := Prepare(outerOver(nil, VectorConstant{Values: []interface{}{"x"}}), nil); err != nil {
+			t.Fatalf("Prepare = %v, want a vector literal at a collection parameter accepted", err)
+		}
+	})
+
+	t.Run("a variable is accepted", func(t *testing.T) {
+		if _, err := Prepare(outerOver([]InputSpec{ScalarInput{Symbol: sym("?w")}}, Variable{Name: sym("?w")}), nil); err != nil {
+			t.Fatalf("Prepare = %v, want a variable at a collection parameter accepted", err)
+		}
+	})
+}
+
 func TestPrepare_RunsTheOrderByRule(t *testing.T) {
 	t.Run("a sort key nothing binds is refused", func(t *testing.T) {
 		q := findIn([]string{"?e"}, nil, scopePattern("?e", "page/kind", "_"))

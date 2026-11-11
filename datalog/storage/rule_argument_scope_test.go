@@ -150,6 +150,15 @@ func TestAConstantArgumentOfAnotherTypeAtATypedPositionIsRefused(t *testing.T) {
 					{"an identity at the attribute position", `[:find ?v :in $ % :where (has #id "item:first" ?v)]`, `[[(has ?a ?v) [?e ?a ?v]]]`, "attribute position"},
 					{"a string at the transaction position of a body's own invocation", `[:find ?e :in $ % :where (r ?e)]`, `[[(r ?e) (at ?e "x")] [(at ?e ?t) [?e :item/one "x" ?t]]]`, "transaction position"},
 					{"a string at the transaction position through a subquery's argument", `[:find ?e :in $ % :where [(q [:find ?x :in $ ?tx :where [?x :item/one "x" ?tx]] $ "x") [[?e]]]]`, `[[(at ?e ?t) [?e :item/one "x" ?t]]]`, "transaction position"},
+					{"a string at the transaction position of a predicate reached through a chain of invocations", `[:find ?e :in $ % :where (a ?e)]`, `[[(a ?e) (wr ?e)] [(wr ?e) (at ?e "x")] [(at ?e ?t) [?e :item/one "x" ?t]]]`, "transaction position"},
+					{"a string at the transaction position of an invocation under a not-join", `[:find ?e :in $ % :where [?e :item/count _] (not-join [?e] (at ?e "x"))]`, `[[(at ?e ?t) [?e :item/one "x" ?t]]]`, "transaction position"},
+					{"a string at the transaction position of an invocation under a subquery's own %", `[:find ?e :in $ % :where [(q [:find ?x :in $ % :where (at ?x "x")] $ %) [[?e]]]]`, `[[(at ?e ?t) [?e :item/one "x" ?t]]]`, "transaction position"},
+					{"a string at the transaction position of a predicate with a required position", `[:find ?e :in $ % :where (at "x" ?e)]`, `[[(at [?t] ?e) [?e :item/one "x" ?t]]]`, "transaction position"},
+					{"a string at the transaction position through a subquery's tuple parameter", `[:find ?e :in $ % :where [(q [:find ?x :in $ [?tx ?d] :where [?x :item/one ?d ?tx]] $ "x" 1) [[?e]]]]`, `[[(at ?e ?t) [?e :item/one "x" ?t]]]`, "transaction position"},
+					{"a string at the transaction position through a subquery's relation parameter", `[:find ?e :in $ % :where [(q [:find ?x :in $ [[?tx ?d]] :where [?x :item/one ?d ?tx]] $ "x" 1) [[?e]]]]`, `[[(at ?e ?t) [?e :item/one "x" ?t]]]`, "transaction position"},
+					{"a string at the transaction position through a subquery's scalar parameter declared after a tuple parameter", `[:find ?e :in $ % :where [(q [:find ?x :in $ [?a ?d] ?tx :where [?x :item/one ?a ?tx] [?x :item/count ?d]] $ "x" 5 "x") [[?e]]]]`, `[[(at ?e ?t) [?e :item/one "x" ?t]]]`, "transaction position"},
+					{"a string at the transaction position through a subquery's tuple parameter declared after its rules marker", `[:find ?e :in $ % :where [(q [:find ?x :in $ % [?tx ?d] :where [?x :item/one ?d ?tx]] $ % "x" 1) [[?e]]]]`, `[[(at ?e ?t) [?e :item/one "x" ?t]]]`, "transaction position"},
+					{"a string at the transaction position through a subquery's tuple parameter in a rule body", `[:find ?e :in $ % :where (r ?e)]`, `[[(r ?e) [(q [:find ?x :in $ [?tx ?d] :where [?x :item/one ?d ?tx]] $ "x" 1) [[?e]]]]]`, "transaction position"},
 				} {
 					_, err := executor.CollectTuples(view.db.Query(c.query, c.rules))
 					require.Error(t, err, "%s, %s: a constant of another type at a typed position is refused at the query's entry", view.name, c.name)
@@ -161,9 +170,60 @@ func TestAConstantArgumentOfAnotherTypeAtATypedPositionIsRefused(t *testing.T) {
 			require.NoError(t, err, "a constant at a value-only position is not refused")
 			assert.Empty(t, valued, "the integer matches no :item/one value")
 
+			unreached := `[[(g ?e) [?e :item/count 5]] [(wr ?e) (at ?e "x")] [(at ?e ?t) [?e :item/one "x" ?t]]]`
+			for _, c := range []struct {
+				name  string
+				query string
+			}{
+				{"a query invoking another predicate", `[:find ?e :in $ % :where (g ?e)]`},
+				{"a query invoking no predicate", `[:find ?e :in $ % :where [?e :item/count 5]]`},
+			} {
+				answered, err := executor.CollectTuples(db.Query(c.query, unreached))
+				require.NoError(t, err, "%s: a constant in a predicate the query does not invoke is not read", c.name)
+				require.Equal(t, [][]interface{}{{first}}, answered, "%s: the query answers the facts", c.name)
+			}
+
 			answered, err := executor.CollectTuples(db.Query(fmt.Sprintf(`[:find ?e :in $ %% :where (at ?e %s)]`, eid), `[[(at ?e ?t) [?e :item/one "x" ?t]]]`))
 			require.NoError(t, err, "an ElementID constant at the transaction position through a rule argument")
 			require.Equal(t, [][]interface{}{{first}}, answered, "the #eid argument answers the assertion it names")
+
+			answered, err = executor.CollectTuples(db.Query(fmt.Sprintf(`[:find ?e :in $ %% :where [(q [:find ?x :in $ [?tx ?d] :where [?x :item/one ?d ?tx]] $ %s "x") [[?e]]]]`, eid), `[[(at ?e ?t) [?e :item/one "x" ?t]]]`))
+			require.NoError(t, err, "an ElementID constant at the transaction position through a subquery's tuple parameter")
+			require.Equal(t, [][]interface{}{{first}}, answered, "the #eid argument through the tuple parameter answers the assertion it names")
+		})
+	}
+}
+
+// A subquery's collection parameter takes a vector. A call passing a constant
+// of another shape there is refused at the query's entry, naming the
+// argument and the parameter, whatever position the parameter's symbol
+// occupies in the inner query, in every view. A variable argument bound to a
+// value of another shape is refused when the call's binding runs.
+func TestANonVectorConstantAtASubquerysCollectionParameterIsRefused(t *testing.T) {
+	for _, mode := range legsFor(optimizerModes) {
+		t.Run(mode.name, func(t *testing.T) {
+			db, at := openTransactionTypingDB(t, mode, false)
+			for _, view := range []struct {
+				name string
+				db   *Database
+			}{{"latest", db}, {"History", db.History()}, {"as-of", db.AsOf(at)}} {
+				for _, c := range []struct {
+					name  string
+					query string
+				}{
+					{"the symbol at a value position", `[:find ?e :where [(q [:find ?x :in $ [?v ...] :where [?x :item/one ?v]] $ "x") [[?e]]]]`},
+					{"the symbol at the transaction position", `[:find ?e :where [(q [:find ?x :in $ [?tx ...] :where [?x :item/one "x" ?tx]] $ "x") [[?e]]]]`},
+				} {
+					_, err := executor.CollectTuples(view.db.Query(c.query))
+					require.Error(t, err, "%s, %s: a constant of another shape than a vector at a collection parameter is refused", view.name, c.name)
+					assert.ErrorContains(t, err, `argument 2 is "x", and the collection parameter`, "%s, %s: the refusal names the argument", view.name, c.name)
+					assert.ErrorContains(t, err, "takes a vector", "%s, %s: the refusal names the parameter's shape", view.name, c.name)
+				}
+
+				_, err := executor.CollectTuples(view.db.Query(`[:find ?e :in $ ?w :where [(q [:find ?x :in $ [?v ...] :where [?x :item/one ?v]] $ ?w) [[?e]]]]`, "x"))
+				require.Error(t, err, "%s: a variable bound to a string at a collection parameter is refused when the binding runs", view.name)
+				assert.ErrorContains(t, err, "collection binding [?v ...] requires a vector result, got string", view.name)
+			}
 		})
 	}
 }

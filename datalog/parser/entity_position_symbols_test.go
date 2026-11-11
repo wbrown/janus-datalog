@@ -213,6 +213,59 @@ func TestPositionSymbols(t *testing.T) {
 			query:   `[:find ?e :where [(q [:find ?x :in $ ?tx :where [?x :user/name _ ?tx]] $ "x") [[?e]]]]`,
 			refused: "transaction position",
 		},
+		{
+			name:    "a constant of another type at a subquery's tuple parameter's symbol is refused",
+			query:   `[:find ?e :where [(q [:find ?x :in $ [?tx ?d] :where [?x :user/name ?d ?tx]] $ "x" 1) [[?e]]]]`,
+			refused: "transaction position",
+		},
+		{
+			name:    "a constant of another type at a subquery's relation parameter's symbol is refused",
+			query:   `[:find ?e :where [(q [:find ?x :in $ [[?tx ?d]] :where [?x :user/name ?d ?tx]] $ "x" 1) [[?e]]]]`,
+			refused: "transaction position",
+		},
+		{
+			name:    "a constant of another type at a subquery's tuple parameter of one symbol is refused",
+			query:   `[:find ?e :where [(q [:find ?x :in $ [?tx] :where [?x :user/name _ ?tx]] $ "x") [[?e]]]]`,
+			refused: "transaction position",
+		},
+		{
+			name:    "a constant of another type in a subquery's collection parameter declared after a tuple parameter is refused",
+			query:   `[:find ?e :where [(q [:find ?x :in $ [?a ?b] [?tx ...] :where [?x :user/name ?a ?tx] [?x :user/age ?b]] $ 1 2 ["x"]) [[?e]]]]`,
+			refused: "transaction position",
+		},
+		{
+			name:        "subquery argument at a tuple parameter's symbol mapped to the inner transaction position",
+			query:       `[:find ?e :in $ ?when :where [(q [:find ?x :in $ [?tx ?d] :where [?x :user/name ?d ?tx]] $ ?when 1) [[?e]]]]`,
+			transaction: []string{"?when"},
+			neither:     []string{"?e"},
+		},
+		{
+			name:    "a constant at a subquery's tuple parameter's symbol feeding only a value position is not refused",
+			query:   `[:find ?e :where [(q [:find ?x :in $ [?v ?d] :where [?x :user/name ?v] [?x :user/age ?d]] $ "x" 1) [[?e]]]]`,
+			neither: []string{"?e"},
+		},
+		{
+			name:   "a constant of another type in a predicate the query does not invoke is not read",
+			query:  `[:find ?o :in $ % :where (g ?o)]`,
+			rules:  `[[(g ?o) [?o :user/age 5]] [(wr ?o) (at ?o "x")] [(at ?o ?t) [?o :user/name _ ?t]]]`,
+			entity: []string{"?o"},
+		},
+		{
+			name:    "a constant of another type in a predicate the query reaches through a chain of invocations is refused",
+			query:   `[:find ?o :in $ % :where (a ?o)]`,
+			rules:   `[[(a ?o) (wr ?o)] [(wr ?o) (at ?o "x")] [(at ?o ?t) [?o :user/name _ ?t]]]`,
+			refused: "transaction position",
+		},
+		{
+			name:    "a user variable in the unify namespace at the entity position is refused as the engine's namespace",
+			query:   `[:find ?v :in $ ?foo :where [?unify/foo.1 :user/name ?v] [?e :user/name ?foo]]`,
+			refused: "which the engine mints into",
+		},
+		{
+			name:    "a user variable with its own namespace under unify at the transaction position is refused as the engine's namespace",
+			query:   `[:find ?v :in $ ?mine/foo :where [?e :user/name ?v ?unify.mine/foo.1] [?e :user/name ?mine/foo]]`,
+			refused: "which the engine mints into",
+		},
 	}
 
 	for _, tt := range tests {

@@ -202,11 +202,13 @@ func (o *OrDefaultJoinClause) Validate() error {
 // no pull, since pull output is result presentation and no relational value,
 // where the subquery's result enters the scope's joins and deduplication,
 // which operate on values (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md);
-// the call passes one input per position of the inner :in; and the binding
-// form's arity matches the inner :find's. Each is a property of the clause
-// text alone, so the parser, the qb builder and Prepare enforce it through
-// ValidateQuery with one message
-// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md goal 5 and §6).
+// the call passes one input per position of the inner :in; a constant the
+// call passes at a collection input's position is a vector, as VectorElements
+// reads one, since the input binds one tuple per element and a value of
+// another shape binds nothing; and the binding form's arity matches the
+// inner :find's. Each is a property of the clause text alone, so the parser,
+// the qb builder and Prepare enforce it through ValidateQuery with one
+// message (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md goal 5 and §6).
 func (p *SubqueryPattern) Validate() error {
 	if p.Query == nil {
 		return fmt.Errorf("subquery has no inner query")
@@ -227,6 +229,19 @@ func (p *SubqueryPattern) Validate() error {
 	}
 	if arity := InputArity(p.Query.In); len(p.Inputs) != arity {
 		return fmt.Errorf("subquery passes %d input(s), but its inner :in binds %d value(s): one per source, %%, scalar and collection input, one per symbol of a tuple or relation input, and one for the $ an omitted :in defaults to", len(p.Inputs), arity)
+	}
+	for i, at := range InputPositions(p.Query.In) {
+		collection, isCollection := at.Spec.(CollectionInput)
+		if !isCollection {
+			continue
+		}
+		constant, isConstant := p.Inputs[i].(Constant)
+		if !isConstant {
+			continue
+		}
+		if _, isVector := VectorElements(constant.Value); !isVector {
+			return fmt.Errorf("subquery argument %d is %s, and the collection parameter %s takes a vector: pass a vector literal, or a variable bound to one", i+1, constant, collection)
+		}
 	}
 	arity := len(p.Query.Find)
 	switch b := p.Binding.(type) {

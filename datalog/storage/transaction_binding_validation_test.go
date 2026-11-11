@@ -113,11 +113,39 @@ func TestATransactionInputOfAnotherTypeIsRefusedAtTheQuerysEntry(t *testing.T) {
 				{"a scalar input", `[:find ?e :in $ ?t :where [?e ?a "x" ?t]]`, int64(at.Lamport)},
 				{"a collection input", `[:find ?e :in $ [?t ...] :where [?e ?a "x" ?t]]`, []interface{}{at, int64(at.Lamport)}},
 				{"a subquery's argument", `[:find ?n :in $ ?t :where [(q [:find (count ?x) :in $ ?tx :where [?x ?a "x" ?tx]] $ ?t) [[?n]]]]`, int64(at.Lamport)},
+				{"a subquery's argument at a tuple parameter's symbol", `[:find ?n :in $ ?t :where [(q [:find (count ?x) :in $ [?tx ?v] :where [?x ?a ?v ?tx]] $ ?t "x") [[?n]]]]`, int64(at.Lamport)},
 			} {
 				_, err := executor.CollectTuples(db.Query(c.query, c.arg))
 				require.Error(t, err, "%s that is no ElementID at the transaction position is refused", c.name)
 				assert.ErrorContains(t, err, "input ?t", c.name)
 				assert.ErrorContains(t, err, "transaction position", c.name)
+			}
+		})
+	}
+}
+
+// A query naming a variable in a namespace the engine mints into is refused
+// as *query.EngineNamespaceError naming the variable, whatever position the
+// variable stands at and whatever the inputs are, never by the type of an
+// input the variable is read as the unified occurrence of.
+func TestAUserVariableInAnEngineNamespaceIsRefusedAsTheEngineNamespaceError(t *testing.T) {
+	for _, mode := range legsFor(optimizerModes) {
+		t.Run(mode.name, func(t *testing.T) {
+			db, _ := openTransactionTypingDB(t, mode, false)
+			for _, c := range []struct {
+				name     string
+				query    string
+				variable string
+			}{
+				{"at the entity position", `[:find ?v :in $ ?foo :where [?unify/foo.1 :item/one ?v] [?e :item/one ?foo]]`, "?unify/foo.1"},
+				{"at the transaction position under its own namespace", `[:find ?v :in $ ?mine/foo :where [?e :item/one ?v ?unify.mine/foo.1] [?e :item/one ?mine/foo]]`, "?unify.mine/foo.1"},
+				{"at a value position alone", `[:find ?e :in $ ?foo :where [?e :item/one ?unify/foo.1] [?e :item/one ?foo]]`, "?unify/foo.1"},
+				{"at the entity position of a subquery's inner query", `[:find ?n :in $ ?foo :where [(q [:find (count ?v) :in $ ?x :where [?unify/x.1 :item/one ?v] [?e :item/one ?x]] $ ?foo) [[?n]]]]`, "?unify/x.1"},
+			} {
+				_, err := executor.CollectTuples(db.Query(c.query, "x"))
+				var engine *query.EngineNamespaceError
+				require.ErrorAs(t, err, &engine, "%s: a variable in an engine namespace is refused as such, got %v", c.name, err)
+				assert.Equal(t, datalog.NewSymbol(c.variable), engine.Variable, c.name)
 			}
 		})
 	}

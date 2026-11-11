@@ -61,7 +61,9 @@ func ValidateTransactionBinding(v interface{}) error {
 // head position a pattern of the predicate's bodies occupies, directly,
 // through a rule a body invokes, or through a subquery a body runs. rules is
 // the set the query's invocations resolve against, nil for a query declaring
-// no %. One walk collects the three sets.
+// no %. The walk reads the query's own text and the bodies of the predicates
+// its invocations reach at any depth, the text the query evaluates, and no
+// other rule of the set. One walk collects the three sets.
 //
 // The entity position is inhabited only by Identity, the attribute position
 // only by Keyword and the transaction position only by ElementID, so input
@@ -72,9 +74,20 @@ func ValidateTransactionBinding(v interface{}) error {
 // constant written as a subquery's or an invocation's argument binds into
 // the position its parameter or head occupies as an input does, so the walk
 // refuses one of another type through the position's validator, naming the
-// clause and the argument; that refusal is the error.
+// clause and the argument; that refusal is the error. A query naming a
+// variable in a namespace the engine mints into is refused first, as
+// *EngineNamespaceError, the refusal Prepare makes: the walk reads a unified
+// occurrence as its origin, and a variable spelled as one in the query's own
+// text is the user's, not the engine's.
 func PositionSymbols(q *Query, rules *RuleSet) (entity, attribute, transaction map[Symbol]bool, err error) {
-	typing, err := predicatePositions(rules)
+	if v := engineVariable(q, rules); v != nil {
+		return nil, nil, nil, &EngineNamespaceError{Variable: v}
+	}
+	var roots []Symbol
+	for _, inv := range Invocations(q.Where) {
+		roots = append(roots, inv.Name)
+	}
+	typing, err := predicatePositions(rules, roots)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -100,19 +113,25 @@ type positionTyping struct {
 	entity, attribute, transaction []bool
 }
 
-// predicatePositions is each predicate's positionTyping under rules, nil for
-// no rules. It is the least fixpoint over the set: a body's invocation reads
-// the table as it stands, so a position reached through another predicate, or
-// through the predicate's own recursion, is marked once that predicate's pass
-// marks it, and the passes repeat until none marks a new position. A constant
-// argument of another type at a position the table holds typed is refused as
-// a pass meets it, naming the rule.
-func predicatePositions(rules *RuleSet) (map[Symbol]positionTyping, error) {
+// predicatePositions is the positionTyping of each predicate the roots reach
+// under rules (RuleSet.reach), the predicates whose bodies a query invoking
+// the roots evaluates; nil for no rules. It is the least fixpoint over them:
+// a body's invocation reads the table as it stands, so a position reached
+// through another predicate, or through the predicate's own recursion, is
+// marked once that predicate's pass marks it, and the passes repeat until
+// none marks a new position. A constant argument of another type at a
+// position the table holds typed is refused as a pass meets it, naming the
+// rule.
+func predicatePositions(rules *RuleSet, roots []Symbol) (map[Symbol]positionTyping, error) {
 	if rules == nil {
 		return nil, nil
 	}
-	typing := make(map[Symbol]positionTyping)
+	reached := rules.reach(roots)
+	typing := make(map[Symbol]positionTyping, len(reached))
 	for _, name := range rules.Predicates() {
+		if !reached[name] {
+			continue
+		}
 		head, _ := rules.Head(name)
 		typing[name] = positionTyping{
 			entity:      make([]bool, len(head)),
@@ -123,6 +142,9 @@ func predicatePositions(rules *RuleSet) (map[Symbol]positionTyping, error) {
 	for changed := true; changed; {
 		changed = false
 		for _, name := range rules.Predicates() {
+			if !reached[name] {
+				continue
+			}
 			for _, rule := range rules.Rules(name) {
 				entity := make(map[Symbol]bool)
 				attribute := make(map[Symbol]bool)
@@ -303,13 +325,18 @@ func positionSymbolsFromInvocation(inv *RuleInvocation, typing map[Symbol]positi
 }
 
 // positionSymbolsFromSubquery maps the nested query's entity-, attribute- and
-// transaction-position :in parameters back onto the outer arguments: an
-// outer symbol passed into an inner typed-position parameter is itself bound
-// to that position, and a constant passed into one is refused when it is not
-// of the position's type, naming the subquery and the argument counted from
-// one. A collection parameter binds a vector literal's elements one each and
-// any other constant as its one element, so each is read against the
-// parameter's positions.
+// transaction-position :in symbols back onto the call's arguments, aligned by
+// the inner :in's call positions (InputPositions): one per source, rules,
+// scalar and collection entry and one per symbol of a tuple or relation
+// entry. An outer symbol passed at a position whose symbol occupies a typed
+// position is itself bound to that position, and a constant passed there is
+// refused when it is not of the position's type, naming the subquery and the
+// argument counted from one. A collection parameter binds a vector literal's
+// elements one each, so each is read against the parameter's positions, and
+// a constant of another shape there binds nothing and is read as nothing,
+// since SubqueryPattern.Validate refuses the call. A call passing other than
+// one argument per position maps the positions it has arguments for;
+// SubqueryPattern.Validate refuses the call when the query runs.
 func positionSymbolsFromSubquery(p SubqueryPattern, typing map[Symbol]positionTyping, entity, attribute, transaction map[Symbol]bool) error {
 	if p.Query == nil {
 		return nil
@@ -318,61 +345,21 @@ func positionSymbolsFromSubquery(p SubqueryPattern, typing map[Symbol]positionTy
 	if err != nil {
 		return err
 	}
-	if len(innerEntity) == 0 && len(innerAttribute) == 0 && len(innerTransaction) == 0 {
-		return nil
-	}
-
-	// The argument list may or may not carry the database markers alongside
-	// the value parameters; detect which alignment the arguments use. Any
-	// other shape is malformed and maps nothing — the analysis is
-	// conservative, and an unmapped symbol degrades to the interior typed
-	// non-match rather than the boundary error.
-	dbCount := 0
-	for _, spec := range p.Query.In {
-		if _, ok := spec.(DatabaseInput); ok {
-			dbCount++
-		}
-	}
-	includesDBArgs := len(p.Inputs) == len(p.Query.In)
-	if !includesDBArgs && len(p.Inputs) != len(p.Query.In)-dbCount {
-		return nil
-	}
-
-	argIdx := 0
-	for _, spec := range p.Query.In {
-		if _, ok := spec.(DatabaseInput); ok {
-			if includesDBArgs {
-				argIdx++
-			}
+	positions := InputPositions(p.Query.In)
+	for i := 0; i < len(positions) && i < len(p.Inputs); i++ {
+		inner := positions[i].Symbol
+		if inner == nil {
 			continue
 		}
-		if argIdx >= len(p.Inputs) {
-			return nil
-		}
-		arg := p.Inputs[argIdx]
-		argIdx++
-
-		var innerSym Symbol
-		var elements bool
-		switch s := spec.(type) {
-		case ScalarInput:
-			innerSym = s.Symbol
-		case CollectionInput:
-			innerSym = s.Symbol
-			elements = true
-		default:
-			// Tuple/relation parameters receive a single outer value that is
-			// itself a tuple or relation, never an entity or attribute.
-			continue
-		}
+		arg := p.Inputs[i]
 		if v, ok := arg.(Variable); ok {
-			if innerEntity[innerSym] {
+			if innerEntity[inner] {
 				entity[v.Name] = true
 			}
-			if innerAttribute[innerSym] {
+			if innerAttribute[inner] {
 				attribute[v.Name] = true
 			}
-			if innerTransaction[innerSym] {
+			if innerTransaction[inner] {
 				transaction[v.Name] = true
 			}
 			continue
@@ -382,12 +369,16 @@ func positionSymbolsFromSubquery(p SubqueryPattern, typing map[Symbol]positionTy
 			continue
 		}
 		bound := []interface{}{value}
-		if vector, isVector := arg.(VectorConstant); isVector && elements {
+		if _, collection := positions[i].Spec.(CollectionInput); collection {
+			vector, isVector := arg.(VectorConstant)
+			if !isVector {
+				continue
+			}
 			bound = vector.Values
 		}
 		for _, element := range bound {
-			if err := validatePositionConstant(innerEntity[innerSym], innerAttribute[innerSym], innerTransaction[innerSym], element); err != nil {
-				return fmt.Errorf("%s: argument %d: %w", p, argIdx, err)
+			if err := validatePositionConstant(innerEntity[inner], innerAttribute[inner], innerTransaction[inner], element); err != nil {
+				return fmt.Errorf("%s: argument %d: %w", p, i+1, err)
 			}
 		}
 	}

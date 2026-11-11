@@ -424,6 +424,12 @@ func TestParseSubqueryErrors(t *testing.T) {
 			         :where [(foo [:find ?y :where [?e :foo ?y]] ?s) ?x]]`,
 			error: "unsupported function: foo",
 		},
+		{
+			name: "a non-vector constant at a collection parameter",
+			input: `[:find ?x
+			         :where [(q [:find ?y :in $ [?v ...] :where [?e :foo ?v] [?e :bar ?y]] $ "x") [[?x]]]]`,
+			error: `argument 2 is "x", and the collection parameter [?v ...] takes a vector`,
+		},
 	}
 
 	for _, tt := range tests {
