@@ -122,18 +122,21 @@ func (d *Database) TruncateTo(name string) error {
 		d.cache.BeginInFlight(keys)
 	}
 
-	if _, err := d.store.DeleteDatoms(datoms); err != nil {
-		if d.cache != nil {
-			d.cache.InvalidateRewind(keys) // close the window even on failure
-		}
-		return fmt.Errorf("TruncateTo %q: delete: %w", name, err)
+	_, deleteErr := d.store.DeleteDatoms(datoms)
+	if deleteErr == nil {
+		// No writer holds a Lamport above markerMax now; the rewind is collision-free.
+		d.clock.Restore(markerMax)
 	}
 
-	// No writer holds a Lamport above markerMax now; the rewind is collision-free.
-	d.clock.Restore(markerMax)
-
+	// The window closes whether or not the delete succeeded, and every entry
+	// under a unique attribute among the erased datoms drops with the erased
+	// keys: those entries were resolved from claims the rewind erased.
 	if d.cache != nil {
 		d.cache.InvalidateRewind(keys)
+		d.invalidateUniqueAttributesAmong(keys)
+	}
+	if deleteErr != nil {
+		return fmt.Errorf("TruncateTo %q: delete: %w", name, deleteErr)
 	}
 
 	// The database runs with the declarations that survive the rewind, until
@@ -146,8 +149,7 @@ func touchedCacheKeys(datoms []datalog.Datom) []CacheKey {
 	seen := make(map[CacheKey]struct{}, len(datoms))
 	keys := make([]CacheKey, 0, len(datoms))
 	for i := range datoms {
-		sd := ToStorageDatom(datoms[i])
-		k := CacheKey{E: sd.E, A: sd.A}
+		k := CacheKey{E: datoms[i].E, A: datoms[i].A}
 		if _, ok := seen[k]; ok {
 			continue
 		}

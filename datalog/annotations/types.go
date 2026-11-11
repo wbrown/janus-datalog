@@ -141,8 +141,9 @@ const (
 	// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.3, §4.9), reporting
 	// under every form, each event carrying the form under KeyForm.
 	//
-	// ScopeSubjectTuple is one subject tuple read into a window, rendered;
-	// ScopeSubjectExhausted is the subject read to its end; ScopeWindow is
+	// ScopeSubjectTuple is one subject tuple read into a window, carried as
+	// the tuple the window holds; ScopeSubjectExhausted is the subject read
+	// to its end; ScopeWindow is
 	// one window of the subject the branches run over: its ordinal, counted
 	// from one, its tuple count, and the count of distinct keys it projects
 	// onto the header's required run; ScopeBranchBuild is one window's build
@@ -186,8 +187,6 @@ const (
 	AlgebraDecorrelateApply = "algebra/decorrelate-apply"
 	AlgebraGetElseScanSkip  = "algebra/getelse-scan-skip"
 	AlgebraGetElseScanApply = "algebra/getelse-scan-apply"
-	AlgebraJoinProjectSkip  = "algebra/join-project-skip"
-	AlgebraJoinProjectApply = "algebra/join-project-apply"
 
 	// Aggregation operations
 	AggregationExecuted     = "aggregation/executed"
@@ -404,6 +403,22 @@ type Handler func(event Event)
 // — and a mutex does not repair that, it only hides the race while the
 // pairing stays wrong. An event therefore carries everything its line
 // reports, and state lives where the facts are produced.
+
+// Both is the handler that hands every event to first and then to second. A
+// nil handler among the two is left out, so a lone handler is answered as
+// itself, and two nil handlers answer nil.
+func Both(first, second Handler) Handler {
+	if first == nil {
+		return second
+	}
+	if second == nil {
+		return first
+	}
+	return func(event Event) {
+		first(event)
+		second(event)
+	}
+}
 
 // TimedEvent closes an event that began at start, computing End and Latency from
 // one clock read. A producer holding a start time builds its event here and emits

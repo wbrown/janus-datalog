@@ -12,17 +12,16 @@ import (
 // TestJoinCopyAnnotationE2E verifies that copy tracking annotations are emitted
 // during actual query execution with joins.
 func TestJoinCopyAnnotationE2E(t *testing.T) {
-	for _, mode := range optimizerModes {
+	// On the legs without attribute-fetch fusion the department pattern runs
+	// as the join whose build-copy annotation the test reads.
+	for _, mode := range legsWhere(legsFor(optimizerModes, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 			// The recording flag scopes collection to the query below; the
 			// handler is registered at open because everything the database
 			// builds is constructed with it.
 			var events []annotations.Event
 			recording := false
-			// Attribute-fetch fusion is off, so the department pattern runs as
-			// the join whose build-copy annotation the test reads.
 			plannerOpts := mode.plannerOptions()
-			plannerOpts.EnableAttributeFetchFusion = false
 			db := openBackendDB(t, mode.backend, DatabaseOptions{
 				PlannerOptions: &plannerOpts,
 				AnnotationHandler: func(e annotations.Event) {

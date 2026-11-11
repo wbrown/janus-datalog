@@ -20,7 +20,7 @@ func TestAggregateSum(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -52,7 +52,7 @@ func TestAggregateCount(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -84,7 +84,7 @@ func TestAggregateAvg(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -120,7 +120,7 @@ func TestAggregateMinMax(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -160,7 +160,7 @@ func TestAggregateGroupBy(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -206,7 +206,7 @@ func TestAggregateMixedWithNonAggregated(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 

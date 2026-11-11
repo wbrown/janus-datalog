@@ -9,46 +9,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-func TestDecompileProjectProducesRelationBindingSubquery(t *testing.T) {
-	entity := datalog.NewSymbol("?entity")
-	parsed, err := parser.ParseQuery(
-		`[:find ?entity
-		  :where [?entity :item/score ?score]
-		         [(> ?score 90)]]`,
-	)
-	require.NoError(t, err)
-	child, err := Compile(parsed, nil)
-	require.NoError(t, err)
-	project := &Node{
-		Op:       RuleProject,
-		Children: []*Node{child},
-		Data:     &Project{Symbols: []query.Symbol{entity}},
-	}
-
-	clauses, err := Decompile(project)
-	require.NoError(t, err)
-	require.Len(t, clauses, 1)
-	subquery, ok := clauses[0].(*query.SubqueryPattern)
-	require.True(t, ok)
-	require.Equal(t,
-		[]query.FindElement{query.FindVariable{Symbol: entity}},
-		subquery.Query.Find,
-	)
-	require.Equal(t,
-		[]query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
-		subquery.Query.In,
-	)
-	require.Len(t, subquery.Query.Where, 2)
-	require.Equal(t,
-		[]query.PatternElement{query.Constant{Value: datalog.SymDollar}},
-		subquery.Inputs,
-	)
-	require.Equal(t,
-		query.RelationBinding{Variables: []query.Symbol{entity}},
-		subquery.Binding,
-	)
-}
-
 func TestDecompileSchemaPlaceholderProjectProducesNoClause(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	placeholder := &Node{
@@ -59,4 +19,18 @@ func TestDecompileSchemaPlaceholderProjectProducesNoClause(t *testing.T) {
 	clauses, err := Decompile(placeholder)
 	require.NoError(t, err)
 	require.Empty(t, clauses)
+}
+
+// A Project over clauses has no clause form, since Datalog states a
+// projection at a scope's find alone, and the decompiler refuses it naming
+// that.
+func TestAProjectOverClausesHasNoClauseForm(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e :where [?e :t/a ?x] [?e :t/b ?y]]`)
+	require.NoError(t, err)
+	child, err := Compile(q, nil)
+	require.NoError(t, err)
+	over := &Node{Op: RuleProject, Children: []*Node{child}, Data: &Project{Symbols: []query.Symbol{datalog.NewSymbol("?e")}}}
+	clauses, err := Decompile(over)
+	require.EqualError(t, err, "a Project over clauses has no clause form: Datalog states a projection at a scope's find alone")
+	require.Nil(t, clauses)
 }

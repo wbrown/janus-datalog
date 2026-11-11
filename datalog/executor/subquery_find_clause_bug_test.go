@@ -61,7 +61,7 @@ func TestSubqueryFindClauseBug(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, algebraOption, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
@@ -145,18 +145,18 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, algebraOption, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			var aggregationEvents []annotations.Event
 			opts := mode.plannerOptions()
-			opts.Handler = func(event annotations.Event) {
+			opts.Handler = mode.recording(func(event annotations.Event) {
 				if event.Name == annotations.AggregationExecuted {
 					aggregationEvents = append(aggregationEvents, event)
 				}
 				if strings.HasPrefix(event.Name, "subquery/decorrelation") {
 					t.Logf("[%s] %v", event.Name, event.Data)
 				}
-			}
+			})
 
 			// The matcher is built with the same options, so the relations it
 			// produces carry the handler to the operators that consume them —
@@ -236,7 +236,7 @@ func TestSubqueryMultiValueFindClauseBug(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 

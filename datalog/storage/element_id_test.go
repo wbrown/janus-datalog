@@ -338,7 +338,7 @@ func TestElementIDOrderingTransitivity(t *testing.T) {
 
 func TestMaxElementID(t *testing.T) {
 	// Test that MaxElementID returns the highest ElementID from the database
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -385,7 +385,7 @@ func TestMaxElementID(t *testing.T) {
 func TestElementIDKeyEncodingWithBadgerDB(t *testing.T) {
 	// Integration test: TAEV descending Tx order is an index-ordering property
 	// every backend owes, so this runs the whole axis despite the name.
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

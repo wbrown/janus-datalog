@@ -42,7 +42,7 @@ func TestQueryLimitNoOrderBy(t *testing.T) {
 		{"limit zero", "0", 0},
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -71,7 +71,7 @@ func TestQueryLimitNoOrderBy(t *testing.T) {
 func TestQueryLimitWithOrderByTopN(t *testing.T) {
 	matcher := factsDatabase(t, telemetryDatoms())
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -112,7 +112,7 @@ func TestQueryLimitAfterAggregationCapsGroups(t *testing.T) {
 	}
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -154,7 +154,7 @@ func TestQueryLimitWithRelationInputIsGlobal(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -206,7 +206,7 @@ func TestOrderByAndLimitWithRelationInputIsGlobal(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 

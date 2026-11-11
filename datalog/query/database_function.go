@@ -13,7 +13,16 @@ type EntityLookup interface {
 	// LookupAttribute retrieves the value of an attribute for an entity.
 	// An absent attribute returns (nil, false, nil).
 	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool, error)
+	// AttributeLookup returns the lookup of attr, which answers at each entity
+	// what LookupAttribute answers for that entity and attr. The source reads
+	// what attr's definition decides once, when it returns the lookup. A
+	// source that cannot look up is an error.
+	AttributeLookup(attr datalog.Keyword) (AttributeLookup, error)
 }
+
+// AttributeLookup answers an entity's value of the one attribute it was made
+// for, as EntityLookup.LookupAttribute answers it.
+type AttributeLookup func(entity datalog.Identity) (value interface{}, found bool, err error)
 
 // TypedDefaulter is an optional interface that EntityLookup implementations
 // can provide to type-convert default values based on attribute schema.
@@ -40,9 +49,12 @@ type DatabaseFunction interface {
 	// OnSource returns the function reading source, its other parts kept.
 	OnSource(source Symbol) DatabaseFunction
 
-	// EvalWithLookup evaluates the function with bindings and database access
-	EvalWithLookup(bindings map[Symbol]interface{}, lookup EntityLookup) (interface{}, error)
+	// EvaluationThrough returns the function's evaluation through lookup.
+	EvaluationThrough(lookup EntityLookup) (Evaluation, error)
 }
+
+// Evaluation answers a database function's value on a tuple's bindings.
+type Evaluation func(bindings map[Symbol]interface{}) (interface{}, error)
 
 // readsFrom is the source a database function's Source field names, nil
 // standing for $ as it does on a data pattern.
@@ -92,43 +104,45 @@ func (g *GetElseFunction) ReadsFrom() Symbol {
 }
 
 // Eval is required by the Function interface but should not be called directly.
-// Use EvalWithLookup instead, which is called by the executor when it detects
-// a DatabaseFunction.
+// The executor evaluates a DatabaseFunction through EvaluationThrough.
 func (g *GetElseFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) {
-	return nil, fmt.Errorf("get-else requires database access; use EvalWithLookup instead")
+	return nil, fmt.Errorf("get-else requires database access; use EvaluationThrough instead")
 }
 
-func (g *GetElseFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup EntityLookup) (interface{}, error) {
-	// Resolve entity
-	entityVal, ok := g.Entity.Resolve(bindings)
-	if !ok {
-		return nil, fmt.Errorf("get-else: cannot resolve entity %s", g.Entity)
-	}
-
-	// Convert to Identity
-	entity, err := toIdentity(entityVal)
-	if err != nil {
-		return nil, fmt.Errorf("get-else: %w", err)
-	}
-
-	// Look up the attribute
-	value, found, err := lookup.LookupAttribute(entity, g.Attr)
+// EvaluationThrough returns the get-else's evaluation through lookup: the
+// attribute's value at the tuple's entity, or the default the tuple's
+// bindings give, typed by the lookup when it types defaults.
+func (g *GetElseFunction) EvaluationThrough(lookup EntityLookup) (Evaluation, error) {
+	attrLookup, err := lookup.AttributeLookup(g.Attr)
 	if err != nil {
 		return nil, err
 	}
-	if found {
-		return value, nil
-	}
-
-	// Return the default the tuple's bindings give, typed if possible
-	defaultVal, ok := g.Default.Resolve(bindings)
-	if !ok {
-		return nil, fmt.Errorf("get-else: cannot resolve default %s", g.Default)
-	}
-	if td, ok := lookup.(TypedDefaulter); ok {
-		return td.TypeDefault(g.Attr, defaultVal), nil
-	}
-	return defaultVal, nil
+	defaulter, typed := lookup.(TypedDefaulter)
+	return func(bindings map[Symbol]interface{}) (interface{}, error) {
+		entityVal, ok := g.Entity.Resolve(bindings)
+		if !ok {
+			return nil, fmt.Errorf("get-else: cannot resolve entity %s", g.Entity)
+		}
+		entity, err := toIdentity(entityVal)
+		if err != nil {
+			return nil, fmt.Errorf("get-else: %w", err)
+		}
+		value, found, err := attrLookup(entity)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return value, nil
+		}
+		defaultVal, ok := g.Default.Resolve(bindings)
+		if !ok {
+			return nil, fmt.Errorf("get-else: cannot resolve default %s", g.Default)
+		}
+		if typed {
+			return defaulter.TypeDefault(g.Attr, defaultVal), nil
+		}
+		return defaultVal, nil
+	}, nil
 }
 
 func (g *GetElseFunction) String() string {
@@ -155,31 +169,33 @@ func (m *MissingFunction) ReadsFrom() Symbol {
 }
 
 // Eval is required by the Function interface but should not be called directly.
-// Use EvalWithLookup instead, which is called by the executor when it detects
-// a DatabaseFunction.
+// The executor evaluates a DatabaseFunction through EvaluationThrough.
 func (m *MissingFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) {
-	return nil, fmt.Errorf("missing? requires database access; use EvalWithLookup instead")
+	return nil, fmt.Errorf("missing? requires database access; use EvaluationThrough instead")
 }
 
-func (m *MissingFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup EntityLookup) (interface{}, error) {
-	// Resolve entity
-	entityVal, ok := m.Entity.Resolve(bindings)
-	if !ok {
-		return nil, fmt.Errorf("missing?: cannot resolve entity %s", m.Entity)
-	}
-
-	// Convert to Identity
-	entity, err := toIdentity(entityVal)
-	if err != nil {
-		return nil, fmt.Errorf("missing?: %w", err)
-	}
-
-	// Check if attribute is missing
-	_, found, err := lookup.LookupAttribute(entity, m.Attr)
+// EvaluationThrough returns the missing?'s evaluation through lookup: true
+// where the tuple's entity has no value of the attribute.
+func (m *MissingFunction) EvaluationThrough(lookup EntityLookup) (Evaluation, error) {
+	attrLookup, err := lookup.AttributeLookup(m.Attr)
 	if err != nil {
 		return nil, err
 	}
-	return !found, nil
+	return func(bindings map[Symbol]interface{}) (interface{}, error) {
+		entityVal, ok := m.Entity.Resolve(bindings)
+		if !ok {
+			return nil, fmt.Errorf("missing?: cannot resolve entity %s", m.Entity)
+		}
+		entity, err := toIdentity(entityVal)
+		if err != nil {
+			return nil, fmt.Errorf("missing?: %w", err)
+		}
+		_, found, err := attrLookup(entity)
+		if err != nil {
+			return nil, err
+		}
+		return !found, nil
+	}, nil
 }
 
 func (m *MissingFunction) String() string {
@@ -215,39 +231,45 @@ func (gs *GetSomeFunction) ReadsFrom() Symbol {
 }
 
 // Eval is required by the Function interface but should not be called directly.
-// Use EvalWithLookup instead, which is called by the executor when it detects
-// a DatabaseFunction.
+// The executor evaluates a DatabaseFunction through EvaluationThrough.
 func (gs *GetSomeFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) {
-	return nil, fmt.Errorf("get-some requires database access; use EvalWithLookup instead")
+	return nil, fmt.Errorf("get-some requires database access; use EvaluationThrough instead")
 }
 
-func (gs *GetSomeFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup EntityLookup) (interface{}, error) {
-	// Resolve entity
-	entityVal, ok := gs.Entity.Resolve(bindings)
-	if !ok {
-		return nil, fmt.Errorf("get-some: cannot resolve entity %s", gs.Entity)
-	}
-
-	// Convert to Identity
-	entity, err := toIdentity(entityVal)
-	if err != nil {
-		return nil, fmt.Errorf("get-some: %w", err)
-	}
-
-	// Try each attribute in order
-	for _, attr := range gs.Attrs {
-		value, found, err := lookup.LookupAttribute(entity, attr)
+// EvaluationThrough returns the get-some's evaluation through lookup: the
+// first of its attributes, in order, the tuple's entity has a value of, with
+// that value.
+func (gs *GetSomeFunction) EvaluationThrough(lookup EntityLookup) (Evaluation, error) {
+	attrLookups := make([]AttributeLookup, len(gs.Attrs))
+	for i, attr := range gs.Attrs {
+		attrLookup, err := lookup.AttributeLookup(attr)
 		if err != nil {
 			return nil, err
 		}
-		if found {
-			return &GetSomeResult{Attr: attr, Value: value, Found: true}, nil
-		}
+		attrLookups[i] = attrLookup
 	}
-
-	// No attribute found — return Found=false so the caller can drop the
-	// tuple without abusing error as a soft signal.
-	return &GetSomeResult{Found: false}, nil
+	return func(bindings map[Symbol]interface{}) (interface{}, error) {
+		entityVal, ok := gs.Entity.Resolve(bindings)
+		if !ok {
+			return nil, fmt.Errorf("get-some: cannot resolve entity %s", gs.Entity)
+		}
+		entity, err := toIdentity(entityVal)
+		if err != nil {
+			return nil, fmt.Errorf("get-some: %w", err)
+		}
+		for i, attrLookup := range attrLookups {
+			value, found, err := attrLookup(entity)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				return &GetSomeResult{Attr: gs.Attrs[i], Value: value, Found: true}, nil
+			}
+		}
+		// No attribute found — return Found=false so the caller can drop the
+		// tuple without abusing error as a soft signal.
+		return &GetSomeResult{Found: false}, nil
+	}, nil
 }
 
 func (gs *GetSomeFunction) String() string {
@@ -296,22 +318,32 @@ func (p *DatabaseFunctionPredicate) RequiredSymbols() []Symbol {
 }
 
 // Eval is required by the Predicate interface but cannot be called without database access.
-// Use EvalWithLookup instead via the executor.
+// The executor evaluates the predicate through EvaluationThrough.
 func (p *DatabaseFunctionPredicate) Eval(bindings map[Symbol]interface{}) (bool, error) {
-	return false, fmt.Errorf("database function predicate requires database access; use EvalWithLookup instead")
+	return false, fmt.Errorf("database function predicate requires database access; use EvaluationThrough instead")
 }
 
-// EvalWithLookup evaluates the predicate with database access
-func (p *DatabaseFunctionPredicate) EvalWithLookup(bindings map[Symbol]interface{}, lookup EntityLookup) (bool, error) {
-	result, err := p.Function.EvalWithLookup(bindings, lookup)
+// PredicateEvaluation answers whether a tuple's bindings pass a
+// database-function predicate.
+type PredicateEvaluation func(bindings map[Symbol]interface{}) (bool, error)
+
+// EvaluationThrough returns the predicate's evaluation through lookup: its
+// function's value on the tuple's bindings, which must be a boolean.
+func (p *DatabaseFunctionPredicate) EvaluationThrough(lookup EntityLookup) (PredicateEvaluation, error) {
+	evaluation, err := p.Function.EvaluationThrough(lookup)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	// The function should return a boolean
-	if b, ok := result.(bool); ok {
-		return b, nil
-	}
-	return false, fmt.Errorf("database function predicate expected boolean result, got %T", result)
+	return func(bindings map[Symbol]interface{}) (bool, error) {
+		result, err := evaluation(bindings)
+		if err != nil {
+			return false, err
+		}
+		if b, ok := result.(bool); ok {
+			return b, nil
+		}
+		return false, fmt.Errorf("database function predicate expected boolean result, got %T", result)
+	}, nil
 }
 
 // CanPushToStorage returns false - database function predicates cannot be pushed to storage

@@ -20,7 +20,7 @@ func numberedFacts() []fact {
 }
 
 func TestPlanCache_DistinguishesAFloatFromAnInteger(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, cached := range []bool{true, false} {
 			name := mode.name + "/plan cache on"
 			if !cached {

@@ -70,7 +70,7 @@ func TestRules_InvocationShapesAtAQueryAnswerOrAreRefused(t *testing.T) {
 			}{b.name + " nothing binds, as a rule body", `[:find ?x :in $ % :where (r ?x)]`, []interface{}{`[[(r ?x) ` + b.body + `]]`}, unsafe, "?w", nil},
 		)
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := map[datalog.Identity]string{}

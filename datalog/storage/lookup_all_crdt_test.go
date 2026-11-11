@@ -14,7 +14,7 @@ import (
 // --- Cardinality-One (LWW): OpNone datoms ---
 
 func TestLookupAllAttributes_NoCacheNoSchema_LWW_LatestValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -47,7 +47,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_LWW_LatestValue(t *testing.T) {
 }
 
 func TestLookupAllAttributes_NoCacheNoSchema_LWW_SingleValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -79,7 +79,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_LWW_SingleValue(t *testing.T) {
 // --- Cardinality-Many (Add-Wins Set): OpCRDTAdd / OpCRDTRemove datoms ---
 
 func TestLookupAllAttributes_NoCacheNoSchema_AddWins_Basic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -110,7 +110,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_Basic(t *testing.T) {
 }
 
 func TestLookupAllAttributes_NoCacheNoSchema_AddWins_AfterRemoval(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -143,7 +143,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_AfterRemoval(t *testing.T) 
 }
 
 func TestLookupAllAttributes_NoCacheNoSchema_AddWins_ReAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -179,7 +179,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_ReAdd(t *testing.T) {
 }
 
 func TestLookupAllAttributes_NoCacheNoSchema_AddWins_ConcurrentAddWins(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -209,7 +209,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_ConcurrentAddWins(t *testin
 }
 
 func TestLookupAllAttributes_NoCacheNoSchema_AddWins_OnlyRemoves(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -239,7 +239,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_OnlyRemoves(t *testing.T) {
 // --- Cardinality-Vector (RGA): OpRGAInsert / OpRGATombstone datoms ---
 
 func TestLookupAllAttributes_NoCacheNoSchema_RGA_Basic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -274,7 +274,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_RGA_Basic(t *testing.T) {
 }
 
 func TestLookupAllAttributes_NoCacheNoSchema_RGA_WithTombstone(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -311,7 +311,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_RGA_WithTombstone(t *testing.T) {
 }
 
 func TestLookupAllAttributes_NoCacheNoSchema_RGA_ConcurrentInserts(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

@@ -19,7 +19,9 @@ func TestDatabasePlanCache(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	// On the legs without attribute-fetch fusion the second pattern runs over
+	// the first's streaming group through the window scope the cache holds.
+	for _, mode := range legsWhere(legsFor(optimizerModes, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -38,10 +40,8 @@ func TestDatabasePlanCache(t *testing.T) {
 			}
 
 			// Test 1: Create multiple executors - they should share the cache
-			// Attribute-fetch fusion is off, so the second pattern runs over the
-			// first's streaming group through the window scope the cache holds.
 			planOpts := mode.plannerOptions()
-			planOpts.EnableAttributeFetchFusion = false
+			planOpts.Handler = recordingReach(t, nil)
 			exec1 := db.NewExecutorWithOptions(planOpts)
 			exec2 := db.NewExecutorWithOptions(planOpts)
 
@@ -121,7 +121,7 @@ func TestDatabasePlanCache(t *testing.T) {
 // input and again with a non-empty one holds two entries of its text, one per
 // bound set.
 func TestDatabasePlanCacheServesAPlanMadeUnderABoundInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -180,7 +180,7 @@ func TestDatabaseWithoutCache(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -188,7 +188,9 @@ func TestDatabaseWithoutCache(t *testing.T) {
 			db.SetPlanCache(nil)
 
 			// Create executor - should work without cache
-			exec := db.NewExecutorWithOptions(mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := db.NewExecutorWithOptions(popts)
 
 			// Execute should work without cache
 			_, err := exec.Execute(q)
@@ -213,14 +215,16 @@ func TestExecutorCreationOverhead(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create many executors - should be fast and low memory
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
 			executors := make([]*executor.Executor, 1000)
 			for i := 0; i < 1000; i++ {
-				executors[i] = db.NewExecutorWithOptions(mode.plannerOptions())
+				executors[i] = db.NewExecutorWithOptions(popts)
 			}
 
 			// All should share the same cache (we can't directly compare function pointers,

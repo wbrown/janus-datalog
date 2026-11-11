@@ -86,7 +86,7 @@ func TestSaveStruct_KeywordField(t *testing.T) {
 		t.Errorf("expected type to be keyword, got %s", typeAttr.ValueType)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -145,7 +145,7 @@ func TestSaveStructAndPullInto_Simple(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -199,7 +199,7 @@ func TestSaveStructAndPullInto_CardinalityMany(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -268,7 +268,7 @@ func TestGeneratePullPattern_Nested(t *testing.T) {
 }
 
 func TestSaveStruct_WithExistingID(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testSaveStructWithExistingID(t, mode)
 		})
@@ -315,7 +315,7 @@ func TestPullIntoMany(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -384,7 +384,7 @@ func TestSaveStructCardinalityOne(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -467,7 +467,7 @@ func TestSaveStructCardinalityMany(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -552,7 +552,7 @@ func TestNilVsEmptySliceSemantics(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -632,7 +632,7 @@ func TestSaveStructUpsertSemantics(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -719,7 +719,7 @@ func TestPullInto_CardinalityManyRefs(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -813,7 +813,7 @@ func TestPullInto_CardinalityManyRefs_ManualSchema(t *testing.T) {
 		t.Fatalf("failed to build schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -897,7 +897,7 @@ func TestLookupAttributeWithStructAPI(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -1069,7 +1069,7 @@ func TestStructReader_NoEventsWhenHandlerNil(t *testing.T) {
 
 // TestStructWriter_AnnotationsEmitted verifies that StructWriter emits annotation events.
 func TestStructWriter_AnnotationsEmitted(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testStructWriterAnnotationsEmitted(t, mode)
 		})
@@ -1174,7 +1174,7 @@ func TestSaveStructAndPullInto_WorldEntity(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -1405,7 +1405,7 @@ func TestStructWriter_NoEventsWhenHandlerNil(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -1479,7 +1479,7 @@ func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
 		t.Errorf("expected :dungeon-entity/hooks to have CardinalityMany, got %s", hooksAttr.Cardinality)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -1560,7 +1560,7 @@ func TestCRDTTombstoneReAdd(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -1679,7 +1679,7 @@ func TestCRDTTombstoneReAdd_TxSetWorkaround(t *testing.T) {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{

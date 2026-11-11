@@ -21,10 +21,9 @@ func TestScanSharingMatcherOverADatabaseThatRefusesNothingRefusesNothing(t *test
 		{E: datalog.NewIdentity("e2"), A: name, V: "bob", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 	const text = `[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`
-	for _, mode := range OptimizerModes {
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return m.Sharing() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			opts := mode.PlannerOptions()
-			opts.EnableScanSharing = true
 			opts.Handler = func(annotations.Event) {}
 			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts)
 			q := MustParse(t, text)

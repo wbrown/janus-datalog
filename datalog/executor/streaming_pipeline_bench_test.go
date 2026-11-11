@@ -39,7 +39,6 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: false,
 						DefaultHashTableSize:    256,
 					},
@@ -49,7 +48,6 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: false,
 						DefaultHashTableSize:    256,
 					},
@@ -76,7 +74,6 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: true,
 						DefaultHashTableSize:    256,
 					},
@@ -86,7 +83,6 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: true,
 						DefaultHashTableSize:    256,
 					},
@@ -132,7 +128,6 @@ func BenchmarkLimitQueries(b *testing.B) {
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: false,
 						DefaultHashTableSize:    256,
 					},
@@ -142,7 +137,6 @@ func BenchmarkLimitQueries(b *testing.B) {
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: false,
 						DefaultHashTableSize:    256,
 					},
@@ -169,7 +163,6 @@ func BenchmarkLimitQueries(b *testing.B) {
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: true,
 						DefaultHashTableSize:    256,
 					},
@@ -179,7 +172,6 @@ func BenchmarkLimitQueries(b *testing.B) {
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins:    true,
 						EnableSymmetricHashJoin: true,
 						DefaultHashTableSize:    256,
 					},
@@ -227,7 +219,6 @@ func BenchmarkPeakMemory(b *testing.B) {
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
-					EnableStreamingJoins:    true,
 					EnableSymmetricHashJoin: false,
 					DefaultHashTableSize:    256,
 				},
@@ -237,7 +228,6 @@ func BenchmarkPeakMemory(b *testing.B) {
 				iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
-					EnableStreamingJoins:    true,
 					EnableSymmetricHashJoin: false,
 					DefaultHashTableSize:    256,
 				},
@@ -283,7 +273,6 @@ func BenchmarkPeakMemory(b *testing.B) {
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
-					EnableStreamingJoins:    true,
 					EnableSymmetricHashJoin: true,
 					DefaultHashTableSize:    256,
 				},
@@ -293,7 +282,6 @@ func BenchmarkPeakMemory(b *testing.B) {
 				iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
-					EnableStreamingJoins:    true,
 					EnableSymmetricHashJoin: true,
 					DefaultHashTableSize:    256,
 				},
@@ -352,21 +340,13 @@ func BenchmarkMultiStagePipeline(b *testing.B) {
 				symbols:  leftSymbols,
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
-				options: ExecutorOptions{
-					EnableStreamingJoins:    true,
-					EnableSymmetricHashJoin: false,
-					DefaultHashTableSize:    256,
-				},
+				options:  ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256},
 			}
 			right := &StreamingRelation{
 				symbols:  rightSymbols,
 				iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 				size:     -1,
-				options: ExecutorOptions{
-					EnableStreamingJoins:    true,
-					EnableSymmetricHashJoin: false,
-					DefaultHashTableSize:    256,
-				},
+				options:  ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256},
 			}
 
 			// Multi-stage pipeline: Join → Filter → Project
@@ -404,21 +384,13 @@ func BenchmarkMultiStagePipeline(b *testing.B) {
 				symbols:  leftSymbols,
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
-				options: ExecutorOptions{
-					EnableStreamingJoins:    true,
-					EnableSymmetricHashJoin: true,
-					DefaultHashTableSize:    256,
-				},
+				options:  ExecutorOptions{EnableSymmetricHashJoin: true, DefaultHashTableSize: 256},
 			}
 			right := &StreamingRelation{
 				symbols:  rightSymbols,
 				iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 				size:     -1,
-				options: ExecutorOptions{
-					EnableStreamingJoins:    true,
-					EnableSymmetricHashJoin: true,
-					DefaultHashTableSize:    256,
-				},
+				options:  ExecutorOptions{EnableSymmetricHashJoin: true, DefaultHashTableSize: 256},
 			}
 
 			// Multi-stage pipeline: Join → Filter → Project

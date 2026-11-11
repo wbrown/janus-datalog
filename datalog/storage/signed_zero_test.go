@@ -83,7 +83,7 @@ func TestASignedZeroIsOneValueAtEveryEntry(t *testing.T) {
 			zero(t, oneTuple(t, d, `[:find ?z :where [_ :z/f ?a] [(/ ?a -1.0) ?z]]`))
 		}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		for _, disableCache := range []bool{false, true} {
 			cache := "cache on"
 			if disableCache {

@@ -16,23 +16,23 @@ import (
 // or closing it is the query's error: the arm reads the window's run, and the
 // subject is read by the window reader.
 func TestFallbackSurfacesTheSubjectsFailureUnderTheEAArm(t *testing.T) {
-	// The subject joins a root with the 300 entities under it, so the scan of
-	// :t/under is read as the windows are, under a cap of 128: windows of 1,
-	// 2, 4, 8, 16, 32, 64, 128 and 45 tuples. The first 150 entities alone
-	// carry :t/a, so the scan of :t/under is the one scan that reaches 200
-	// datoms.
+	// The subject is the scan of :t/under, the 300 entities under a root,
+	// read as the windows are, under a cap of 128: windows of 1, 2, 4, 8,
+	// 16, 32, 64, 128 and 45 tuples. The first 150 entities alone carry :t/a,
+	// so the scan of :t/under is the one scan that reaches 200 datoms.
 	const subjectSize, carrying = 300, 150
-	const seventhWindow, eighthWindow = 64, 128
+	const seventhWindow, eighthWindow, ninthWindow = 64, 128, 45
 	s, err := schema.NewBuilder().
 		Attribute(":t/root").Type(schema.TypeBoolean).One().Add().
 		Attribute(":t/under").Type(schema.TypeRef).One().Add().
 		Attribute(":t/a").Type(schema.TypeLong).One().Add().
 		Build()
 	require.NoError(t, err)
-	const text = `[:find ?e ?v :where [?r :t/root true] [?e :t/under ?r] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	// The read fails inside the eighth window. The subject reports its close
-	// failure when its read reaches its end, inside the ninth window, and the
-	// window reader builds no window over a failed read.
+	const text = `[:find ?e ?v :where [?e :t/under ?r] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
+	// The read fails inside the eighth window, and the window reader builds no
+	// window over a failed read. The subject's read reaches its end and the
+	// ninth window is built, then the subject's close fails, so the close
+	// failure is the query's error after every window.
 	cases := []struct {
 		name                      string
 		failAfter, closeFailAfter int
@@ -40,9 +40,9 @@ func TestFallbackSurfacesTheSubjectsFailureUnderTheEAArm(t *testing.T) {
 		lookups                   int // the entities of the windows the arm built before the failure
 	}{
 		{"read", 200, 0, errInjectedScanFault, seventhWindow},
-		{"close", subjectSize + 1, 200, errInjectedCloseFault, seventhWindow + eighthWindow},
+		{"close", subjectSize + 1, 200, errInjectedCloseFault, seventhWindow + eighthWindow + ninthWindow},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsWhere(legsFor(optimizerModes, allOptions...), func(m optimizerMode) bool { return m.prefetch && !m.fusion }) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				var mu sync.Mutex
@@ -52,8 +52,6 @@ func TestFallbackSurfacesTheSubjectsFailureUnderTheEAArm(t *testing.T) {
 				store := &scanFaultStore{Store: base, failAfter: c.failAfter, closeFailAfter: c.closeFailAfter}
 				opts := mode.plannerOptions()
 				opts.ScopeWindowCap = 128
-				opts.EnableEntityPrefetch = true
-				opts.EnableAttributeFetchFusion = false
 				d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, Schema: s, PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
 					mu.Lock()
 					defer mu.Unlock()

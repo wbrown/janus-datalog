@@ -82,7 +82,7 @@ func TestGroundVectorPatternDistinguishesClearedFromNeverSet(t *testing.T) {
 		{"cleared to empty binds the empty vector", clearedToEmpty, unbound, 1, true},
 	} {
 		for _, mode := range cacheTestModes {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(tc.name+"/"+mode.name+"/"+omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 					require.NoError(t, db.SetSchema(constantPatternSchema(t)))
@@ -130,7 +130,7 @@ func TestClearedVectorBindsEmptyVectorNotNil(t *testing.T) {
 	}
 
 	for _, mode := range cacheTestModes {
-		for _, omode := range optimizerModes {
+		for _, omode := range legsFor(optimizerModes) {
 			t.Run(mode.name+"/"+omode.name, func(t *testing.T) {
 				db := createCacheTestDB(t, omode, mode.disableCache, nil)
 				require.NoError(t, db.SetSchema(refSchema(t)))
@@ -192,7 +192,7 @@ func TestVBoundScanWithUnboundEntityRejectsSupersededValue(t *testing.T) {
 			`[:find ?e :where [?e :person/name "Alicia"]]`, 1},
 	} {
 		for _, mode := range cacheTestModes {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(tc.name+"/"+mode.name+"/"+omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 					require.NoError(t, db.SetSchema(constantPatternSchema(t)))

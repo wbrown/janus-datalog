@@ -100,7 +100,7 @@ func TestABindingOfAnInstantJoinsTheDatomHoldingIt(t *testing.T) {
 		},
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: declared})
 			tx := db.NewTransaction()

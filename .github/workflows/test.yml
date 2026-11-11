@@ -1,5 +1,8 @@
 name: Test
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -47,4 +50,6 @@ jobs:
         with:
           node-version: "20"
       - name: js/wasm storage package under its own timeout (the make test gate's wasm leg)
+        env:
+          GODEBUG: gctrace=1
         run: make test-wasm-storage

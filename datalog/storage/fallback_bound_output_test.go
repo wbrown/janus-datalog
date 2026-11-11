@@ -56,7 +56,7 @@ func TestFallbackBoundOutput_AnOutputBoundBeforeTheFormNeverNarrowsABranch(t *te
 		{"the headerless or-default, bound by an :in scalar", "[" + lowRule + pHeaderless + "]",
 			`[:find ?x :in $ % ?y :where (p ?x ?y)]`, []interface{}{"c"}, nil},
 	}
-	runQueryCases(t, newFallbackGraph().facts(), cases)
+	runQueryCases(t, newFallbackGraph().facts(), cases, symmetricOption, fusionOption)
 }
 
 // p's second position is the fallback's output. Bound at m1, the default's
@@ -81,7 +81,7 @@ func TestFallbackBoundOutput_AnOutputAtTheHeadsBoundPositionNeverNarrowsABranch(
 		{"the same output under a union, at the branch's answer", "[" + lowRule + pUnion + "]",
 			`[:find ?x :in $ % ?k :where (p ?x ?k)]`, []interface{}{g.k9.id}, []string{"x1"}},
 	}
-	runQueryCases(t, g.facts(), cases)
+	runQueryCases(t, g.facts(), cases, fusionOption)
 }
 
 // A flat-header fallback decides once over its whole first branch, so the
@@ -103,5 +103,5 @@ func TestFallbackBoundOutput_AFlatHeaderFallbacksBranchIsGivenNothing(t *testing
 		{"the first position bound at x2, whose link has no edge", "[" + lowRule + p + "]",
 			`[:find ?c :in $ % ?x :where (p ?x ?c)]`, []interface{}{g.x2.id}, nil},
 	}
-	runQueryCases(t, g.facts(), cases)
+	runQueryCases(t, g.facts(), cases, fusionOption)
 }

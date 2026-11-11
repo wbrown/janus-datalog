@@ -49,7 +49,7 @@ func TestSchemaFromStructDoesNotInferNeverZeroValue(t *testing.T) {
 
 func TestSaveStructOmitsZeroFieldAndLeavesPriorValue(t *testing.T) {
 	sch := neverZeroBioSchema(t)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -95,7 +95,7 @@ func TestSaveStructOmitsZeroFieldAndLeavesPriorValue(t *testing.T) {
 
 func TestPullIntoAbsenceIsZeroValue(t *testing.T) {
 	sch := neverZeroBioSchema(t)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -135,7 +135,7 @@ func TestPullIntoAbsenceIsZeroValue(t *testing.T) {
 func TestWriteAutoOmitsZeroField(t *testing.T) {
 	sch := neverZeroBioSchema(t)
 	bio := datalog.NewKeyword(":person-with-bio/bio")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -190,7 +190,7 @@ func TestSaveStructRejectsZeroElementInNonEmptySlice(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -232,7 +232,7 @@ func TestSaveStructRejectsZeroElementInVector(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
@@ -262,7 +262,7 @@ func TestSaveStructRejectsZeroElementInOrderedSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{

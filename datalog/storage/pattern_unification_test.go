@@ -9,7 +9,7 @@ import "testing"
 func TestPattern_AVariableNamedTwiceSelectsAgreeingDatoms(t *testing.T) {
 	a, b, c := named("a"), named("b"), named("c")
 	facts := []fact{{a, ":t/ref", a}, {b, ":t/ref", c}, {c, ":t/ref", c}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)

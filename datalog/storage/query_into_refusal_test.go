@@ -29,7 +29,7 @@ func TestQueryInto_ARefusedDestinationEndsTheResultBeforeAnyTuple(t *testing.T) 
 		{"a struct tagged with a symbol the find lacks", func(d *Database) error { return d.QueryInto(&structs, text) }, "?m"},
 		{"a scalar destination for two find elements", func(d *Database) error { return d.QueryInto(&scalars, text) }, "exactly 1 find element"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var events []annotations.Event

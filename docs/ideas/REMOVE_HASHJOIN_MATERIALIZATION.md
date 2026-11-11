@@ -1,13 +1,16 @@
 # Plan: Remove Unnecessary HashJoin Materialization
 
-**Status**: Rejected by measurement (2026-07)
+**Status**: Rejected by measurement (2026-07); superseded in 2026-11, when the hash join came to answer a streaming relation over its iterator in every setting (`docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md`)
 **Date**: 2025-10-26
 **Priority**: Medium (Performance + Architecture)
 
-`BenchmarkComplexQueryJoinMaterialization` shows streaming joins are 8.04%
-slower, use 3.78% more memory, and allocate 8.34% more on the production-shaped
-checkpoint. Materialized joins remain the default. The direct debug-print
-examples below are historical; current diagnostics use structured annotations.
+`BenchmarkComplexQueryJoinMaterialization` measured the streaming-join setting
+8.04% slower, 3.78% more memory and 8.34% more allocations than the
+materialized join on the production-shaped checkpoint (2026-07). The benchmark
+and `EnableStreamingJoins` were removed in 2026-11, the hash join answering a
+streaming relation over its iterator whenever the build holds a tuple, in every
+setting (`docs/reference/PLANNER_OPTIONS.md`). The direct debug-print examples
+below are historical; current diagnostics use structured annotations.
 
 ## Problem
 

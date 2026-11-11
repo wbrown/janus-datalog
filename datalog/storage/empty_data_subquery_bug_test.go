@@ -12,7 +12,7 @@ import (
 // TestEmptyDataSubqueryBug reproduces the bug where queries with subqueries
 // fail with projection errors when there's no matching data
 func TestEmptyDataSubqueryBug(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -60,7 +60,7 @@ func TestEmptyDataSubqueryBug(t *testing.T) {
 // TestEmptyDataSubqueryBug_FullOHLCQuery tests the full reported query, not a
 // reduction of it.
 func TestEmptyDataSubqueryBug_FullOHLCQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -165,7 +165,7 @@ func TestEmptyDataSubqueryBug_FullOHLCQuery(t *testing.T) {
 
 // TestEmptyDataSubqueryBug_WithOptions tests with explicit planner options
 func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -197,6 +197,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 			// Test with default options
 			t.Run("default options", func(t *testing.T) {
 				opts := mode.plannerOptions()
+				opts.Handler = recordingReach(t, nil)
 
 				q, err := parser.ParseQuery(queryStr)
 				assert.NoError(t, err)
@@ -225,6 +226,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 			// Test with default options (second run)
 			t.Run("default options (second run)", func(t *testing.T) {
 				opts := mode.plannerOptions()
+				opts.Handler = recordingReach(t, nil)
 
 				q, err := parser.ParseQuery(queryStr)
 				assert.NoError(t, err)

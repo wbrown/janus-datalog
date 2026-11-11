@@ -100,7 +100,7 @@ func TestPlan_OrderIndependentUnderBothPaths(t *testing.T) {
 		{"or-join", []string{`(or-join [?a] [(ground :t/tag) ?a] [(ground :t/other) ?a])`}},
 		{"subquery", []string{`[(q [:find ?a :in $ :where [(ground :t/tag) ?a]] $) [[?a]]]`}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := taggedEntities(t, d)
@@ -142,7 +142,7 @@ func TestPlan_RefusesAFormNoOrderBinds(t *testing.T) {
 			"waits on ?m (no input or clause binds it)", "(or-join [[?m ?n ?e]] [?m :t/n ?n] [?e :t/tag _])", ""},
 	}
 	stalls := map[string][]string{}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			taggedEntities(t, d)
@@ -177,7 +177,7 @@ func TestPlan_RefusesAFormNoOrderBinds(t *testing.T) {
 func TestPlan_AlgebraBridgeOrdersUnderTheRuleSet(t *testing.T) {
 	const rules = `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`
 	const text = `[:find ?x ?u :in $ % :where [?x :t/n ?v] (or-join [?x ?u] (and (succ ?w ?u) [?x :t/n ?w]) (and [?x :t/tag _] [(ground 0) ?u]))]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := taggedEntities(t, d)
@@ -192,7 +192,7 @@ func TestPlan_AlgebraBridgeOrdersUnderTheRuleSet(t *testing.T) {
 // query's environment binds it for every group, on both planner paths.
 func TestPlan_OrDefaultReadingAnInputRunsOnBothPaths(t *testing.T) {
 	const text = `[:find ?x ?k :in $ ?s :where [?x :t/n _] (or-default (and [?x :t/n ?n] [(= ?n ?s)] [(ground 1) ?k]) [(ground 0) ?k])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := taggedEntities(t, d)
@@ -220,7 +220,7 @@ func TestExplain_PlansThePreparedQuery(t *testing.T) {
 	}
 	want := query.ValidateInputShapes(twice.In)
 	require.Error(t, want, "the fixture declares % twice, which ValidateInputShapes refuses")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			taggedEntities(t, d)
@@ -264,7 +264,7 @@ func TestPlan_AnExistentialUnderANotInsideAnOrBranchIsTheBranchsOwn(t *testing.T
 		`[:find ?e :where [?e :a _] (or (and [?e :b _] (not [?e :c _])) [?e :d _])]`,
 		`[:find ?e :where [?e :a _] (or-join [?e] (and [?e :b _] (not [?e :c ?z])) [?e :d _])]`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := map[datalog.Identity]string{}

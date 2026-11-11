@@ -43,9 +43,9 @@ func reviewDecorrelationFacts() ([]fact, map[datalog.Identity]string) {
 // lateral join with defaults.
 func reviewDecorrelationQueries() []string {
 	type inner struct {
-		find string
-		body string
-		arity int
+		find      string
+		body      string
+		arity     int
 		aggregate bool
 	}
 	inners := []inner{
@@ -149,18 +149,20 @@ func reviewOutcomeWith(d *Database, text string, names map[datalog.Identity]stri
 	return strings.Join(rendered, " ")
 }
 
-// A correlated subquery answers alike on both optimizer paths, whatever its
-// inner :find and whatever names its binding writes (CLAUDE.md, Semantic
-// Preservation; optimizer_modes_test.go's observational equivalence). The
-// reference is the unoptimized path on the same tree. With
-// REVIEW_SOURCES_GOLDEN naming a file, each path's answer is also compared
-// with the unoptimized answer recorded there (REVIEW_SOURCES_WRITE=1 records
-// it), the merge-base's answer for the cross-tree differential.
+// A correlated subquery answers alike on every leg of the optimizer matrix,
+// whatever its inner :find and whatever names its binding writes (CLAUDE.md,
+// Semantic Preservation; optimizer_modes_test.go's observational
+// equivalence). The reference is the leg with the algebra optimizer and scan
+// sharing off, on the same tree. With REVIEW_SOURCES_GOLDEN naming a file,
+// each leg's answer is also compared with the reference's answer recorded
+// there (REVIEW_SOURCES_WRITE=1 records it), the merge-base's answer for the
+// cross-tree differential.
 func TestReviewSources_DecorrelationAnswersAlikeOnBothPaths(t *testing.T) {
 	facts, names := reviewDecorrelationFacts()
 	queries := reviewDecorrelationQueries()
 	outcomes := map[string]map[string]string{}
-	for _, mode := range optimizerModes {
+	var off map[string]string
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 		commitFacts(t, d, facts)
 		answered := map[string]string{}
@@ -168,12 +170,17 @@ func TestReviewSources_DecorrelationAnswersAlikeOnBothPaths(t *testing.T) {
 			answered[text] = reviewOutcome(d, text, names)
 		}
 		outcomes[mode.name] = answered
+		if !mode.algebra && !mode.sharing {
+			off = answered
+		}
 	}
-	on, off := outcomes["memory-trees/algebra_on"], outcomes["memory-trees/algebra_off"]
+	require.NotNil(t, off, "the matrix holds the leg with the algebra optimizer and scan sharing off")
 	for _, text := range queries {
 		t.Run(text, func(t *testing.T) {
-			require.False(t, strings.HasPrefix(off[text], "error:"), "the unoptimized path answers: %s", off[text])
-			require.Equal(t, off[text], on[text], "the optimizer answers what the unoptimized path answers")
+			require.False(t, strings.HasPrefix(off[text], "error:"), "the reference leg answers: %s", off[text])
+			for leg, answered := range outcomes {
+				require.Equal(t, off[text], answered[text], "%s answers what the reference leg answers", leg)
+			}
 		})
 	}
 	golden := os.Getenv("REVIEW_SOURCES_GOLDEN")
@@ -192,8 +199,9 @@ func TestReviewSources_DecorrelationAnswersAlikeOnBothPaths(t *testing.T) {
 	require.NoError(t, json.Unmarshal(encoded, &reference))
 	for _, text := range queries {
 		t.Run("reference "+text, func(t *testing.T) {
-			require.Equal(t, reference[text], off[text], "the unoptimized path answers what the merge-base answers")
-			require.Equal(t, reference[text], on[text], "the optimizer answers what the merge-base answers")
+			for leg, answered := range outcomes {
+				require.Equal(t, reference[text], answered[text], "%s answers what the merge-base answers", leg)
+			}
 		})
 	}
 }
@@ -210,7 +218,7 @@ func TestReviewSources_EveryGeneratedSubqueryIsDecorrelated(t *testing.T) {
 			applied++
 		}
 	}
-	d := createOptimizerModeDB(t, pinned(optimizerModes, true)[0], DatabaseOptions{AnnotationHandler: handler})
+	d := createOptimizerModeDB(t, legsWhere(legsFor(optimizerModes, algebraOption, aggregationOption), func(m optimizerMode) bool { return m.algebra })[0], DatabaseOptions{AnnotationHandler: handler})
 	commitFacts(t, d, facts)
 	for _, text := range reviewDecorrelationQueries() {
 		t.Run(text, func(t *testing.T) {

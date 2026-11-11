@@ -19,7 +19,7 @@ import (
 // the collision-era extraction, the two tuples collapsed into one subquery
 // execution and one tuple's aggregate went missing or wrong.
 func TestCorrelatedSubqueryDistinguishesTypedInputCombinations(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

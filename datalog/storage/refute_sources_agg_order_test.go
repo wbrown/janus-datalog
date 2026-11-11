@@ -8,10 +8,10 @@ import (
 
 // An aggregating subquery whose :find writes an aggregate before a grouping
 // variable binds each name its binding writes to the :find element at that
-// name's position, on both optimizer paths (CLAUDE.md, Semantic
-// Preservation; a binding is the relation over the binding's symbols in the
-// inner :find's order, NESTED_SCOPES_AS_QUERIES.md §2.5). The reference is
-// the unoptimized path on the same tree.
+// name's position, on every leg (CLAUDE.md, Semantic Preservation; a binding
+// is the relation over the binding's symbols in the inner :find's order,
+// NESTED_SCOPES_AS_QUERIES.md §2.5). The reference is the reference leg on
+// the same tree, every option off.
 func TestRefuteSources_AnAggregateBeforeAGroupingVariableBindsByFindPosition(t *testing.T) {
 	cases := []struct {
 		name string
@@ -27,19 +27,24 @@ func TestRefuteSources_AnAggregateBeforeAGroupingVariableBindsByFindPosition(t *
 		{"one parameter, aggregate first, or-default-join", `[:find ?q ?n ?m :where [?q :p/k ?b] (or-default-join [[?b] ?n ?m] [(q [:find ?b (count ?z) ?v :in $ ?b :where [?z :p/k ?b] [?z :p/v ?v]] $ ?b) [[?b ?n ?m]]] (and [(ground -1) ?n] [(ground -1) ?m]))]`},
 		{"two parameters, aggregate last", `[:find ?q ?m ?n :where [?q :p/k ?b] [?q :p/v ?w] [(q [:find ?a (count ?z) :in $ ?a ?c :where [?z :p/k ?a] [?z :p/v ?c]] $ ?b ?w) [[?m ?n]]]]`},
 	}
-	answers := map[bool]map[string]string{}
-	for _, mode := range optimizerModes {
+	// answers is what each case answers on a mode.
+	answers := func(t *testing.T, mode optimizerMode) map[string]string {
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 		commitFacts(t, d, refuteTwoParamFacts())
-		answers[mode.algebra] = map[string]string{}
+		answered := map[string]string{}
 		for _, c := range cases {
-			answers[mode.algebra][c.name] = refuteOutcome(t, d, c.text)
+			answered[c.name] = refuteOutcome(t, d, c.text)
 		}
+		return answered
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			require.NotContains(t, answers[false][c.name], "error:")
-			require.Equal(t, answers[false][c.name], answers[true][c.name], "optimizer on answers what optimizer off answers")
-		})
+	reference := answers(t, referenceMode)
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
+		answered := answers(t, mode)
+		for _, c := range cases {
+			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
+				require.NotContains(t, reference[c.name], "error:")
+				require.Equal(t, reference[c.name], answered[c.name], "the leg answers what the reference leg answers")
+			})
+		}
 	}
 }

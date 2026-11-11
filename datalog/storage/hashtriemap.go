@@ -12,13 +12,14 @@
 //     resolved entry and its max-version high-water mark live in ONE slot, so
 //     the cache's hot path pays one trie walk where the two-map layout paid
 //     two.
-//  2. Routing bits come from CacheKey.routing() — the entity hash's own
-//     uniform bits folded with the attribute words. The key is already a SHA1
-//     content address, so no hash function and no seed. Routing is
-//     deterministic and unseeded by owner ruling: these lookups are
-//     performance-critical, and the embedded threat model does not include
-//     hostile writers grinding SHA1 preimages; engineered routing collisions
-//     only lengthen overflow chains — lookups always compare full keys.
+//  2. Routing bits come from CacheKey.routing() — the entity hash's first
+//     word, uniform bits of a SHA1 content address, folded with the keyword's
+//     FNV-1a hash, computed once where the keyword is interned. No seed.
+//     Routing is deterministic and unseeded by owner ruling: these lookups
+//     are performance-critical, and the embedded threat model does not
+//     include hostile writers grinding SHA1 preimages; engineered routing
+//     collisions only lengthen overflow chains — lookups always compare full
+//     keys.
 //  3. Slot values are compared with ==, replacing the runtime's
 //     unsafe.Pointer value-equality function.
 //  4. Construction is explicit (newCacheTrie), so upstream's lazy-init
@@ -51,16 +52,13 @@ type cacheSlot struct {
 }
 
 // routing returns the trie routing bits for a key: the entity hash's first
-// word folded with all four attribute words. E is a SHA1 content address, so
-// its bits are uniform by construction; folding every attribute word in
-// separates same-entity attributes even when keyword names share long
+// word folded with the keyword's hash. E is a SHA1 content address, so its
+// bits are uniform by construction; the keyword's hash covers its whole text,
+// so same-entity attributes route apart even when keyword names share long
 // prefixes (":person/name" vs ":person/age" agree through byte 7).
 func (k CacheKey) routing() uint64 {
-	return binary.BigEndian.Uint64(k.E[0:8]) ^
-		binary.BigEndian.Uint64(k.A[0:8]) ^
-		binary.BigEndian.Uint64(k.A[8:16]) ^
-		binary.BigEndian.Uint64(k.A[16:24]) ^
-		binary.BigEndian.Uint64(k.A[24:32])
+	e := k.E.Hash()
+	return binary.BigEndian.Uint64(e[0:8]) ^ k.A.Hash64()
 }
 
 // cacheTrie is a concurrent hash-trie from CacheKey to cacheSlot, designed

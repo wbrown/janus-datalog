@@ -87,6 +87,18 @@ func (sr *SourceRouter) LookupAttribute(
 	return lookup.LookupAttribute(entity, attr)
 }
 
+// AttributeLookup implements EntityLookupMatcher with the default source's
+// own lookup of attr, so a reader of attr reaches the source with no routing
+// per entity. A default source the router does not hold, or one that cannot
+// look up, is an error, as it is for LookupAttribute.
+func (sr *SourceRouter) AttributeLookup(attr datalog.Keyword) (query.AttributeLookup, error) {
+	lookup, err := sr.LookupSource(datalog.SymDollar)
+	if err != nil {
+		return nil, err
+	}
+	return lookup.AttributeLookup(attr)
+}
+
 // LookupSource implements EntityLookupMatcher with the lookup of the source
 // named, which it gives as its own $, so the get-else, missing? and get-some
 // that name a source read it. A source the router does not hold, or one that
@@ -151,8 +163,20 @@ func (sr *SourceRouter) UnknownAttributes(source query.Symbol, attrs []datalog.K
 	return nil
 }
 
+// PrefetchEntities implements EntityPrefetcher from the default source, the
+// source a fallback's prefetched branch reads: the default source's own
+// prefetch fills its EA cache with the entities. A default source without the
+// capability prefetches nothing.
+func (sr *SourceRouter) PrefetchEntities(entities []datalog.Identity) error {
+	if ep, ok := sr.sources[datalog.SymDollar].(EntityPrefetcher); ok {
+		return ep.PrefetchEntities(entities)
+	}
+	return nil
+}
+
 // Compile-time verification that SourceRouter implements all matcher interfaces
 var _ PatternMatcher = (*SourceRouter)(nil)
 var _ PredicateAwareMatcher = (*SourceRouter)(nil)
 var _ EntityLookupMatcher = (*SourceRouter)(nil)
 var _ AttributeVocabulary = (*SourceRouter)(nil)
+var _ EntityPrefetcher = (*SourceRouter)(nil)

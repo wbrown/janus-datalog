@@ -154,13 +154,13 @@ func TestWrapMatcher_BasicAnnotation(t *testing.T) {
 		t.Error("Expected success=true")
 	}
 
-	// Verify symbol order preserved
-	symbolOrder, ok := event.Data["symbol.order"].([]string)
+	// The event carries the result's symbols in the result's order.
+	symbolOrder, ok := event.Data["symbol.order"].([]query.Symbol)
 	if !ok || len(symbolOrder) != 2 {
-		t.Errorf("Expected symbol.order with 2 elements, got %v", event.Data["symbol.order"])
+		t.Fatalf("Expected symbol.order with 2 symbols, got %v", event.Data["symbol.order"])
 	}
 
-	if symbolOrder[0] != "?x" || symbolOrder[1] != "?v" {
+	if symbolOrder[0] != datalog.NewSymbol("?x") || symbolOrder[1] != datalog.NewSymbol("?v") {
 		t.Errorf("Expected symbol order [?x ?v], got %v", symbolOrder)
 	}
 }
@@ -269,8 +269,8 @@ func TestWrapMatcher_WithBindings(t *testing.T) {
 
 	event := capturedEvents[0]
 
-	bindingSymbols, ok := event.Data["binding.symbols"].([]string)
-	if !ok || len(bindingSymbols) != 1 || bindingSymbols[0] != "?x" {
+	bindingSymbols, ok := event.Data["binding.symbols"].([]query.Symbol)
+	if !ok || len(bindingSymbols) != 1 || bindingSymbols[0] != datalog.NewSymbol("?x") {
 		t.Errorf("Expected binding.symbols=[?x], got %v", event.Data["binding.symbols"])
 	}
 

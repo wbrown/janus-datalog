@@ -45,7 +45,7 @@ func TestOrBranchExpressionIsOrderedAfterItsBinder(t *testing.T) {
 			`[:find ?a :where [?a :p ?y] [(identity ?b) ?y] [?b :q ?z] [(identity ?a) ?z]]`,
 			[]string{"a1"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})

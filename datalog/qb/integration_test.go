@@ -88,7 +88,7 @@ func setupTestDB(t *testing.T, backend storage.Backend, popts *planner.PlannerOp
 
 // TestIntegration_BasicQuery tests basic query execution
 func TestIntegration_BasicQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -131,7 +131,7 @@ func TestIntegration_BasicQuery(t *testing.T) {
 
 // TestIntegration_JoinQuery tests that same variable creates join
 func TestIntegration_JoinQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -175,7 +175,7 @@ func TestIntegration_JoinQuery(t *testing.T) {
 
 // TestIntegration_PredicateQuery tests queries with predicates
 func TestIntegration_PredicateQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -224,7 +224,7 @@ func TestIntegration_PredicateQuery(t *testing.T) {
 
 // TestIntegration_MultiplePredicates tests queries with multiple predicates
 func TestIntegration_MultiplePredicates(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -262,7 +262,7 @@ func TestIntegration_MultiplePredicates(t *testing.T) {
 
 // TestIntegration_AggregationQuery tests queries with aggregation
 func TestIntegration_AggregationQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -316,7 +316,7 @@ func TestIntegration_AggregationQuery(t *testing.T) {
 
 // TestIntegration_CountAggregation tests count aggregation
 func TestIntegration_CountAggregation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -361,7 +361,7 @@ func TestIntegration_CountAggregation(t *testing.T) {
 
 // TestIntegration_InputParameters tests queries with input parameters
 func TestIntegration_InputParameters(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -406,7 +406,7 @@ func TestIntegration_InputParameters(t *testing.T) {
 
 // TestIntegration_CollectionInput tests queries with collection input
 func TestIntegration_CollectionInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -453,7 +453,7 @@ func TestIntegration_CollectionInput(t *testing.T) {
 
 // TestIntegration_OrderBy tests queries with ordering
 func TestIntegration_OrderBy(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -497,7 +497,7 @@ func TestIntegration_OrderBy(t *testing.T) {
 // TestIntegration_QueryInto tests QueryInto with struct mapping
 // Uses positional mapping - no datalog tags needed, fields map by order
 func TestIntegration_QueryInto(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -544,7 +544,7 @@ func TestIntegration_QueryInto(t *testing.T) {
 // TestIntegration_QueryOneInto tests QueryOneInto for single result
 // Uses positional mapping - no datalog tags needed
 func TestIntegration_QueryOneInto(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -590,7 +590,7 @@ func TestIntegration_QueryOneInto(t *testing.T) {
 // TestIntegration_QueryIntoWithAggregation tests QueryInto with aggregation functions
 // Uses positional mapping - no datalog tags needed
 func TestIntegration_QueryIntoWithAggregation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -660,7 +660,7 @@ func TestIntegration_QueryIntoWithAggregation(t *testing.T) {
 
 // TestIntegration_CompareWithEDN verifies built query produces same results as EDN string
 func TestIntegration_CompareWithEDN(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -730,7 +730,7 @@ func TestIntegration_CompareWithEDN(t *testing.T) {
 
 // TestIntegration_ConstantValue tests pattern with constant value
 func TestIntegration_ConstantValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -763,7 +763,7 @@ func TestIntegration_ConstantValue(t *testing.T) {
 
 // TestIntegration_BooleanPredicate tests boolean comparison
 func TestIntegration_BooleanPredicate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -798,7 +798,7 @@ func TestIntegration_BooleanPredicate(t *testing.T) {
 
 // TestIntegration_AvgAggregation tests average aggregation
 func TestIntegration_AvgAggregation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -838,7 +838,7 @@ func TestIntegration_AvgAggregation(t *testing.T) {
 
 // TestIntegration_MinMaxAggregation tests min/max aggregation
 func TestIntegration_MinMaxAggregation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -887,7 +887,7 @@ func TestIntegration_MinMaxAggregation(t *testing.T) {
 
 // TestIntegration_ThreeWayJoin tests joining three patterns
 func TestIntegration_ThreeWayJoin(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -933,7 +933,7 @@ func TestIntegration_ThreeWayJoin(t *testing.T) {
 
 // TestIntegration_Explain tests the Explain function with built query
 func TestIntegration_Explain(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -985,7 +985,7 @@ func containsAny(s string, substrs ...string) bool {
 
 // TestIntegration_TupleInput tests queries with tuple input [[?x ?y]]
 func TestIntegration_TupleInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -1035,7 +1035,7 @@ func TestIntegration_TupleInput(t *testing.T) {
 
 // TestIntegration_RelationInput tests queries with relation input [[?x ?y] ...]
 func TestIntegration_RelationInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -1087,7 +1087,7 @@ func TestIntegration_RelationInput(t *testing.T) {
 
 // TestIntegration_RelationInputNoMatch tests relation input with no matching data
 func TestIntegration_RelationInputNoMatch(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -1127,7 +1127,7 @@ func TestIntegration_RelationInputNoMatch(t *testing.T) {
 
 // TestIntegration_MultipleScalarInputs tests queries with multiple scalar inputs
 func TestIntegration_MultipleScalarInputs(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -1168,7 +1168,7 @@ func TestIntegration_MultipleScalarInputs(t *testing.T) {
 
 // TestIntegration_CompareInputBindingsWithEDN verifies input bindings match EDN behavior
 func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -1314,7 +1314,7 @@ func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
 
 // TestIntegration_ComparisonBinding tests comparison binding with .As()
 func TestIntegration_ComparisonBinding(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -1376,7 +1376,7 @@ func TestIntegration_ComparisonBinding(t *testing.T) {
 
 // TestIntegration_ComparisonBindingEDNEquivalence compares qb with EDN query
 func TestIntegration_ComparisonBindingEDNEquivalence(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -1428,7 +1428,7 @@ func TestIntegration_ComparisonBindingEDNEquivalence(t *testing.T) {
 
 // TestIntegration_ChainedComparisonBinding tests chained comparison binding
 func TestIntegration_ChainedComparisonBinding(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDB(t, mode.backend, &popts)
@@ -1564,7 +1564,7 @@ func setupTestDBWithOptionalAttrs(t *testing.T, backend storage.Backend, popts *
 
 // TestIntegration_GetElse tests get-else with default value
 func TestIntegration_GetElse(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
@@ -1622,7 +1622,7 @@ func TestIntegration_GetElse(t *testing.T) {
 
 // TestIntegration_GetElseEDNEquivalence compares qb GetElse with EDN query
 func TestIntegration_GetElseEDNEquivalence(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
@@ -1671,7 +1671,7 @@ func TestIntegration_GetElseEDNEquivalence(t *testing.T) {
 
 // TestIntegration_MissingPredicate tests missing? as a filter predicate
 func TestIntegration_MissingPredicate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
@@ -1717,7 +1717,7 @@ func TestIntegration_MissingPredicate(t *testing.T) {
 
 // TestIntegration_MissingPredicateEDNEquivalence compares qb Missing predicate with EDN
 func TestIntegration_MissingPredicateEDNEquivalence(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
@@ -1765,7 +1765,7 @@ func TestIntegration_MissingPredicateEDNEquivalence(t *testing.T) {
 
 // TestIntegration_MissingExpression tests missing? as an expression binding bool
 func TestIntegration_MissingExpression(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
@@ -1824,7 +1824,7 @@ func TestIntegration_MissingExpression(t *testing.T) {
 
 // TestIntegration_GetSome tests get-some fallback attribute chain
 func TestIntegration_GetSome(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)

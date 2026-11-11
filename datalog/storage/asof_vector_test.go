@@ -18,7 +18,7 @@ import (
 // to always return the current (latest) content instead of the
 // historical content at the requested ElementID.
 func TestAsOfVectorResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -74,7 +74,7 @@ func TestAsOfVectorResolution(t *testing.T) {
 // are only appended (no tombstoning). Elements added after the cutoff
 // should not appear.
 func TestAsOfVectorResolution_AddOnly(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -132,7 +132,7 @@ func TestAsOfVectorResolution_AddOnly(t *testing.T) {
 // TestAsOfVectorResolution_PullInto verifies that PullInto on an AsOf
 // database correctly returns historical vector content.
 func TestAsOfVectorResolution_PullInto(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

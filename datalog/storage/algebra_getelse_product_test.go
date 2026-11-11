@@ -65,7 +65,8 @@ func setupGetElseWithItemsDB(t testing.TB, mode optimizerMode) *Database {
 	p2 := datalog.NewIdentity("proj:2")
 	i1 := datalog.NewIdentity("item:1")
 	i2 := datalog.NewIdentity("item:2")
-	now := time.Now().Truncate(time.Second)
+	// A fixed instant, so two databases this builds hold the same facts.
+	now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
 
 	// Two projects
 	require.NoError(t, tx.Add(p1, datalog.NewKeyword(":project/type"), datalog.NewKeyword(":type/active")))
@@ -91,100 +92,59 @@ func setupGetElseWithItemsDB(t testing.TB, mode optimizerMode) *Database {
 	return db
 }
 
-// TestGetElseMultiple_NoCartesianProduct tests that multiple get-else
-// expressions on the same entity produce one tuple per entity, not a
-// Cartesian product.
+// Several get-else expressions on one entity answer one tuple per entity on
+// every leg, never a Cartesian product.
 func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
-	for _, mode := range optimizerModes {
+	q := `[:find ?p ?name ?a ?b ?c
+	       :where [?p :project/type :type/active]
+	              [(get-else $ ?p :project/name "") ?name]
+	              [(get-else $ ?p :project/opt-a "") ?a]
+	              [(get-else $ ?p :project/opt-b "") ?b]
+	              [(get-else $ ?p :project/opt-c "") ?c]]`
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseTestDB(t, mode, nil)
-
-			q := `[:find ?p ?name ?a ?b ?c
-			       :where [?p :project/type :type/active]
-			              [(get-else $ ?p :project/name "") ?name]
-			              [(get-else $ ?p :project/opt-a "") ?a]
-			              [(get-else $ ?p :project/opt-b "") ?b]
-			              [(get-else $ ?p :project/opt-c "") ?c]]`
-
-			db.ClearPlanCache()
-			baselineRel, err := queryWithoutAlgebra(db, q)
+			got, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
-			baseline, err := executor.CollectTuples(baselineRel, nil)
-			require.NoError(t, err)
-			require.Len(t, baseline, 3, "baseline: one tuple per project")
-
-			db.ClearPlanCache()
-			optimizedRel, err := queryWithAlgebra(db, q)
-			require.NoError(t, err)
-			optimized, err := executor.CollectTuples(optimizedRel, nil)
-			require.NoError(t, err)
-			assert.Len(t, optimized, 3,
-				"algebra bridge: must produce one tuple per project, not a Cartesian product")
+			require.Len(t, got, 3, "one tuple per project, not a Cartesian product")
 		})
 	}
 }
 
-// TestGetElseMultiple_CorrectValues verifies that get-else returns the
-// stored value when present and the default when absent, through the
-// algebra bridge path.
+// A get-else answers the stored value when present and the default when
+// absent, on every leg.
 func TestGetElseMultiple_CorrectValues(t *testing.T) {
-	for _, mode := range optimizerModes {
+	q := `[:find ?name ?a ?b ?c
+	       :where [?p :project/type :type/active]
+	              [(get-else $ ?p :project/name "") ?name]
+	              [(get-else $ ?p :project/opt-a "default-a") ?a]
+	              [(get-else $ ?p :project/opt-b "default-b") ?b]
+	              [(get-else $ ?p :project/opt-c "default-c") ?c]]`
+	want := [][]interface{}{
+		{"Alpha", "a1", "b1", "c1"},
+		{"Beta", "a2", "default-b", "default-c"},
+		{"Gamma", "default-a", "default-b", "default-c"},
+	}
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseTestDB(t, mode, nil)
-
-			q := `[:find ?name ?a ?b ?c
-			       :where [?p :project/type :type/active]
-			              [(get-else $ ?p :project/name "") ?name]
-			              [(get-else $ ?p :project/opt-a "default-a") ?a]
-			              [(get-else $ ?p :project/opt-b "default-b") ?b]
-			              [(get-else $ ?p :project/opt-c "default-c") ?c]]`
-
-			db.ClearPlanCache()
-			baselineRel, err := queryWithoutAlgebra(db, q)
+			got, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
-			baseline, err := executor.CollectTuples(baselineRel, nil)
-			require.NoError(t, err)
-
-			baselineByName := make(map[string]executor.Tuple)
-			for _, tuple := range baseline {
-				baselineByName[tuple[0].(string)] = tuple
-			}
-
-			assert.Equal(t, "a1", baselineByName["Alpha"][1])
-			assert.Equal(t, "b1", baselineByName["Alpha"][2])
-			assert.Equal(t, "c1", baselineByName["Alpha"][3])
-			assert.Equal(t, "a2", baselineByName["Beta"][1])
-			assert.Equal(t, "default-b", baselineByName["Beta"][2])
-			assert.Equal(t, "default-c", baselineByName["Beta"][3])
-			assert.Equal(t, "default-a", baselineByName["Gamma"][1])
-			assert.Equal(t, "default-b", baselineByName["Gamma"][2])
-			assert.Equal(t, "default-c", baselineByName["Gamma"][3])
-
-			db.ClearPlanCache()
-			optimizedRel, err := queryWithAlgebra(db, q)
-			require.NoError(t, err)
-			optimized, err := executor.CollectTuples(optimizedRel, nil)
-			require.NoError(t, err)
-
-			optimizedByName := make(map[string]executor.Tuple)
-			for _, tuple := range optimized {
-				optimizedByName[tuple[0].(string)] = tuple
-			}
-
-			assert.Len(t, optimized, len(baseline), "same tuple count")
-			for name, expected := range baselineByName {
-				actual, ok := optimizedByName[name]
-				require.True(t, ok, "missing result for %s", name)
-				assert.Equal(t, expected, actual, "values must match for %s", name)
-			}
+			require.ElementsMatch(t, want, got)
 		})
 	}
 }
 
-// TestGetElsePipelineInvariant verifies the single-relation pipeline invariant
-// via annotations: after each clause, there should be exactly 1 relation group.
+// On the legs with the algebra optimizer, the get-else scan rewrite replaces
+// each consumed outer relation, and the pipeline holds one relation group
+// after every collapse.
 func TestGetElsePipelineInvariant(t *testing.T) {
-	for _, mode := range optimizerModes {
+	q := `[:find ?p ?name ?a ?b
+	       :where [?p :project/type :type/active]
+	              [(get-else $ ?p :project/name "") ?name]
+	              [(get-else $ ?p :project/opt-a "") ?a]
+	              [(get-else $ ?p :project/opt-b "") ?b]]`
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption, fusionOption), func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			maxGroups := 0
 			replacements := 0
@@ -203,24 +163,11 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 					}
 				}
 			})
-
-			q := `[:find ?p ?name ?a ?b
-			       :where [?p :project/type :type/active]
-			              [(get-else $ ?p :project/name "") ?name]
-			              [(get-else $ ?p :project/opt-a "") ?a]
-			              [(get-else $ ?p :project/opt-b "") ?b]]`
-
-			db.ClearPlanCache()
-			rel, err := queryWithAlgebra(db, q)
-			require.NoError(t, err)
-			_, err = executor.CollectTuples(rel, nil)
+			_, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
 
-			require.Equal(t, 3, replacements,
-				"each get-else rewrite must replace its consumed outer relation")
-			assert.Equal(t, 1, maxGroups,
-				"pipeline invariant: should never have more than 1 relation group after collapse; "+
-					"got %d (disjoint groups = Cartesian product risk)", maxGroups)
+			require.Equal(t, 3, replacements, "each get-else rewrite replaces its consumed outer relation")
+			require.Equal(t, 1, maxGroups, "one relation group after every collapse; %d groups is a Cartesian product risk", maxGroups)
 		})
 	}
 }
@@ -463,23 +410,21 @@ func runComplexQueryTest(t *testing.T, db *Database, q interface{}, label string
 	assert.Len(t, tuples, expectedTuples, "%s: expected %d tuples", label, expectedTuples)
 }
 
-// TestGetElseComplex_OrSemantics compares the (or ...) query result with and
-// without the algebra bridge to verify they agree. Whatever the base executor
-// produces is the correct semantics; the algebra bridge must match.
+// The complex (or ...) query answers the same tuples on every leg as on the
+// reference leg. Each leg logs the query's clauses and the algebra
+// optimizer's rewrite of them.
 func TestGetElseComplex_OrSemantics(t *testing.T) {
-	for _, mode := range optimizerModes {
+	q := buildComplexQuery_OrClause(t)
+	want, err := executor.CollectTuples(setupGetElseWithItemsDB(t, referenceMode).Query(q))
+	require.NoError(t, err)
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 
-			q := buildComplexQuery_OrClause(t)
-
-			// Print original clauses
 			t.Logf("BEFORE algebra bridge (%d clauses):", len(q.Where))
 			for i, c := range q.Where {
 				t.Logf("  [%d] %T: %s", i, c, c.String())
 			}
-
-			// Print algebra bridge output
 			prepared, err := query.Prepare(q, nil)
 			require.NoError(t, err)
 			bridged, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
@@ -496,37 +441,9 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 				t.Logf("  [%d] %T: %s", i, c, c.String())
 			}
 
-			// Without algebra bridge
-			db.ClearPlanCache()
-			opts := mode.plannerOptions()
-			opts.EnableAlgebraOptimizer = false
-			router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
-			exec := executor.NewExecutorWithOptions(router, db, opts)
-			baselineRel, err := exec.ExecuteWithRelations(executor.NewContext(), q, nil)
-			require.NoError(t, err, "baseline should not error")
-			baseline, err := executor.CollectTuples(baselineRel, nil)
+			got, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err)
-			t.Logf("Without algebra: %d results", len(baseline))
-			for _, tuple := range baseline {
-				t.Logf("  %v", tuple)
-			}
-
-			// With algebra bridge
-			db.ClearPlanCache()
-			opts2 := mode.plannerOptions()
-			opts2.EnableAlgebraOptimizer = true
-			exec2 := executor.NewExecutorWithOptions(router, db, opts2)
-			optimizedRel, err := exec2.ExecuteWithRelations(executor.NewContext(), q, nil)
-			require.NoError(t, err, "optimized should not error")
-			optimized, err := executor.CollectTuples(optimizedRel, nil)
-			require.NoError(t, err)
-			t.Logf("With algebra: %d results", len(optimized))
-			for _, tuple := range optimized {
-				t.Logf("  %v", tuple)
-			}
-
-			assert.Equal(t, len(baseline), len(optimized),
-				"algebra bridge must produce same tuple count as base executor")
+			require.ElementsMatch(t, want, got)
 		})
 	}
 }
@@ -535,7 +452,7 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 // Both branches contribute tuples when both match. This is correct union behavior, not a bug.
 // Use (or-default ...) for fallback semantics (2 tuples).
 func TestGetElseComplex_ParsedOr(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 			runComplexQueryTest(t, db, parsedComplexQuery_Or, "parsed (or)", 9)
@@ -546,7 +463,7 @@ func TestGetElseComplex_ParsedOr(t *testing.T) {
 // TestGetElseComplex_ParsedOrDefault tests with parsed (or-default ...).
 // Fallback semantics: one tuple per project.
 func TestGetElseComplex_ParsedOrDefault(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 			runComplexQueryTest(t, db, parsedComplexQuery_OrDefault, "parsed (or-default)", 2)
@@ -557,7 +474,7 @@ func TestGetElseComplex_ParsedOrDefault(t *testing.T) {
 // TestGetElseComplex_QBOr tests with qb.Or() → *query.OrClause.
 // Same union semantics as parsed (or ...): 9 tuples.
 func TestGetElseComplex_QBOr(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 			q := buildComplexQuery_OrClause(t)
@@ -570,7 +487,7 @@ func TestGetElseComplex_QBOr(t *testing.T) {
 // TestGetElseComplex_QBOrDefault tests with qb.OrDefault() → *query.OrDefaultClause.
 // Fallback semantics: 2 tuples.
 func TestGetElseComplex_QBOrDefault(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupGetElseWithItemsDB(t, mode)
 			q := buildComplexQuery_OrDefaultClause(t)

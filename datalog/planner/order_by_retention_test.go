@@ -9,11 +9,10 @@ import (
 )
 
 // Under an aggregating find the aggregate runs over the whole join, so the
-// terminal symbols, the set the planner keeps to the find boundary and the
-// algebra path's join-project insertion keeps, are every symbol the join
-// binds: the aggregate's argument, the entities the find does not name, and a
-// collection input no clause reads. A projection find's terminal symbols are
-// its own.
+// terminal symbols, the set the planner keeps to the find boundary, are every
+// symbol the join binds: the aggregate's argument, the entities the find does
+// not name, and a collection input no clause reads. A projection find's
+// terminal symbols are its own.
 func TestTerminalSymbols_UnderAnAggregatingFindAreTheJoins(t *testing.T) {
 	aggregating, err := parser.ParseQuery(`[:find (count ?n) :in $ [?w ...] :where [?e :t/n ?n] [?z :t/k _]]`)
 	if err != nil {

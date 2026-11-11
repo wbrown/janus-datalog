@@ -45,16 +45,18 @@ func ResolveLWWFromDatoms(datoms []datalog.Datom) (any, datalog.ElementID) {
 
 // ResolveAddWinsFromDatoms resolves cardinality-many using add-wins CRDT semantics.
 // Input: datoms for a single (E, A) pair, any order. Datoms include Op field.
-// Output: set of current members, max ElementID seen.
+// Output: set of current members, each member's newest assertion's Tx under
+// the member's key (the datom the member resolves to, which a pattern's
+// transaction position binds), max ElementID seen.
 //
 // Add-wins semantics:
 // - For each unique value, track highest add tx and highest remove tx
 // - If add has higher Lamport: in set
 // - If remove has higher Lamport: not in set
 // - Same Lamport (concurrent): add wins
-func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[string]any, datalog.ElementID) {
+func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[string]any, map[string]datalog.ElementID, datalog.ElementID) {
 	if len(datoms) == 0 {
-		return make(map[string]any), datalog.ElementID{}
+		return make(map[string]any), make(map[string]datalog.ElementID), datalog.ElementID{}
 	}
 
 	var maxID datalog.ElementID
@@ -97,8 +99,10 @@ func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[string]any, datalog.E
 		}
 	}
 
-	// Resolve membership, each member held under its memberKey
+	// Resolve membership, each member and its newest assertion's Tx held
+	// under its memberKey
 	result := make(map[string]any)
+	memberTx := make(map[string]datalog.ElementID)
 	for valueKey, state := range valueStates {
 		inSet := false
 		if state.hasAdd && !state.hasRemove {
@@ -113,10 +117,11 @@ func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[string]any, datalog.E
 		}
 		if inSet {
 			result[valueKey] = state.value
+			memberTx[valueKey] = state.highestAddTx
 		}
 	}
 
-	return result, maxID
+	return result, memberTx, maxID
 }
 
 // ResolveRGAFromDatoms resolves cardinality-vector using RGA reconstruction.

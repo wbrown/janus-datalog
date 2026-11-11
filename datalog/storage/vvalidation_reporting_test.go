@@ -26,7 +26,7 @@ import (
 // tuple without going near that loop, so an increment only there would report
 // every unique-attribute binding as matching nothing.
 func TestVValidationReportsWhatItsScansCost(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testVValidationReportsWhatItsScansCost(t, mode)
 		})
@@ -170,7 +170,7 @@ func testVValidationReportsWhatItsScansCost(t *testing.T, mode optimizerMode) {
 // candidate, so a consumer that closes the arm after its first tuple reads the
 // datoms a consumer that drains it reads, and both completions report them once.
 func TestVValidationReportsAScanClosedBeforeItsEndOnce(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			name := datalog.NewKeyword(":person/name")
 			alice := datalog.NewIdentity("vvalidation:alice")

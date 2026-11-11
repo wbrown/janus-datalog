@@ -146,7 +146,7 @@ The planner is the bridge between a declarative query (an unordered set of claus
 **Algebra-preserving logical optimization.** Before physical planning, the optimizer builds and validates a relational-algebra tree:
 
 - **Algebra IR optimization** (`EnableAlgebraOptimizer`, default-active): `algebra.Compile(q, rules)` takes the prepared query and the rule set its invocations are ordered under, compiles the clauses to a relational-algebra tree, and the tree passes through transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, scan rewrites for `get-else` with vector defaults). The engine infers nothing: every nested form arrives as a header form, and the header is where each operator's keys come from. A schema-aware immutable rebuild refreshes derived outputs after every pass.
-- **Nested Datalog lowering**: the optimized tree is lowered back into a cloned `query.Query`. `Project` becomes a relation-binding subquery; aggregate/OR/NOT/lateral scope remains explicit in Datalog, each nested form decompiled with its header. The optimizer contract is therefore `Query → Query`, an optional rewrite from a prepared query to an equivalent one, and the two planner paths phase the same prepared text.
+- **Nested Datalog lowering**: the optimized tree is lowered back into a cloned `query.Query`. The one `Project` the compiler makes is childless and lowers to no clause; aggregate/OR/NOT/lateral scope remains explicit in Datalog, each nested form decompiled with its header. The optimizer contract is therefore `Query → Query`, an optional rewrite from a prepared query to an equivalent one, and the two planner paths phase the same prepared text.
 
 - **Constant-bindable scalar detection**: Scalar inputs that only appear in predicates/expressions (not data patterns) are flagged in phase metadata. The executor resolves these as constants rather than creating separate relation groups, avoiding unnecessary joins.
 
@@ -228,7 +228,7 @@ Only the hash join build side materializes. Everything else streams. The 4x spee
 
 **Symmetric hash join** (optional, `EnableSymmetricHashJoin`) extends this to stream-to-stream joins: both sides materialize incrementally into hash tables, processing in interleaved batches. Neither side needs to be fully consumed before results start flowing. Trade-off: slightly slower than standard hash join (~37% overhead) but enables full pipeline streaming when both inputs are themselves streaming.
 
-**Forced materialization** happens only when semantically required: aggregation (must see all groups), order-by (must sort), and `Size()` calls on streaming relations (though `EnableTrueStreaming=true` returns -1 instead of forcing consumption).
+**Forced materialization** happens only when semantically required: aggregation (must see all groups) and order-by (must sort). A `Size()` call on a streaming relation answers -1 rather than consuming it.
 
 ### Phase Execution Detail
 
@@ -332,6 +332,7 @@ Every body runs through the phase executor above. Its patterns stream from stora
    - Transaction metadata datom (`tx:N :db/txInstant time`)
    - The read session closes before the storage commit; a failed close rolls the storage transaction back and commits nothing
    - EA cache invalidation for touched (entity, attribute) pairs
+   - A transaction holding no write opens no storage transaction and writes no metadata datom; its commit returns the store's highest ElementID
 
 ### Reflect Write Path
 
@@ -376,9 +377,12 @@ custom sources may ignore them and return no ordering guarantee.
 **Extended variants**:
 - `PredicateAwareMatcher` adds `MatchWithConstraints()` — predicate pushdown into storage
 - `EntityLookupMatcher` adds error-returning `LookupAttribute()` — single-value
-  lookups distinguish absence from storage/decode failure — and `LookupSource()`,
-  the lookup of the source a `get-else`, `missing?` or `get-some` names; a source
-  the matcher does not hold, or one without the capability, is an error naming it
+  lookups distinguish absence from storage/decode failure — `AttributeLookup()`,
+  the lookup of one attribute from the default source, which answers at each
+  entity what `LookupAttribute()` answers for that entity and attribute and
+  through which a `get-else`, `missing?` or `get-some` evaluates — and
+  `LookupSource()`, the lookup of the source such a function names; a source the
+  matcher does not hold, or one without the capability, is an error naming it
 
 ### Relation — Tuple Set Abstraction
 
@@ -575,13 +579,7 @@ Core types in the top-level package:
 
 Single planner: `ClauseBasedPlanner`. Converts a prepared `*query.Query` (see Preparation under the query path overview) into a `RealizedPlan` (ordered phases with physical symbol-flow contracts). The default logical path compiles and optimizes algebra under the rule set, validates exact schemas and free requirements, then lowers back to nested Datalog before the planner constructs phases. The planner computes no interface: `ScopeOf` reads a nested form's header alone, the required run as mandatory correlates and the outputs as provided, and `PlanQuery` panics as `ScopeOf` does on a headerless form.
 
-**Algebra lowering**: `EnableAlgebraOptimizer` (on by default) runs Query → algebra IR → transform passes → schema refresh/validation → Query. Non-linear children remain nested Datalog (`q`, OR/fallback, and NOT forms); `Project` lowers to a relation-binding subquery. A rule invocation compiles to a `Derived` leaf the passes carry through and decompile back to the invocation. Algebra never constructs `RealizedPlan`.
-
-**Join projection experiment**: `EnableJoinProjectInsertion` (off by default)
-uses backward liveness to insert `Project` on narrowed inner-join children before
-nested Datalog lowering. It is correctness-proven for no-input queries, but
-relation-subquery execution regresses the focused workload, so it remains an
-inactive logical-rewrite experiment.
+**Algebra lowering**: `EnableAlgebraOptimizer` (on by default) runs Query → algebra IR → transform passes → schema refresh/validation → Query. Non-linear children remain nested Datalog (`q`, OR/fallback, and NOT forms). The one `Project` the compiler makes is childless, the placeholder a scope's branches compile against for the symbols the scope is given, and it lowers to no clause; a `Project` over clauses has no clause form, since Datalog states a projection at a scope's find alone (`docs/ideas/JOIN_PROJECT_INSERTION.md`). A rule invocation compiles to a `Derived` leaf the passes carry through and decompile back to the invocation. Algebra never constructs `RealizedPlan`.
 
 **Disabled-optimizer algorithm** (`clause_phasing.go`): Greedy clause selection within phases:
 1. Start with input symbols as available

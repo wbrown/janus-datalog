@@ -228,7 +228,7 @@ func TestRules_TheKeptSiteFixturesAnswerTheReferenceUnderEveryBinding(t *testing
 	for trial := int64(0); trial < keptSiteTrials; trial++ {
 		graphs = append(graphs, randomKeptSiteGraph(trial))
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			witnessed := map[string]int{}
 			for i, kg := range graphs {

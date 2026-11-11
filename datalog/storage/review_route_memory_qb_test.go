@@ -29,7 +29,7 @@ func TestReviewRoute_MemorySourceGetElseFromAnswersOneValue(t *testing.T) {
 		qb.PatFrom(m, e, qb.Kw(":item/name"), n),
 		qb.GetElseFrom(m, e, qb.Kw(":item/tag"), "none").As(v),
 	).MustBuild()
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tuples, err := executor.CollectTuples(d.Query(built, sourceNamed("$m", logDatabase(t, facts))))

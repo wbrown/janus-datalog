@@ -4,10 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
-	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 func TestAlgebraBridgeOptimizedOffExactTupleDifferential(t *testing.T) {
@@ -88,172 +86,25 @@ func TestAlgebraBridgeOptimizedOffExactTupleDifferential(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
+	// Every leg answers each shape as the reference leg does: the same tuples,
+	// in the same order where the query orders.
+	referenceDB := setupAlgebraTestDB(t, referenceMode)
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupAlgebraTestDB(t, mode)
 			for _, testCase := range testCases {
 				t.Run(testCase.name, func(t *testing.T) {
-					baseline := executeAlgebraMode(t, db, testCase.query, testCase.inputs, false)
-					optimized := executeAlgebraMode(t, db, testCase.query, testCase.inputs, true)
+					want := executePlannerOptions(t, referenceDB, testCase.query, testCase.inputs, referenceMode.plannerOptions())
+					got := executePlannerOptions(t, db, testCase.query, testCase.inputs, mode.plannerOptions())
 					if testCase.ordered {
-						require.Equal(t, baseline, optimized)
+						require.Equal(t, want, got)
 					} else {
-						require.ElementsMatch(t, baseline, optimized)
+						require.ElementsMatch(t, want, got)
 					}
 				})
 			}
 		})
 	}
-}
-
-// The two project-insertion differentials below run through
-// runPlannerOptions, which builds its own executor from the options passed in
-// and ignores the database's — so the mode has to seed those options directly
-// or the optimizer axis never moves.
-func TestJoinProjectInsertionExactTupleDifferential(t *testing.T) {
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
-
-			score := datalog.NewKeyword(":item/score")
-			payload := datalog.NewKeyword(":item/payload")
-			tx := db.NewTransaction()
-			for _, item := range []struct {
-				id      string
-				score   int64
-				payload string
-			}{
-				{id: "item-a", score: 95, payload: "alpha"},
-				{id: "item-b", score: 80, payload: "beta"},
-				{id: "item-c", score: 100, payload: "gamma"},
-			} {
-				entity := datalog.NewIdentity(item.id)
-				tx.Add(entity, score, item.score)
-				tx.Add(entity, payload, item.payload)
-			}
-			_, err := tx.Commit()
-			require.NoError(t, err)
-
-			source := `[:find ?entity ?payload
-				:where [?entity :item/score ?score]
-				       [(> ?score 90)]
-				       [?entity :item/payload ?payload]]`
-			baselineOptions := mode.plannerOptions()
-			baselineOptions.EnableJoinProjectInsertion = false
-			projectOptions := baselineOptions
-			projectOptions.EnableJoinProjectInsertion = true
-			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-			optimized := executePlannerOptions(t, db, source, nil, projectOptions)
-			require.ElementsMatch(t, baseline, optimized)
-			require.Len(t, optimized, 2)
-			require.ElementsMatch(t, []interface{}{"alpha", "gamma"}, []interface{}{
-				optimized[0][1],
-				optimized[1][1],
-			})
-		})
-	}
-}
-
-func TestJoinProjectInsertionDeduplicatesProjectedFanout(t *testing.T) {
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			tag := datalog.NewKeyword(":item/tag")
-			payload := datalog.NewKeyword(":item/payload")
-			s := schema.NewSchema()
-			s.Add(&schema.AttributeDefinition{
-				Ident:       tag,
-				ValueType:   schema.TypeString,
-				Cardinality: schema.CardinalityMany,
-			})
-			s.Add(&schema.AttributeDefinition{
-				Ident:       payload,
-				ValueType:   schema.TypeString,
-				Cardinality: schema.CardinalityOne,
-			})
-			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
-
-			entity := datalog.NewIdentity("fanout-item")
-			tx := db.NewTransaction()
-			tx.Add(entity, tag, "alpha")
-			tx.Add(entity, tag, "beta")
-			tx.Add(entity, payload, "shared")
-			_, err := tx.Commit()
-			require.NoError(t, err)
-
-			source := `[:find ?entity ?payload
-				:where [?entity :item/tag ?tag]
-				       [?entity :item/payload ?payload]]`
-			baselineOptions := mode.plannerOptions()
-			baselineOptions.EnableJoinProjectInsertion = false
-			projectOptions := baselineOptions
-			projectOptions.EnableJoinProjectInsertion = true
-
-			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-			projected := executePlannerOptions(t, db, source, nil, projectOptions)
-			require.Equal(t, [][]interface{}{{entity, "shared"}}, baseline)
-			require.Equal(t, baseline, projected,
-				"projecting the fanout symbol must retain Relation set semantics")
-		})
-	}
-}
-
-// A count runs over the whole join under every planner option: an entity with
-// two tags and one payload counts two payload tuples with join-project
-// insertion on as off, since under an aggregating find the symbols kept to the
-// find boundary are every symbol of the join.
-func TestCountOverAFanout_IsTheSameUnderJoinProjectInsertion(t *testing.T) {
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			tag := datalog.NewKeyword(":item/tag")
-			payload := datalog.NewKeyword(":item/payload")
-			s := schema.NewSchema()
-			s.Add(&schema.AttributeDefinition{
-				Ident:       tag,
-				ValueType:   schema.TypeString,
-				Cardinality: schema.CardinalityMany,
-			})
-			s.Add(&schema.AttributeDefinition{
-				Ident:       payload,
-				ValueType:   schema.TypeString,
-				Cardinality: schema.CardinalityOne,
-			})
-			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
-
-			entity := datalog.NewIdentity("fanout-item")
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Add(entity, tag, "alpha"))
-			require.NoError(t, tx.Add(entity, tag, "beta"))
-			require.NoError(t, tx.Add(entity, payload, "shared"))
-			_, err := tx.Commit()
-			require.NoError(t, err)
-
-			source := `[:find (count ?payload)
-				:where [?entity :item/tag ?tag]
-				       [?entity :item/payload ?payload]]`
-			baselineOptions := mode.plannerOptions()
-			baselineOptions.EnableJoinProjectInsertion = false
-			projectOptions := baselineOptions
-			projectOptions.EnableJoinProjectInsertion = true
-
-			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-			projected := executePlannerOptions(t, db, source, nil, projectOptions)
-			require.Equal(t, [][]interface{}{{int64(2)}}, baseline, "the count is over every tuple of the join")
-			require.Equal(t, baseline, projected, "join-project insertion keeps every symbol of the join under an aggregating find")
-		})
-	}
-}
-
-func executeAlgebraMode(
-	t *testing.T,
-	db *Database,
-	source string,
-	inputs []interface{},
-	enabled bool,
-) [][]interface{} {
-	t.Helper()
-	options := DefaultPlannerOptions()
-	options.EnableAlgebraOptimizer = enabled
-	return executePlannerOptions(t, db, source, inputs, options)
 }
 
 func executePlannerOptions(
@@ -264,6 +115,7 @@ func executePlannerOptions(
 	options planner.PlannerOptions,
 ) [][]interface{} {
 	t.Helper()
+	options.Handler = recordingReach(t, options.Handler)
 	tuples, err := runPlannerOptions(db, source, inputs, options)
 	require.NoError(t, err)
 	return tuples

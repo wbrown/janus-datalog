@@ -31,7 +31,7 @@ func attrBytes(kw datalog.Keyword) Attribute {
 //
 // Expected: Query [?e :skills "stealth"] should find entities with that skill.
 func TestVectorAVETLookup(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create schema with vector attribute
 			s, err := schema.NewBuilder().
@@ -104,7 +104,7 @@ func TestVectorAVETLookup(t *testing.T) {
 
 // TestVectorAVETMultipleEntities verifies AVET returns all entities with same value.
 func TestVectorAVETMultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/tags").Type(schema.TypeString).Vector().Add().
@@ -157,7 +157,7 @@ func TestVectorAVETMultipleEntities(t *testing.T) {
 
 // TestVectorAVETAfterTombstone verifies tombstoned elements handling.
 func TestVectorAVETAfterTombstone(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -205,7 +205,7 @@ func TestVectorAVETAfterTombstone(t *testing.T) {
 
 // TestVectorVAETReverseLookup verifies VAET index works for entity refs in vectors.
 func TestVectorVAETReverseLookup(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create schema with vector of refs
 			s, err := schema.NewBuilder().
@@ -252,7 +252,7 @@ func TestVectorVAETReverseLookup(t *testing.T) {
 
 // TestVectorValueTypePreserved verifies V decodes as original type, not []byte.
 func TestVectorValueTypePreserved(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":test/strings").Type(schema.TypeString).Vector().Add().

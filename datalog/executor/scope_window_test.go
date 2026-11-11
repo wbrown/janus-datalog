@@ -46,12 +46,12 @@ func TestWindowGrowsFromOneTupleToTheCap(t *testing.T) {
 		OutputVars:   []query.Symbol{value},
 		Branches:     [][]query.Clause{{BranchPattern(entity, value, attr)}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			opts.Handler = mode.Recording(func(e annotations.Event) { events = append(events, e) })
 			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
 			answers := func(subject Relation) {
 				groups, err := exec.Execute(NewContext(), q, []Relation{subject})
@@ -114,14 +114,13 @@ func TestKeyAnsweredByAnEarlierWindowIsProbedNotEvaluated(t *testing.T) {
 		OutputVars:   []query.Symbol{value},
 		Branches:     [][]query.Clause{{BranchPattern(entity, value, attr)}},
 	}}}
-	for _, mode := range OptimizerModes {
+	// On the legs without attribute-fetch fusion the branch's pattern is
+	// matched over each window's keys, the seeks the matcher counts.
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return !m.Fusion() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			matcher := &keyCountingMatcher{Database: factsDatabase(t, datoms)}
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			// Attribute-fetch fusion is off, so the branch's pattern is matched
-			// over each window's keys, the seeks the matcher counts.
-			opts.EnableAttributeFetchFusion = false
 			exec := NewExecutorWithOptions(matcher, nil, opts).QueryExecutor(nil)
 			subject := NewStreamingRelation([]query.Symbol{entity, n}, NewMaterializedRelation([]query.Symbol{entity, n}, tuples).Iterator())
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
@@ -144,12 +143,12 @@ func TestFixpointContinuedAcrossWindowsDerivesEachTupleOnce(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(pages))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where [?x :page/kind "leaf"] (or-default-join [[?x] ?y] (follows ?x ?y) [(ground :end) ?y])]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var begins, completes, derived, windows int
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 2
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				switch e.Name {
 				case annotations.RulesStratumBegin:
 					begins++
@@ -162,7 +161,7 @@ func TestFixpointContinuedAcrossWindowsDerivesEachTupleOnce(t *testing.T) {
 				case annotations.ScopeWindow:
 					windows++
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			inputs, err := CreateInputRelationsFromValuesWithOptions(q, []interface{}{datalog.SymDollar, datalog.NewSymbol("%")}, exec.Options())
 			require.NoError(t, err)
@@ -203,7 +202,7 @@ func TestIterationBoundIsCountedPerWindowAndTheTupleBoundIsCarried(t *testing.T)
 		fromTheHead = append(fromTheHead, Tuple{Page(i)})
 		fromTheSink = append(fromTheSink, Tuple{Page(pages + 1 - i)})
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name()+"/iterations per window", func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 1

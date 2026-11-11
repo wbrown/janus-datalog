@@ -117,7 +117,7 @@ func TestIdentityInputMatchingBug(t *testing.T) {
 		if !ok || code != "child1" {
 			t.Errorf("Wrong code: expected 'child1', got %v", tuples[0][1])
 		}
-	})
+	}, fusionOption)
 }
 
 // TestIdentityInputMatchingWithMultipleConstraints tests Identity matching with

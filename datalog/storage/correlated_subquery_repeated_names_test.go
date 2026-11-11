@@ -46,7 +46,7 @@ func TestACorrelatedSubqueryAnswersAlikeWhereItsFindNamesItsInputOrItsBindingRep
 			`[:find ?q ?n :where [?q :p/k ?b] [(q [:find ?y (count ?z) :in $ ?b :where [?z :p/k ?y] [(= ?y ?b)]] $ ?b) [[?b ?n]]]]`,
 			countsByK},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, facts)
@@ -85,7 +85,7 @@ func TestACorrelatedAggregateAnswersAValueWithNoTuplesAlikeOnBothOptimizerPaths(
 			`[:find ?n ?c :where [?g :grp/name ?n] (or-default-join [[?g] ?c] ` + subquery + ` [(ground 0) ?c])]`,
 			[][]interface{}{{"g1", int64(2)}, {"g2", int64(0)}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, facts)

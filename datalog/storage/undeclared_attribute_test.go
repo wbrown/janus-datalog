@@ -56,7 +56,7 @@ func TestUndeclaredAttribute_TheCurrentValueAnswersUnderEveryKeyOrder(t *testing
 		s    *schema.Schema
 	}{{"declared", declared}, {"undeclared under a given schema", undeclared}, {"no schema", nil}}
 	for _, sc := range schemas {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, fusionOption) {
 			for _, disableCache := range []bool{false, true} {
 				name := sc.name + "/" + mode.name
 				if disableCache {
@@ -99,7 +99,7 @@ func TestUndeclaredAttribute_TheMatcherAnswersTheCurrentValueUnderEveryBinding(t
 		name string
 		s    *schema.Schema
 	}{{"declared", declared}, {"no schema", nil}} {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			for _, disableCache := range []bool{false, true} {
 				name := sc.name + "/" + mode.name
 				if disableCache {
@@ -170,7 +170,7 @@ func TestUndeclaredAttribute_AMovedRefAnswersItsCurrentTargetAlone(t *testing.T)
 		name string
 		s    *schema.Schema
 	}{{"declared", declared}, {"no schema", nil}} {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, fusionOption) {
 			t.Run(sc.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sc.s})
 				e, r1, r2 := datalog.NewIdentity("e"), datalog.NewIdentity("r1"), datalog.NewIdentity("r2")

@@ -77,7 +77,7 @@ func TestScanProjectionPreservesSet(t *testing.T) {
 // [?e :attr _] on a declared cardinality-many attribute projects the member
 // set away, and an entity with several members must appear once.
 func TestScanSetSemantics_DeclaredManyValueWildcard(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			s := schema.NewSchema()
@@ -112,7 +112,7 @@ func TestScanSetSemantics_DeclaredManyValueWildcard(t *testing.T) {
 // operation record; the (E, V) projection is one binding, and adding ?tx
 // distinguishes the two records.
 func TestScanSetSemantics_HistoryReassertedValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			e := datalog.NewIdentity("scan:reasserted")

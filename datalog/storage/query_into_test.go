@@ -105,7 +105,7 @@ func createTestDatabaseWithEmployees(t *testing.T, mode optimizerMode) *Database
 }
 
 func TestQueryInto_BasicQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -143,7 +143,7 @@ func TestQueryInto_BasicQuery(t *testing.T) {
 }
 
 func TestQueryInto_WithInputs(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -175,7 +175,7 @@ func TestQueryInto_WithInputs(t *testing.T) {
 }
 
 func TestQueryInto_WithAggregates(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithEmployees(t, mode)
 
@@ -227,7 +227,7 @@ func TestQueryInto_WithAggregates(t *testing.T) {
 }
 
 func TestQueryInto_PositionalMapping(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -259,7 +259,7 @@ func TestQueryInto_PositionalMapping(t *testing.T) {
 }
 
 func TestQueryInto_EmptyResults(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -282,7 +282,7 @@ func TestQueryInto_EmptyResults(t *testing.T) {
 }
 
 func TestQueryOneInto_SingleResult(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -311,7 +311,7 @@ func TestQueryOneInto_SingleResult(t *testing.T) {
 }
 
 func TestQueryOneInto_NoResults(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -335,7 +335,7 @@ func TestQueryOneInto_NoResults(t *testing.T) {
 }
 
 func TestQueryOneInto_MultipleResults(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -360,7 +360,7 @@ func TestQueryOneInto_MultipleResults(t *testing.T) {
 }
 
 func TestQueryInto_InvalidDest(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -389,7 +389,7 @@ func TestQueryInto_InvalidDest(t *testing.T) {
 }
 
 func TestQueryOneInto_InvalidDest(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -411,7 +411,7 @@ func TestQueryOneInto_InvalidDest(t *testing.T) {
 }
 
 func TestQueryInto_SymbolNotFound(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -438,7 +438,7 @@ func TestQueryInto_SymbolNotFound(t *testing.T) {
 }
 
 func TestQueryInto_TypeCoercion(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -471,7 +471,7 @@ func TestQueryInto_TypeCoercion(t *testing.T) {
 }
 
 func TestQueryInto_ParseError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -488,7 +488,7 @@ func TestQueryInto_ParseError(t *testing.T) {
 // Scalar type tests
 
 func TestQueryInto_ScalarString(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -520,7 +520,7 @@ func TestQueryInto_ScalarString(t *testing.T) {
 }
 
 func TestQueryInto_ScalarInt64(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -541,7 +541,7 @@ func TestQueryInto_ScalarInt64(t *testing.T) {
 }
 
 func TestQueryInto_ScalarIdentity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -572,7 +572,7 @@ func TestQueryInto_ScalarIdentity(t *testing.T) {
 // This is a regression test for a bug where keywordType was defined with .Elem()
 // which caused "value of type *datalog.keyword is not assignable to type datalog.keyword"
 func TestQueryInto_KeywordField(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -621,7 +621,7 @@ func TestQueryInto_KeywordField(t *testing.T) {
 }
 
 func TestQueryInto_ScalarMultiSymbolError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -640,7 +640,7 @@ func TestQueryInto_ScalarMultiSymbolError(t *testing.T) {
 }
 
 func TestQueryOneInto_ScalarString(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -664,7 +664,7 @@ func TestQueryOneInto_ScalarString(t *testing.T) {
 }
 
 func TestQueryOneInto_ScalarInt64(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -688,7 +688,7 @@ func TestQueryOneInto_ScalarInt64(t *testing.T) {
 }
 
 func TestQueryOneInto_ScalarNotFound(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -709,7 +709,7 @@ func TestQueryOneInto_ScalarNotFound(t *testing.T) {
 }
 
 func TestQueryOneInto_ScalarMultiSymbolError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -728,7 +728,7 @@ func TestQueryOneInto_ScalarMultiSymbolError(t *testing.T) {
 }
 
 func TestQueryOneInto_ScalarMultipleResults(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -772,7 +772,7 @@ type MixedModeResult struct {
 }
 
 func TestQueryInto_PullExpression(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -806,7 +806,7 @@ func TestQueryInto_PullExpression(t *testing.T) {
 }
 
 func TestQueryInto_PullWildcard(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -836,7 +836,7 @@ func TestQueryInto_PullWildcard(t *testing.T) {
 }
 
 func TestQueryInto_MixedMode(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -877,7 +877,7 @@ func TestQueryInto_MixedMode(t *testing.T) {
 }
 
 func TestQueryOneInto_PullExpression(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -907,7 +907,7 @@ func TestQueryOneInto_PullExpression(t *testing.T) {
 }
 
 func TestQueryOneInto_MixedMode(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -951,7 +951,7 @@ type EntityAttr struct {
 }
 
 func TestQueryInto_AnyField(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -1005,7 +1005,7 @@ func TestQueryInto_AnyField(t *testing.T) {
 }
 
 func TestQueryInto_AnyFieldWithKeywordValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 
@@ -1050,7 +1050,7 @@ func TestQueryInto_AnyFieldWithKeywordValue(t *testing.T) {
 }
 
 func TestQueryOneInto_AnyField(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createTestDatabaseWithPeople(t, mode)
 

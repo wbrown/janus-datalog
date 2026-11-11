@@ -87,7 +87,7 @@ func TestLiteralValueMatchesPredicateForm(t *testing.T) {
 	for _, tc := range cases {
 		for _, schemaMode := range []string{"schemaless", "schema_aware"} {
 			t.Run(tc.name+"/"+schemaMode, func(t *testing.T) {
-				for _, mode := range optimizerModes {
+				for _, mode := range legsFor(optimizerModes) {
 					t.Run(mode.name, func(t *testing.T) {
 						var dbOpts DatabaseOptions
 						if schemaMode == "schema_aware" {

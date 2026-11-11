@@ -60,7 +60,7 @@ func TestReviewEval_AFailureWhereEveryOtherClauseHoldsFailsTheQuery(t *testing.T
 		{"the expression's whole relation",
 			`[:find ?q ?b :where [?q :item/v ?a] [(+ ?a 1) ?b]]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -117,7 +117,7 @@ func TestReviewEval_AFailureBesideAnEmptyClauseFailsNoQuery(t *testing.T) {
 		{"a missing? predicate on the input of an empty pattern",
 			`[:find ?p :where [?p :item/age ?a] [(missing? $ ?a :item/other)] [?q :item/missing ?a]]`, nil},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -162,7 +162,7 @@ func TestReviewEval_AFailureDoesNotDependOnTheOrderAScanYields(t *testing.T) {
 	name := datalog.NewKeyword(":item/name")
 	v := datalog.NewKeyword(":item/v")
 	const text = `[:find ?p :where [?p :item/name _] [?q :item/v ?a] [(+ ?a 1) ?b]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			for seed := 0; seed < 8; seed++ {
 				t.Run(string(rune('a'+seed)), func(t *testing.T) {

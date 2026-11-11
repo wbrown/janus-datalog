@@ -89,7 +89,7 @@ func TestEACacheBypass_Reproduction(t *testing.T) {
 		return db
 	}
 
-	for _, omode := range optimizerModes {
+	for _, omode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(omode.name, func(t *testing.T) {
 			t.Run("A_constant_uses_cache", func(t *testing.T) {
 				var events []annotations.Event
@@ -133,7 +133,7 @@ func TestEACacheBypass_Reproduction(t *testing.T) {
 func TestEACacheBypass_CardinalityOne(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes, fusionOption) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -176,7 +176,7 @@ func TestEACacheBypass_CardinalityOne(t *testing.T) {
 func TestEACacheBypass_CardinalityMany(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -222,7 +222,7 @@ func TestEACacheBypass_CardinalityMany(t *testing.T) {
 func TestEACacheBypass_CardinalityVector(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -266,7 +266,7 @@ func TestEACacheBypass_CardinalityVector(t *testing.T) {
 func TestEACacheBypass_TupleInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -298,7 +298,7 @@ func TestEACacheBypass_TupleInput(t *testing.T) {
 func TestEACacheBypass_RelationInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -333,7 +333,7 @@ func TestEACacheBypass_RelationInput(t *testing.T) {
 func TestEACacheBypass_CollectionEWithScalarA(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -372,7 +372,7 @@ func TestEACacheBypass_CollectionEWithScalarA(t *testing.T) {
 func TestEACacheBypass_NonexistentAttribute(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -402,7 +402,7 @@ func TestEACacheBypass_NonexistentAttribute(t *testing.T) {
 func TestEACacheBypass_CacheInvalidation(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -444,7 +444,7 @@ func TestEACacheBypass_CacheInvalidation(t *testing.T) {
 func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -493,7 +493,7 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 // Pattern 1 resolves the attribute name. Pattern 2 looks up the value.
 // After pattern 1, the binding for pattern 2 has multiple tuples with varying (E, A).
 func TestEACacheBypass_PerTupleA_UsesCache(t *testing.T) {
-	for _, omode := range optimizerModes {
+	for _, omode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(omode.name, func(t *testing.T) {
 			// Registered at open; events is cleared after the fixture so the
 			// absence assertion below is about this query's events.
@@ -560,7 +560,7 @@ func TestEACacheBypass_PerTupleA_UsesCache(t *testing.T) {
 func TestEACacheBypass_PerTupleVector_RelationInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					// Registered at open; events feeds the failure dump below and
 					// nothing asserts on its contents.
@@ -610,7 +610,7 @@ func TestEACacheBypass_PerTupleVector_RelationInput(t *testing.T) {
 func TestEACacheBypass_CacheMissFallback(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
@@ -644,7 +644,7 @@ func TestEACacheBypass_CacheMissFallback(t *testing.T) {
 func TestEACacheBypass_JoinBoundA(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes, fusionOption) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,

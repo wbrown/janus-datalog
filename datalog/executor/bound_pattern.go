@@ -6,28 +6,15 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// A data pattern over a streaming group composed over the modules
-// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.2, §4.6, §4.8): the
-// pattern is one body under the header of the variables it shares with the
-// group, built once per window over the window's distinct keys less those an
-// earlier window ran, each key sought by the matcher, and probed per window
-// tuple. The result is the subject's tuples each joined with the pattern's
-// matches, over the subject's symbols and the pattern's other variables; it
-// stands in the consumed groups' place, reports no size, and reads the
-// subject once.
-
-// streamsThrough reports whether a group sharing one of the symbols, a
-// pattern's or an invocation's variables, reports no size: such a group is
-// read once, in windows, where a group held in memory binds the pattern
-// through the matcher or seeds the invocation through its projection.
-func streamsThrough(symbols []query.Symbol, groups Relations) bool {
-	for _, group := range groups {
-		if containsAny(group.Symbols(), symbols) && group.Size() < 0 {
-			return true
-		}
-	}
-	return false
-}
+// A data pattern the plan reads in windows (planner.RealizedPlan.Windows),
+// composed over the modules (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
+// §4.2, §4.6, §4.8): the pattern is one body under the header of the
+// variables it shares with the group, built once per window over the
+// window's distinct keys less those an earlier window ran, each key sought
+// by the matcher, and probed per window tuple. The result is the subject's
+// tuples each joined with the pattern's matches, over the subject's symbols
+// and the pattern's other variables; it stands in the consumed groups'
+// place, reports no size, and reads the subject once.
 
 // executeBoundPattern runs the pattern as one body over the window of its
 // subject, the groups holding a variable it names joined into one, under
@@ -36,8 +23,11 @@ func streamsThrough(symbols []query.Symbol, groups Relations) bool {
 // planner's walk frames it. The result's keys survive when the pattern
 // answers at most one tuple per subject tuple, a cardinality-one attribute
 // keyed by a required entity, as a fallback's do. Its identity symbols are
-// the subject's and the pattern's entity variable (AnswerIdentities).
-func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.DataPattern, groups Relations) (Relations, error) {
+// the subject's and the pattern's entity variable (AnswerIdentities). Whether
+// the pattern has a match is read through exists, the existence site the
+// query's site walk made for the clause (ScanRegistry.existenceSite), a site
+// of its own apart from the pattern's reads in each window.
+func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern, exists *query.DataPattern, groups Relations) (Relations, error) {
 	symbols := pattern.Symbols()
 	subject, consumed := e.findOuterRelation(symbols, groups)
 	outerSyms := subject.Symbols()
@@ -78,13 +68,14 @@ func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.
 		matchEmit:        matchEmit{outerSyms: outerSyms, outputSyms: resultSyms},
 	}
 	it.policy = formPolicy{answer: it.answer}
-	ownFind := make([]query.FindElement, len(symbols))
-	for i, sym := range symbols {
+	existsSymbols := exists.Symbols()
+	ownFind := make([]query.FindElement, len(existsSymbols))
+	for i, sym := range existsSymbols {
 		ownFind[i] = query.FindVariable{Symbol: sym}
 	}
 	join := &patternJoinIterator{
 		matcher: e.matcher,
-		own:     &query.Query{Find: ownFind, Where: []query.Clause{pattern}},
+		own:     &query.Query{Find: ownFind, Where: []query.Clause{exists}},
 		join:    it,
 	}
 	result := NewStreamingRelationWithProperties(resultSyms, join, e.options, properties)
@@ -101,7 +92,7 @@ func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.
 // as the join's do.
 type patternJoinIterator struct {
 	matcher PatternMatcher
-	own     *query.Query // the pattern alone, finding its variables
+	own     *query.Query // the existence site alone, finding its variables
 	join    Iterator     // the windowed join
 	checked bool
 	empty   bool

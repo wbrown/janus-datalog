@@ -37,7 +37,7 @@ func TestACallWhoseInnerOmitsTheSourceAnswersAsTheExplicitFormDoes(t *testing.T)
 			`[:find ?e ?s :in $ % :where [?e :p/n ?a] [(q [:find (sum ?v) :in $ % ?n :where (weighs ?x ?n ?v)] $ % ?a) [[?s]]]]`,
 			[]interface{}{rules}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)

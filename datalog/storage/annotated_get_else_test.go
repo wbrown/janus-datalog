@@ -22,7 +22,7 @@ import (
 // This bug only manifests with annotation handlers because without one,
 // WrapMatcher returns the unwrapped PatternMatcher directly.
 func TestGetElseWithAnnotationHandler(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Open database WITH annotation handler — this is the critical difference
 			var events []annotations.Event

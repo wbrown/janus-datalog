@@ -18,7 +18,7 @@ type TaskEntity struct {
 // TestBugVerification_PullInto_CardinalityOne reproduces the exact bug from the doc:
 // "Error: field Status (attr task/status): expected Keyword, got []interface {}"
 func TestBugVerification_PullInto_CardinalityOne(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

@@ -171,7 +171,7 @@ func tuplesAt(whole [][]string, positions []int, combinations [][]int64) []strin
 // graph what its whole evaluation answers at that binding, in every mode. A
 // whole evaluation that fails is a failure.
 func TestRules_BoundInvocationsOfTheNamedShapesMatchTheWholeEvaluation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, seed := range shapeSeeds {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})

@@ -26,7 +26,7 @@ func collectFirstValue(t *testing.T, rel executor.Relation) []interface{} {
 // BadgerDB storage (the streaming-matcher path the feature targets), not a
 // synthetic in-memory relation.
 func TestQueryLimitThroughStorage(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -91,7 +91,7 @@ func TestQueryLimitThroughStorage(t *testing.T) {
 // point in time" — :order-by desc + :limit 1 against an AsOf view must return
 // the latest tuple visible at that transaction, not the absolute latest.
 func TestLimitComposesWithAsOf(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 

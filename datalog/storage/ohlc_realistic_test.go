@@ -9,7 +9,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestOHLCRealisticQueries exercises realistic OHLC query shapes against a
@@ -34,7 +33,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 	priceClose := datalog.NewKeyword(":price/close")
 	priceVolume := datalog.NewKeyword(":price/volume")
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -80,11 +79,9 @@ func TestOHLCRealisticQueries(t *testing.T) {
 				t.Fatalf("Failed to commit price data: %v", err)
 			}
 
-			// Create executor
-			matcher := NewPatternMatcher(db.store)
-			exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-				EnableAlgebraOptimizer: mode.algebra,
-			})
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := executor.NewExecutorWithOptions(db.Matcher(), db, popts)
 
 			t.Run("Test1_CountTotalDatoms", func(t *testing.T) {
 				// Query: [:find (count ?e) :where [?e ?a ?v]]

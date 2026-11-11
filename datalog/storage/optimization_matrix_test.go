@@ -118,86 +118,17 @@ func populateOptimizationMatrix(tb testing.TB, db *Database, numScenarios, tasks
 	}
 }
 
-// TestOptimizationMatrix runs the production-structure query with all
-// combinations of optimizer flags to measure their individual and combined
-// impact. Uses 30 scenarios × 100 tasks (3,000 tasks total).
-func TestOptimizationMatrix(t *testing.T) {
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			testOptimizationMatrix(t, mode)
-		})
-	}
-}
-
-func testOptimizationMatrix(t *testing.T, mode optimizerMode) {
-	const (
-		numScenarios     = 30
-		tasksPerScenario = 100
-	)
-
-	db := createOptimizerModeDB(t, mode, DatabaseOptions{
-		Schema: optimizationMatrixSchema(),
-	})
-
-	populateOptimizationMatrix(t, db, numScenarios, tasksPerScenario)
-	t.Logf("Populated %d scenarios × %d tasks = %d tasks", numScenarios, tasksPerScenario, numScenarios*tasksPerScenario)
-
-	queryStr := optimizationMatrixQuery(0)
-
-	type config struct {
-		name        string
-		algebra     bool
-		scanSharing bool
-		prefetch    bool
-		decorrelate bool // Selinger decorrelation (only when algebra=false)
-	}
-
-	configs := []config{
-		{"baseline (no opts)", false, false, false, false},
-		{"decorrelation only (Selinger)", false, false, false, true},
-		{"algebra only", true, false, false, false},
-		{"algebra + sharing", true, true, false, false},
-		{"algebra + prefetch", true, false, true, false},
-		{"algebra + sharing + prefetch", true, true, true, false},
-		{"all on", true, true, true, true},
-	}
-
-	// Run each config, collecting timing
-	t.Logf("\n%-40s %10s %10s", "Configuration", "Run 1", "Run 2")
-	t.Logf("%-40s %10s %10s", "-------------", "-----", "-----")
-
-	for _, cfg := range configs {
-		var times [2]time.Duration
-		for run := 0; run < 2; run++ {
-			db.ClearPlanCache()
-			opts := DefaultPlannerOptions()
-			opts.EnableAlgebraOptimizer = cfg.algebra
-			opts.EnableScanSharing = cfg.scanSharing
-			opts.EnableEntityPrefetch = cfg.prefetch
-
-			start := time.Now()
-			_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
-			require.NoError(t, err, "config %s failed", cfg.name)
-			results, err := executor.CollectTuples(rel, nil)
-			require.NoError(t, err)
-			times[run] = time.Since(start)
-
-			require.Equal(t, numScenarios, len(results), "config %s: wrong result count", cfg.name)
-		}
-		t.Logf("%-40s %10s %10s", cfg.name, times[0].Round(time.Millisecond), times[1].Round(time.Millisecond))
-	}
-}
-
 // TestComplexQueryRetainsScenarioKeyThroughFallbacks pins the algebra
 // path's plan structure: the relation keys asserted below come from the
 // optimizer's or-fallback property derivation (or/properties.derived).
 // The baseline path derives no such keys and compensates with conservative
 // deduplication — correct tuples, no key metadata — so the assertions cannot
-// hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its
-// mode explicitly. Cross-mode result equivalence for the same query body
-// is covered by TestOptimizationMatrix.
+// hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test selects the
+// algebra legs. Every leg's answer to the same query body is compared with
+// the reference leg's by
+// TestSubqueryBodiesScanningOnePatternReadItOnceUnderScanSharing.
 func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
-	for _, mode := range pinned(optimizerModes, true) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption), func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQueryRetainsScenarioKeyThroughFallbacks(t, mode)
 		})
@@ -336,17 +267,156 @@ func BenchmarkComplexQueryCheckpointPrefetch(b *testing.B) {
 	benchmarkComplexQueryCheckpoint(b, &options)
 }
 
+// BenchmarkComplexQueryCheckpointNoScanSharing is the checkpoint with
+// EnableScanSharing off, so each identical unbound scan a query makes reads
+// storage.
+func BenchmarkComplexQueryCheckpointNoScanSharing(b *testing.B) {
+	options := DefaultPlannerOptions()
+	options.EnableScanSharing = false
+	benchmarkComplexQueryCheckpoint(b, &options)
+}
+
+// BenchmarkComplexQueryCheckpointCacheOff is the checkpoint with the EA cache
+// disabled, so every lookup and validation the query makes resolves from
+// storage.
+func BenchmarkComplexQueryCheckpointCacheOff(b *testing.B) {
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:         b.TempDir(),
+		Schema:       optimizationMatrixSchema(),
+		DisableCache: true,
+	})
+	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, db.Close()) })
+
+	runComplexQueryCheckpoint(b, db)
+}
+
+// BenchmarkComplexQueryCheckpointAccount counts what one checkpoint query
+// reads, from the events the engine emits, and reports each count per query:
+// the scans of the task-status pattern and the keys they take from the index,
+// every scan and its keys, the (entity, attribute) lookups and those the cache
+// answered without reading storage, the value-bound candidates the cache
+// validated, the cache entries rebuilt, and the scans the scan-sharing
+// matcher answered from a shared result and those it registered as a new
+// one. Its handler costs time, so its ns/op is not the checkpoint's;
+// BenchmarkComplexQueryCheckpoint times it.
+func BenchmarkComplexQueryCheckpointAccount(b *testing.B) {
+	benchmarkComplexQueryCheckpointAccount(b, nil)
+}
+
+// BenchmarkComplexQueryCheckpointAccountNoScanSharing is the account with
+// EnableScanSharing off.
+func BenchmarkComplexQueryCheckpointAccountNoScanSharing(b *testing.B) {
+	options := DefaultPlannerOptions()
+	options.EnableScanSharing = false
+	benchmarkComplexQueryCheckpointAccount(b, &options)
+}
+
+func benchmarkComplexQueryCheckpointAccount(b *testing.B, options *planner.PlannerOptions) {
+	const (
+		numScenarios     = 75
+		tasksPerScenario = 100
+		resultLimit      = 25
+	)
+	var statusScans, statusKeys, scans, scanKeys atomic.Int64
+	var lookups, lookupHits, candidatesFromCache, rebuilds, sharedScans, sharingMisses atomic.Int64
+	counters := []*atomic.Int64{&statusScans, &statusKeys, &scans, &scanKeys, &lookups, &lookupHits, &candidatesFromCache, &rebuilds, &sharedScans, &sharingMisses}
+	status := datalog.NewKeyword(":task/status")
+
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           b.TempDir(),
+		Schema:         optimizationMatrixSchema(),
+		PlannerOptions: options,
+		AnnotationHandler: func(event annotations.Event) {
+			switch event.Name {
+			case annotations.ScanSharingCacheHit:
+				sharedScans.Add(1)
+			case annotations.ScanSharingCacheMiss:
+				sharingMisses.Add(1)
+			case annotations.StorageScanComplete:
+				scanned := int64(event.Data[annotations.KeyDatomsScanned].(int))
+				scans.Add(1)
+				scanKeys.Add(scanned)
+				if pattern, ok := event.Data[annotations.KeyPattern].(*query.DataPattern); ok {
+					if attr, ok := pattern.GetA().(query.Constant); ok && attr.Value == status {
+						statusScans.Add(1)
+						statusKeys.Add(scanned)
+					}
+				}
+			case annotations.StorageResolveComplete:
+				if _, looked := event.Data[annotations.KeyEntity]; !looked {
+					return
+				}
+				lookups.Add(1)
+				_, read := event.Data[annotations.KeyIndex]
+				if !read && event.Data[annotations.KeyDatomsScanned].(int) == 0 {
+					lookupHits.Add(1)
+				}
+			case annotations.VValidationCacheResolved:
+				candidatesFromCache.Add(1)
+			case annotations.CacheRebuild:
+				rebuilds.Add(1)
+			}
+		},
+	})
+	require.NoError(b, err)
+	defer db.Close()
+
+	populateOptimizationMatrix(b, db, numScenarios, tasksPerScenario)
+	queryText := optimizationMatrixQuery(resultLimit)
+
+	// The warm query fills the cache; the counts are the steady state after it.
+	warm, err := db.Query(queryText)
+	require.NoError(b, err)
+	warmTuples, err := executor.CollectTuples(warm, nil)
+	require.NoError(b, err)
+	require.Len(b, warmTuples, resultLimit)
+	for _, counter := range counters {
+		counter.Store(0)
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		result, err := db.Query(queryText)
+		if err != nil {
+			b.Fatal(err)
+		}
+		tuples, err := executor.CollectTuples(result, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(tuples) != resultLimit {
+			b.Fatalf("got %d tuples, want %d", len(tuples), resultLimit)
+		}
+	}
+	perQuery := func(counter *atomic.Int64) float64 { return float64(counter.Load()) / float64(b.N) }
+	b.ReportMetric(perQuery(&statusScans), "status-scans/op")
+	b.ReportMetric(perQuery(&statusKeys), "status-keys/op")
+	b.ReportMetric(perQuery(&scans), "scans/op")
+	b.ReportMetric(perQuery(&scanKeys), "scan-keys/op")
+	b.ReportMetric(perQuery(&lookups), "lookups/op")
+	b.ReportMetric(perQuery(&lookupHits), "lookup-hits/op")
+	b.ReportMetric(perQuery(&candidatesFromCache), "candidates-from-cache/op")
+	b.ReportMetric(perQuery(&rebuilds), "cache-rebuilds/op")
+	b.ReportMetric(perQuery(&sharedScans), "shared-scans/op")
+	b.ReportMetric(perQuery(&sharingMisses), "sharing-misses/op")
+}
+
 // TestComplexQuerySubqueryExecutionCounts pins the algebra path's plan
 // structure. Every counter asserted below is an optimizer artifact: one
 // global execution per subquery body (4 total), or-fallback cache builds,
 // fused constraints, replaced outer groups. The baseline path executes
 // correlated subqueries once per outer combination by definition (10
 // scenarios × 4 subquery bodies = 40 executions), so the counts cannot hold
-// there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its mode
-// explicitly. Cross-mode result equivalence for the same query body is
-// covered by TestOptimizationMatrix.
+// there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its legs.
+// The fusions it lists need fusion on: with fusion off the scenario's title
+// and created-at patterns are read through the window and build branches of
+// their own. They need prefetch off: under prefetch the fallback builds a
+// window above the threshold from the EA cache and fuses nothing for it.
+// Every leg's answer to the same query body is compared with the reference
+// leg's by TestSubqueryBodiesScanningOnePatternReadItOnceUnderScanSharing.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
-	for _, mode := range pinned(optimizerModes, true) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption, prefetchOption), func(m optimizerMode) bool { return m.algebra && m.fusion && !m.prefetch }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQuerySubqueryExecutionCounts(t, mode)
 		})
@@ -454,7 +524,7 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 // A warm read-only steady state is expected to rebuild nothing; this reports
 // any rebuild population by attribute and reason.
 func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, prefetchOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQueryCheckpointCacheSteadyState(t, mode)
 		})
@@ -511,19 +581,6 @@ func testComplexQueryCheckpointCacheSteadyState(t *testing.T, mode optimizerMode
 	}
 	require.Zero(t, total,
 		"a warm read-only checkpoint must not rebuild any cache entry: every rebuild is a storage scan plus a transaction, and the freshness model says a warmed key stays fresh until a write touches it")
-}
-
-func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {
-	b.Run("materialized", func(b *testing.B) {
-		options := DefaultPlannerOptions()
-		options.EnableStreamingJoins = false
-		benchmarkComplexQueryCheckpoint(b, &options)
-	})
-	b.Run("streaming", func(b *testing.B) {
-		options := DefaultPlannerOptions()
-		options.EnableStreamingJoins = true
-		benchmarkComplexQueryCheckpoint(b, &options)
-	})
 }
 
 // BenchmarkComplexQueryBackends runs the checkpoint query on every backend.

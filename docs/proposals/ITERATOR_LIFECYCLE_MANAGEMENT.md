@@ -8,6 +8,7 @@ The leak that raised this proposal is fixed. Two executor functions, `filterWith
 - `filterWithPredicateAndLookup` closes its iterator in a deferred closure that runs on a panic as well and keeps the Close error.
 - `evaluateExpressionWithLookup` answers a stream over its input's iterator, which the stream's consumer closes through the stream's `Close`.
 - An input no consumer pulls is closed with the query's read session. `queryUnderPlannerOptions` (`convenience.go`) opens one session per query and binds it to the result through `sessionBoundRelation`, which closes it when the result's iterator is exhausted or closed; a path that bypasses `Iterator()` leaves it to the session's finalizer. The session's `Close` closes every iterator still open (`badgerReadSession.Close`).
+- A shared scan's storage iterator is the query's scan registry's. No reader's early close closes it; it closes when it is read to its end, or when the query's result is exhausted or closed, through `registryBoundRelation` (`executor/registry_bound_relation.go`), which `ExecuteWithRelations` wraps its result in under scan sharing, so the `Execute` route and the `Query` route close it alike, before the session.
 
 The pattern stays fragile. Every consumer of `Relation.Iterator()` must remember to close, and nothing in the type system or runtime enforces it. Some consumers rely on wrapper iterators propagating `Close()` down the chain. The pattern invites the same regression again.
 

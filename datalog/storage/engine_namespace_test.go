@@ -47,7 +47,7 @@ func TestEngineNamespace_AVariableInAMintedNamespaceIsRefusedAtQuery(t *testing.
 		{"an engine's kind as the name", `[:find ?n :where [?e :p/n ?mine/unify] [(identity ?mine/unify) ?n]]`, "", "", []string{"5"}},
 		{"a variable of the user's own in an inner find beside a collection argument", `[:find ?m ?w :where [(ground [1 2]) ?ns] [(q [:find ?n ?v :in $ [?n ...] :where [?y :r ?n] [?y :s ?v]] $ ?ns) [[?m ?w]]]]`, "", "", []string{"1 a", "2 b"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)

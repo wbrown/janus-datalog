@@ -139,7 +139,7 @@ func TestRules_ABoundInvocationBesideAClauseOutsideTheSeedComponentDerivesWhatTh
 		{"the top level bound by an entity constant beside a value constant", `[:find ?x :in $ % :where [?x :kind "leaf"] (reach #id "magic/r1" ?x)]`, `(leafward ?a ?x)`, false, [][]interface{}{{r1}}},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			adorned := &rewriteAdornments{}
 			var strata []string
@@ -248,7 +248,7 @@ func referenceFind(reference, bound string, k int, inputs bool) []string {
 		args := strings.Fields(strings.Trim(reference, "()"))[1:]
 		vars = append(vars, args[:k]...)
 	}
-	find := bound[len("[:find ") : strings.Index(bound, " :in")]
+	find := bound[len("[:find "):strings.Index(bound, " :in")]
 	return append(vars, strings.Fields(find)...)
 }
 

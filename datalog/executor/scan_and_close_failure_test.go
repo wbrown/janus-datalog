@@ -141,10 +141,6 @@ func TestAConsumerAnswersItsSourcesScanFailureAndCloseFailure(t *testing.T) {
 			_, err := applyFindPulls(nil, &recordingBatchEntityResolver{}, scanAndCloseFailing([]query.Symbol{entitySymbol}, 0, Tuple{entity}), find)
 			return err
 		}},
-		{"the entities a relation names", func(t *testing.T) error {
-			_, err := extractEntityIDs(scanAndCloseFailing(xs, 1, Tuple{entity}, Tuple{entity}), xs)
-			return err
-		}},
 		{"a pulled attribute", func(t *testing.T) error {
 			pe := NewPullExecutorWithHandler(relationMatcher{scanAndCloseFailing([]query.Symbol{v}, 0, Tuple{"value"})}, nil, nil)
 			_, _, err := pe.lookupAttributeViaPattern(entity, attr)

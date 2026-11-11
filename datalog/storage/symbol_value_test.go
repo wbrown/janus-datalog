@@ -10,7 +10,7 @@ import (
 )
 
 func TestSymbolValueRoundTripAndQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			attribute := datalog.NewKeyword(":workflow/state")
 			s := schema.NewSchema()

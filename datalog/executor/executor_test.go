@@ -26,7 +26,7 @@ func TestExecutorBasicQuery(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -95,7 +95,7 @@ func TestExecutorJoinQuery(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -180,7 +180,7 @@ func TestExecutorWithFilter(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -259,7 +259,7 @@ func TestExecutorMultipleFilters(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -348,7 +348,7 @@ func TestExecutorEmptyResult(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 

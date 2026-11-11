@@ -41,7 +41,7 @@ func TestRefuteRoute_SliceSourceGetElseAnswersTheSlicesFact(t *testing.T) {
 			).MustBuild(),
 		},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})

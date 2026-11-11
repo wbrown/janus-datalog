@@ -24,7 +24,7 @@ func matchesDatomWithPattern(datom datalog.Datom, pattern *query.DataPattern) bo
 			return false
 		}
 	}
-	return true
+	return matchesElement(datom.Op.Asserts(), pattern.GetAdded())
 }
 
 // matchesElement checks if a datom component matches a pattern element

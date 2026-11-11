@@ -31,7 +31,7 @@ func assertResultNoDuplicates(t *testing.T, name string, results [][]interface{}
 }
 
 func TestSetSemantics_StorageQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -85,7 +85,7 @@ func TestSetSemantics_StorageQuery(t *testing.T) {
 }
 
 func TestSetSemantics_StorageQuery_MultipleAttributes(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -148,7 +148,7 @@ func TestSetSemantics_StorageQuery_MultipleAttributes(t *testing.T) {
 }
 
 func TestSetSemantics_StorageQuery_WithPredicates(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -188,7 +188,7 @@ func TestSetSemantics_StorageQuery_WithPredicates(t *testing.T) {
 }
 
 func TestSetSemantics_StorageQuery_Aggregation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -240,7 +240,7 @@ func TestSetSemantics_StorageQuery_Aggregation(t *testing.T) {
 }
 
 func TestSetSemantics_StorageQuery_NotClause(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -285,7 +285,7 @@ func TestSetSemantics_StorageQuery_NotClause(t *testing.T) {
 }
 
 func TestSetSemantics_StorageQuery_OrClause(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

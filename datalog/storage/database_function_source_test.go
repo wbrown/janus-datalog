@@ -60,7 +60,7 @@ func valuesByName(t *testing.T, d *Database, text string, inputs ...interface{})
 }
 
 func TestDatabaseFunction_ReadsTheSourceItNames(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, src := twoSourceFixture(t, mode, DatabaseOptions{})
 			srcOpt := sourceNamed("$src", src)
@@ -98,7 +98,7 @@ func TestDatabaseFunction_ReadsTheSourceItNames(t *testing.T) {
 // Two texts that differ only in a function's source are two queries, so the
 // plan the first makes is never served for the second.
 func TestDatabaseFunction_TextsDifferingInTheSourceAreTwoQueries(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, src := twoSourceFixture(t, mode, DatabaseOptions{})
 			srcOpt := sourceNamed("$src", src)
@@ -128,7 +128,7 @@ func TestDatabaseFunction_GetElseDefaultIsTypedByItsSource(t *testing.T) {
 		{"no handler", nil},
 		{"annotation handler", func(annotations.Event) {}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, h := range handlers {
 			t.Run(mode.name+"/"+h.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: h.handler})
@@ -154,7 +154,7 @@ func TestDatabaseFunction_GetElseDefaultIsTypedByItsSource(t *testing.T) {
 // A subquery's inner query reads $ as the source its call passes there, for a
 // database function as for a data pattern.
 func TestDatabaseFunction_InASubqueryReadsTheSourceTheCallPasses(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, src := twoSourceFixture(t, mode, DatabaseOptions{})
 			require.Equal(t,
@@ -174,7 +174,7 @@ func TestDatabaseFunction_InASubqueryReadsTheSourceTheCallPasses(t *testing.T) {
 // inner $, answers from the slice's facts: the slice's entity holds no :t/a,
 // so the inner missing? holds of it.
 func TestDatabaseFunction_OnASliceSourceAnswersItsFacts(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := twoSourceFixture(t, mode, DatabaseOptions{})
 			cache := sliceDatabase(t, []string{"one"}, AttributeSchema[string]{
@@ -204,7 +204,7 @@ type customSource struct{ executor.PatternMatcher }
 // The source's database holds :t/a for "one", so an answer of absence would
 // differ from the error.
 func TestDatabaseFunction_OnASourceThatCannotLookUpIsAnError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, src := twoSourceFixture(t, mode, DatabaseOptions{})
 			cache := sourceNamed("$cache", customSource{src})
@@ -231,7 +231,7 @@ func TestDatabaseFunction_OnASourceThatCannotLookUpIsAnError(t *testing.T) {
 // The vocabulary check reads a database function's attributes on the source
 // the function names.
 func TestDatabaseFunction_AttributesAreCheckedOnTheSourceItNames(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			refusing, _ := refusingDB(t, mode)
 			plain := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -252,7 +252,7 @@ func TestDatabaseFunction_AttributesAreCheckedOnTheSourceItNames(t *testing.T) {
 // value: under the tuple form, the attribute and the value; under a single
 // symbol, the pair.
 func TestGetSome_BindsTheAttributeItFoundWithTheValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			both := datalog.NewIdentity("get-some:both")

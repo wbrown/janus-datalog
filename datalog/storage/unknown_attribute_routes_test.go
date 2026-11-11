@@ -38,7 +38,7 @@ func TestQueryRefusesUnknownAttributeReachingThroughEveryRoute(t *testing.T) {
 		{"a pull pattern in :find", `[:find (pull ?e [:t/KEY]) :where [?e :t/string _]]`, "", false},
 		{"a database function", `[:find ?v :where [?e :t/string _] [(get-else $ ?e :t/KEY "none") ?v]]`, "", false},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
 			other, _ := refusingDB(t, mode)
@@ -103,7 +103,7 @@ func TestQueryRunsAKeywordReachingAnAttributePositionAsAValue(t *testing.T) {
 		{"a constant passed to a rule's head", `[:find ?v :in $ % :where (has :t/KEY ?v)]`, `[[(has ?a ?v) [?e ?a ?v]]]`, false},
 		{"a rule body's head variable on a named source", `[:find ?v :in $ $other % :where (rn :t/KEY ?v)]`, `[[(rn [?a] ?v) [$other ?e ?a ?v]]]`, false},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d, _ := refusingDB(t, mode)
 			other, _ := refusingDB(t, mode)

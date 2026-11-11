@@ -17,7 +17,7 @@ func TestOrDefaultLowering_DefaultsBindBySymbol(t *testing.T) {
 		{x, ":t/b", int64(1)},
 		{y, ":t/b", int64(1)}, {y, ":t/c", int64(5)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)

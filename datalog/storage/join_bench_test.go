@@ -77,11 +77,8 @@ func BenchmarkStorageBackedJoin(b *testing.B) {
 			b.ReportAllocs()
 
 			// Setup ONCE outside b.N
-			opts := executor.ExecutorOptions{
-				EnableStreamingJoins:    true,
-				EnableSymmetricHashJoin: false,
-				DefaultHashTableSize:    256,
-			}
+			opts := executor.ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256}
+
 			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 			exec := executor.NewExecutor(matcher, db)
 
@@ -112,11 +109,8 @@ func BenchmarkStorageBackedJoin(b *testing.B) {
 			b.ReportAllocs()
 
 			// Setup ONCE outside b.N
-			opts := executor.ExecutorOptions{
-				EnableStreamingJoins:    true,
-				EnableSymmetricHashJoin: true,
-				DefaultHashTableSize:    256,
-			}
+			opts := executor.ExecutorOptions{EnableSymmetricHashJoin: true, DefaultHashTableSize: 256}
+
 			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 			exec := executor.NewExecutor(matcher, db)
 
@@ -168,11 +162,8 @@ func BenchmarkStorageBackedJoinLimit(b *testing.B) {
 			b.ReportAllocs()
 
 			// Setup ONCE outside b.N
-			opts := executor.ExecutorOptions{
-				EnableStreamingJoins:    true,
-				EnableSymmetricHashJoin: false,
-				DefaultHashTableSize:    256,
-			}
+			opts := executor.ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256}
+
 			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 			exec := executor.NewExecutor(matcher, db)
 
@@ -203,11 +194,8 @@ func BenchmarkStorageBackedJoinLimit(b *testing.B) {
 			b.ReportAllocs()
 
 			// Setup ONCE outside b.N
-			opts := executor.ExecutorOptions{
-				EnableStreamingJoins:    true,
-				EnableSymmetricHashJoin: true,
-				DefaultHashTableSize:    256,
-			}
+			opts := executor.ExecutorOptions{EnableSymmetricHashJoin: true, DefaultHashTableSize: 256}
+
 			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 			exec := executor.NewExecutor(matcher, db)
 
@@ -255,11 +243,8 @@ func BenchmarkStorageBackedJoinWithFilter(b *testing.B) {
 		b.ReportAllocs()
 
 		// Setup ONCE outside b.N
-		opts := executor.ExecutorOptions{
-			EnableStreamingJoins:    true,
-			EnableSymmetricHashJoin: false,
-			DefaultHashTableSize:    256,
-		}
+		opts := executor.ExecutorOptions{EnableSymmetricHashJoin: false, DefaultHashTableSize: 256}
+
 		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 		exec := executor.NewExecutor(matcher, db)
 
@@ -286,11 +271,8 @@ func BenchmarkStorageBackedJoinWithFilter(b *testing.B) {
 		b.ReportAllocs()
 
 		// Setup ONCE outside b.N
-		opts := executor.ExecutorOptions{
-			EnableStreamingJoins:    true,
-			EnableSymmetricHashJoin: true,
-			DefaultHashTableSize:    256,
-		}
+		opts := executor.ExecutorOptions{EnableSymmetricHashJoin: true, DefaultHashTableSize: 256}
+
 		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 		exec := executor.NewExecutor(matcher, db)
 

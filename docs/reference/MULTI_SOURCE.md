@@ -66,7 +66,7 @@ A database function's first argument is the source it reads, as a pattern's pref
 ```
 
 `get-else`, `get-some` and `missing?` look the attribute up in the source they name. A source that cannot look an attribute up is an error naming the source.
-With the algebra optimizer on, a `get-else` is rewritten into a scan of its source, joined to the query, only where the source answers that its match of the attribute gives, for every entity, the one value its lookup gives (`CanFuseAttributeFetch`). A database answers true for an attribute it resolves cardinality-one in its latest view, declared so or with no definition. On a cardinality-many attribute, a history or as-of handle, or a source without the capability, the `get-else` runs as a lookup per tuple. Both answer alike ([GET_ELSE_SCAN_REWRITE_PROOF.md](../proposals/GET_ELSE_SCAN_REWRITE_PROOF.md)).
+With the algebra optimizer on, a `get-else` is rewritten into a scan of its source, joined to the query, only where the source answers that its match of the attribute gives, for every entity, the one value its lookup gives (`CanFuseAttributeFetch`). A database answers true for an attribute it resolves cardinality-one in its latest view or as of a target, declared so or with no definition. On a cardinality-many attribute, a history handle, or a source without the capability, the `get-else` runs as a lookup per tuple. Both answer alike ([GET_ELSE_SCAN_REWRITE_PROOF.md](../proposals/GET_ELSE_SCAN_REWRITE_PROOF.md)).
 
 ### Combining Sources with Scalar/Collection Inputs
 
@@ -360,7 +360,19 @@ type PredicateAwareMatcher interface {
 
 If your source supports predicate pushdown, the `SourceRouter` will call `MatchWithConstraints` instead of `Match` when constraints are available.
 
-A source a database function names implements `EntityLookupMatcher`, which looks one entity's attribute up. The `SourceRouter` gives the function that source's lookup through `LookupSource`, and a source without the capability is an error naming it.
+A source a database function names implements `EntityLookupMatcher`:
+
+```go
+type EntityLookupMatcher interface {
+    PatternMatcher
+    LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (value interface{}, found bool, err error)
+    AttributeLookup(attr datalog.Keyword) (query.AttributeLookup, error)
+    LookupSource(source query.Symbol) (EntityLookupMatcher, error)
+}
+```
+
+`LookupAttribute` answers one entity's attribute from the source, `(nil, false, nil)` for an absent attribute and a non-nil error for a storage or decode failure. `AttributeLookup` answers the lookup of one attribute, which answers at each entity what `LookupAttribute` answers for that entity and attribute; a `get-else`, `missing?` or `get-some` evaluates through it. `LookupSource` answers the lookup of the source a function names, `$` for the source itself: a source that is one source answers itself under any name. The `SourceRouter` gives the function the lookup of the source it names through `LookupSource`, and a source without the capability is an error naming it.
+
 A source may implement `AttributeFetchFusable`, answering whether its match of an attribute gives, for every entity, the one value its lookup gives. A true answer lets the executor fuse a same-entity fetch into the lookup and lets the optimizer rewrite a `get-else` on the source into a scan, so a source answers true only where that holds. A source without the capability answers false through the `SourceRouter`.
 
 Pass your custom source via `WithSources`:

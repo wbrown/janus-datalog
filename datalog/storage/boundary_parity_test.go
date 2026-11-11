@@ -419,7 +419,7 @@ func TestBoundaryParity_QueryRefusesWhatTheParserRefuses(t *testing.T) {
 		{"a tuple input naming one variable", handFindIn([]string{"?e"}, []query.InputSpec{query.TupleInput{Symbols: x}}, pageKindPattern("?e", "?x")), []interface{}{"k"}, false, []string{"n1"}},
 		{"a relation input naming one variable", handFindIn([]string{"?e"}, []query.InputSpec{query.RelationInput{Symbols: x}}, pageKindPattern("?e", "?x")), [][]interface{}{{"k"}}, false, []string{"n1"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)

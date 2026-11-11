@@ -144,7 +144,6 @@ func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftSymbols, 
 		iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
-			EnableStreamingJoins:    true,
 			EnableSymmetricHashJoin: symmetric,
 			DefaultHashTableSize:    256,
 		},
@@ -154,7 +153,6 @@ func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftSymbols, 
 		iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
-			EnableStreamingJoins:    true,
 			EnableSymmetricHashJoin: symmetric,
 			DefaultHashTableSize:    256,
 		},
@@ -183,7 +181,6 @@ func getJoinResultsWithLimit(t *testing.T, leftTuples, rightTuples []Tuple, left
 		iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
-			EnableStreamingJoins:    true,
 			EnableSymmetricHashJoin: symmetric,
 			DefaultHashTableSize:    256,
 		},
@@ -193,7 +190,6 @@ func getJoinResultsWithLimit(t *testing.T, leftTuples, rightTuples []Tuple, left
 		iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
-			EnableStreamingJoins:    true,
 			EnableSymmetricHashJoin: symmetric,
 			DefaultHashTableSize:    256,
 		},

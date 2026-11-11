@@ -41,6 +41,7 @@ An index is CRDT-correct for cardinality-one if and only if Tx↓ appears in one
 **(b) Tx↓ before E and A, with T bound**: The index has form Tx↓ → ... AND T is constrained to a single value.
 - Within a single transaction, each (E, A) appears at most once
 - Example: TAEV when querying a specific transaction
+- The run is the answer in History and in the view as of T. In another resolving view it is a candidate run: a pair it holds a datom of may resolve to a later operation's datom outside the run, so each datom is validated against its pair's resolved datom (`docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md`, T3, T6, T8).
 
 **Proof of (a)**: When Tx↓ is immediately after (E, A) grouping:
 1. (E, A) groups are contiguous
@@ -50,7 +51,9 @@ An index is CRDT-correct for cardinality-one if and only if Tx↓ appears in one
 **Proof of (b)**: When T is bound:
 1. Scan is constrained to a single transaction
 2. Each (E, A) can appear at most once per transaction
-3. CRDT resolution is trivially correct (only one entry per group) ∎
+3. Resolution within the run is trivial (only one entry per group)
+4. In History every datom is its own resolved datom, and in the view as of T no datom of a later operation is read, so the run's datoms are the view's resolved datoms
+5. In any other resolving view a later operation may have written the pair, so the run's datom is the pair's resolved datom only when none did, which validation per pair decides ∎
 
 **Note on T-unbound TAEV scans**: Without T bound, the same (E, A) appears at multiple Tx values interleaved with other entities. CRDTResolvingIterator detects group boundaries by comparing consecutive (E, A) pairs, so it would incorrectly treat re-encounters as new groups. Therefore, TAEV is only CRDT-correct when T is bound.
 
@@ -118,7 +121,7 @@ and `validatingVBoundIterator.Next` gates on
 
 | Condition | Cardinality | V-Bound Behavior |
 |---|---|---|
-| Schema defines CardinalityOne | One | Post-validate against the EATV winner |
+| Schema defines CardinalityOne | One | Post-validate against the (E, A)'s current value |
 | Schema defines CardinalityMany | Many | Add-wins via CRDT iterator |
 | Schema defines CardinalityVector | Vector | RGA via CRDT iterator |
 | Schema exists but attribute undefined | Unknown → **One** | **Post-validate** |
@@ -151,34 +154,38 @@ Since Tx↓ sorts by the full 16-byte ElementID, ties are impossible. ∎
 | EATV  | E → A → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (E, A) — Thm 1(a)           |
 | AEVT  | A → E → V → Tx↓   | ✗ No           | ✓ Yes           | V before Tx breaks card-one           |
 | AETV  | A → E → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (A, E) — Thm 1(a)           |
-| ATEV  | A → Tx↓ → E → V   | T-or-A only    | T-or-A only     | Tx↓ before E breaks (E, A) grouping for plain A-scans; CRDT-correct when T is bound (Thm 1(b)) or when used for AsOf-bounded A-scans where the Tx↓ prefix gates entries before (E, A) grouping. That is its use: AsOf-by-attribute. The layout also makes the first entry under `[A]` the global max-Tx datom for A, but nothing consumes that. |
+| ATEV  | A → Tx↓ → E → V   | T-bound candidate | T-bound candidate | Tx↓ before E breaks (E, A) grouping for plain A-scans. With T bound the run under `[A][Tx]` holds one operation's datoms of A: the answer in History and as of T, a candidate run validated per pair in another resolving view (Thm 1(b), Thm 5). The layout also makes the first entry under `[A]` the global max-Tx datom for A, but nothing consumes that. |
 | AVET  | A → V → E → Tx↓   | ✗ No           | ✓ Yes           | V-bound hides other V (card-one only) |
 | VAET  | V → A → E → Tx↓   | ✗ No           | ✓ Yes           | V-bound hides other V (card-one only) |
-| TAEV  | Tx↓ → A → E → V   | T-bound only   | T-bound only    | Tx↓ primary — Thm 1(b)                |
+| TAEV  | Tx↓ → A → E → V   | T-bound candidate | T-bound candidate | Tx↓ primary: with T bound the run holds one operation's datoms, the answer in History and as of T, a candidate run in another resolving view (Thm 1(b), Thm 5) |
 
 **Summary**:
-- Cardinality-one: EATV, AETV always correct; TAEV when T is bound; ATEV when T is bound or used for the bounded-Tx high-water seek
-- Cardinality-many: EAVT, EATV, AEVT, AETV, AVET, VAET correct with CRDTResolvingIterator; TAEV and ATEV require T binding (or, for ATEV, the high-water-seek usage pattern)
+- Cardinality-one: EATV, AETV always correct; TAEV and ATEV with T bound are the answer in History and as of T, and candidate runs validated per pair in another resolving view
+- Cardinality-many: EAVT, EATV, AEVT, AETV, AVET, VAET correct with CRDTResolvingIterator; TAEV and ATEV with T bound as for cardinality one, each member validated against its own newest assertion
 
 ## Theorem 5: Candidate + Validate (Semi-Join Pattern)
 
-**Statement**: For cardinality-one V-bound queries, use V-primary indices for candidate discovery, followed by CRDT-correct validation.
+**Statement**: For a pattern in a resolving view whose bound V or bound T narrows the run below the (E, A) group, use the narrowed run for candidate discovery, followed by validation against each pair's resolved datom (`docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md`, T6).
 
 **Algorithm**:
-1. AVET prefix scan on (A, V) → stream of candidate E values (if A bound)
-2. VAET prefix scan on V → stream of candidate (E, A) pairs (if A unbound)
-3. For each candidate:
-   - EATV point scan on (E, A) → first datom = CRDT winner
-4. If winner.V == bound V → emit
-   Otherwise → skip (stale candidate)
+1. With T bound to an ElementID: ATEV prefix scan on (A, Tx) if A bound, TAEV prefix scan on Tx if A unbound → stream of candidate datoms, one operation's
+2. Otherwise, with V bound: AVET prefix scan on (A, V) if A bound, VAET prefix scan on V if A unbound → stream of candidate datoms carrying V
+3. For each candidate, resolve its (E, A) under A's definition, as every reader
+   of the pair does: for cardinality one the EA cache's entry, or
+   `ResolveLWW`'s answer, the value and the Tx of the assertion it was read
+   from, the walk's for a definition declaring a unique and the newest visible
+   entry for any other; for a many member its newest assertion; for a vector
+   the collection under the group's highest ElementID
+4. If `matchesDatom` holds on the resolved datom with the bound V and T → emit the resolved datom
+   Otherwise → skip (the candidate is not the pair's datom)
 
 **Proof of correctness**:
-- Step 1/2 finds all entities that *ever* had value V
-- Step 3 retrieves the *current* value via CRDT-correct index (EATV)
-- Step 4 filters stale candidates (entities where V was superseded)
-- Result: exactly the entities where V is the current value ∎
+- Step 1/2 finds every pair that has a datom in the run: one written by T, or one carrying V
+- Step 3 resolves the pair over its whole group, which the narrowed run cannot: another value may be newer, a later operation may have written the pair, and for a unique attribute another entity's later claim may supersede the newest assertion
+- Step 4 keeps the pairs whose resolved datom the bound positions admit
+- Result: exactly the pairs whose resolved datom carries V, or was written by T, or both ∎
 
-**Complexity**: O(candidates) point lookups. The number of stale candidates is bounded by historical updates—small in practice.
+**Complexity**: O(candidates) resolutions, each a cache read or an EATV scan of the pair. The candidates of a T-run are bounded by the operation's size and those of a V-run by the value's history; with both bound the T-run is taken (`docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md`, T7).
 
 **Analogy**: Same pattern PostgreSQL uses: secondary index scan + visibility check against the heap.
 
@@ -196,12 +203,12 @@ resolution determines.
 | ✓ | ✓ | - | * | one/vector/unknown | EATV | E, A | Tx↓ first, first entry current |
 | ✓ | ✓ | ✓ | * | many | AEVT | A, E, V | V may join the prefix — see below |
 | ✓ | ✓ | ✓ | * | one/vector/unknown | EATV | E, A | V compared downstream, never narrowing |
-| - | ✓ | - | ✓ | any | **ATEV** | A, Tx | Direct AsOf-by-attribute seek |
+| - | ✓ | - | ✓ | any | **ATEV** | A, Tx | One operation's datoms of A: the answer in History, a candidate run validated per pair in a resolving view |
 | - | ✓ | ✓ | * | any | AVET | A, V | Card-one emissions post-validated |
 | - | ✓ | - | - | many | AEVT | A | Values grouped for add-wins |
 | - | ✓ | - | - | one/vector/unknown | AETV | A | A-primary, Tx↓ first |
 | - | - | ✓ | * | per-datom | VAET | V | Per-datom cardinality resolution |
-| - | - | - | ✓ | any | TAEV | Tx | T-primary, no other position bound |
+| - | - | - | ✓ | any | TAEV | Tx | One operation's datoms: the answer in History, a candidate run validated per pair in a resolving view |
 
 **A bound V may enter the prefix only for cardinality-many** — its adds and
 removes all carry its own value, so the V-filtered run contains the whole
@@ -214,8 +221,17 @@ against one resolved scan of the attribute under AETV
 V is the seek dimension among several bound positions only for a declared
 many (`docs/proposals/BOUND_VALUE_SEEK_PROOF.md`, T6).
 
+**A bound T narrows the run to one operation's datoms**, which hold no pair's
+group whole in a resolving view, so a pattern with E free and T bound to an
+ElementID takes the validating route in the matcher (`matchUnboundScan`) and
+in the binding-driven match (`analyzeReuseStrategy`) before this selector is
+consulted, with T the seek dimension beside a bound V
+(`docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md`, T3, T6, T7). The ATEV
+and TAEV rows above are the selector's choice in History, where the run is the
+answer, and the runs the validating route narrows to in a resolving view.
+
 **Resolution behavior by cardinality**:
-- **CardinalityOne**: Post-validate with an EATV `(E,A)` run (LWW winner may have a different V)
+- **CardinalityOne**: Post-validate against the (E, A)'s current value, resolved under A's definition (the value-filtered run's winner may not be it)
 - **CardinalityMany**: CRDTResolvingIterator with add-wins (handles same-Tx tiebreaking)
 - **CardinalityVector**: CRDTResolvingIterator with RGA (per-AfterRef resolution)
 - **CardinalityUnknown/schemaless**: **LWW, and post-validated** — same as CardinalityOne, at every layer. See Theorem 3b.
@@ -286,27 +302,34 @@ Within this scan, (A, E) groups are **contiguous** — all Tx entries for the sa
    - RGA for vectors
    - CardinalityMany/Vector/Unknown all resolved correctly
 3. Post-filter: for each emission, check if `lookupCardinality(A) == CardinalityOne`
-4. If card-one: validate with EATV point lookup, skip if stale
+4. If card-one: validate against the (E, A)'s current value, skip if stale
 
 The type is `validatingVBoundIterator` (`datalog/storage/matcher_relations.go`);
 the sketch below is illustrative, not its current field set.
 
 ```go
 type validatingVBoundIterator struct {
-    inner  *CRDTResolvingIterator  // wraps VAET scan
+    inner  *CRDTResolvingIterator  // wraps the narrowed scan
     schema schema.SchemaProvider
     boundV any
+    boundT any
 }
 
 func (it *validatingVBoundIterator) Next() bool {
     for it.inner.Next() {
         datom := it.inner.Datom()
 
-        if it.lookupCardinality(datom.A) == schema.CardinalityOne {
-            // CRDTResolvingIterator emitted the "winner" within the V-filtered
-            // scan, but the real LWW winner might have a different V.
-            if !it.validateWithEATV(datom.E, datom.A) {
-                continue  // stale candidate
+        if def := it.schema.GetAttribute(datom.A); resolvedCardinality(def) == schema.CardinalityOne {
+            // CRDTResolvingIterator emitted the "winner" within the narrowed
+            // scan, but the pair may resolve to another datom: another value
+            // may be newer, a later operation may have written the pair, or
+            // another entity's later claim may supersede this one.
+            resolved, _, err := it.resolvedDatom(datom.E, datom.A, def)
+            if err != nil {
+                return false
+            }
+            if resolved == nil || !it.matcher.matchesDatom(resolved, nil, nil, it.boundV, it.boundT, nil) {
+                continue  // the candidate is not the pair's datom
             }
         }
         // Card-many/vector/unknown: handled correctly by CRDTResolvingIterator
@@ -334,26 +357,38 @@ CRDTResolvingIterator's `processAddWins` handles this correctly.
 
 ## Implementation
 
-Live form: `validatingVBoundIterator.validateCandidate`. The read seam takes a
-typed `ScanBound`; no caller constructs byte keys.
+Live form: `validatingVBoundIterator.resolvedDatom`. It resolves the
+candidate's (E, A) under A's definition as every reader of the pair does:
+through the EA cache (`Cache.GetOrResolve`) when the cache is on, and through
+`PatternMatcher.ResolveLWW` when it is off or the cache holds no entry. The
+read seam takes a typed `ScanBound`; no caller constructs byte keys.
+
+The definition decides the resolved datom. For a definition declaring a unique
+it is the walk's: the entity's newest assertion no later withdrawal cancels and
+no other entity's later claim supersedes, with that assertion's own Tx. For any
+other definition it is the newest visible entry, a withdrawal meaning no datom.
+
+`Next` admits the resolved datom through `matchesDatom` with the bound V and T
+and emits its tuple, so the tuple's value and Tx are the pair's
+(`docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md`, T6).
 
 ```go
-// Semi-join validation for V-bound cardinality-one queries
-func validateCandidate(r StoreReader, e datalog.Identity, a datalog.Keyword,
-    boundV datalog.Value) (bool, error) {
+// The datom a cardinality-one pair resolves to, nil when it holds no value
+func (it *validatingVBoundIterator) resolvedDatom(e datalog.Identity, a datalog.Keyword,
+    def *schema.AttributeDefinition) (*datalog.Datom, bool, error) {
 
-    // The (E, A) run on EATV: Tx↓, so the first entry is the CRDT winner.
-    it, err := r.Scan(ScanBound{Index: EATV, Prefix: []datalog.Value{e, a}})
+    // With the cache on, the pair's entry under def and the view's read point
+    // answers here instead; the resolver answers when the cache is off.
+    v, tx, _, present, err := it.matcher.ResolveLWW(e, a, def, it.report)
     if err != nil {
-        return false, err
+        return nil, false, err
     }
-    defer it.Close()
-
-    if !it.Next() {
-        return false, it.Error()  // no current value
+    // A pair with no visible entry, or a withdrawn value, resolves to no datom,
+    // which no bound position matches.
+    if !present || v == nil {
+        return nil, false, nil
     }
-    // Compare through the value domain, never with ==.
-    return datalog.ValuesEqual(it.Datom().V, boundV), it.Error()
+    return &datalog.Datom{E: e, A: a, V: v, Tx: tx}, false, nil
 }
 ```
 
@@ -380,10 +415,8 @@ All 8 indices serve a purpose:
 |----------------------|--------------------------------------------|------------------------------------|
 | V-bound direct       | ✗ Broken (LWW winner may have different V) | ✓ Works with CRDTResolvingIterator |
 | V-bound solution     | CRDTResolvingIterator + post-validate      | CRDTResolvingIterator directly     |
-| CRDT-correct indices | EATV, AETV, TAEV*, ATEV†                   | EAVT, EATV, AEVT, AETV, AVET, VAET; TAEV* and ATEV† |
-
-*TAEV only when T is bound
-†ATEV is CRDT-correct when T is bound or used for the bounded-Tx high-water seek (first entry under `[A]`)
+| T-bound in a resolving view | CRDTResolvingIterator + post-validate (Thm 1(b), Thm 5) | CRDTResolvingIterator + post-validate per member or collection |
+| CRDT-correct indices | EATV, AETV; TAEV and ATEV in History and as of T | EAVT, EATV, AEVT, AETV, AVET, VAET; TAEV and ATEV in History and as of T |
 
 **Key insights**:
 
@@ -391,12 +424,10 @@ All 8 indices serve a purpose:
 
 2. **V-primary indices are useful**: For card-many/vector, they work directly. For card-one, they provide candidates that need validation.
 
-3. **Post-validation pattern**: Wrap V-bound scan with CRDTResolvingIterator, then post-validate card-one emissions with EATV point lookup.
+3. **Post-validation pattern**: Wrap the run narrowed to V or to T with CRDTResolvingIterator, then post-validate each emission against its pair's resolved datom, the value and the Tx, with the bound V and T (`docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md`, T6).
 
-4. **V-only bound (A variable)**: VAET scan with CRDTResolvingIterator. Card-one uses EATV validation; card-many/vector/unknown handled by CRDTResolvingIterator.
+4. **V-only bound (A variable)**: VAET scan with CRDTResolvingIterator. Card-one validates against the resolved datom under each candidate's own attribute; card-many/vector/unknown handled by CRDTResolvingIterator.
 
-5. **CardinalityUnknown defaults to Many**: Schemaless attributes use add-wins semantics (Datascript-compatible).
+5. **CardinalityUnknown defaults to One**: a schemaless attribute resolves as LWW and is post-validated (Theorem 3b).
 
-6. **TAEV is conditional**: Only CRDT-correct when T is bound (single transaction).
-
-7. **CRDTResolvingIterator handles edge cases**: Same-Tx tiebreaking for add-wins, RGA for vectors, contiguous group deduplication.
+6. **A bound T is a narrowing, not a resolution**: a run under one operation holds no pair's group whole in a resolving view, so its datoms are candidates there, and the answer in History and as of T (Theorem 1(b)).

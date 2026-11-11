@@ -16,7 +16,7 @@ func createEntityResolveTestDB(t *testing.T, mode optimizerMode) *Database {
 }
 
 func TestResolveEntityAttributes_SingleAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createEntityResolveTestDB(t, mode)
 
@@ -49,7 +49,7 @@ func TestResolveEntityAttributes_SingleAttribute(t *testing.T) {
 }
 
 func TestResolveEntityAttributes_MultipleAttributes(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createEntityResolveTestDB(t, mode)
 
@@ -94,7 +94,7 @@ func TestResolveEntityAttributes_MultipleAttributes(t *testing.T) {
 }
 
 func TestResolveEntityAttributes_CardinalityMany(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createEntityResolveTestDB(t, mode)
 
@@ -133,7 +133,7 @@ func TestResolveEntityAttributes_CardinalityMany(t *testing.T) {
 }
 
 func TestResolveEntityAttributes_CardinalityVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createEntityResolveTestDB(t, mode)
 
@@ -171,7 +171,7 @@ func TestResolveEntityAttributes_CardinalityVector(t *testing.T) {
 }
 
 func TestResolveEntityAttributes_LWWResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createEntityResolveTestDB(t, mode)
 
@@ -211,7 +211,7 @@ func TestResolveEntityAttributes_LWWResolution(t *testing.T) {
 }
 
 func TestResolveEntityAttributes_MissingAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createEntityResolveTestDB(t, mode)
 
@@ -250,7 +250,7 @@ func TestResolveEntityAttributes_MissingAttribute(t *testing.T) {
 }
 
 func TestResolveEntityAttributes_UsesCachedEntries(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createEntityResolveTestDB(t, mode)
 
@@ -276,8 +276,7 @@ func TestResolveEntityAttributes_UsesCachedEntries(t *testing.T) {
 			assert.Equal(t, "Alice", result1[datalog.NewKeyword(":person/name")])
 
 			// Verify entity attrs are tracked
-			eBytes := Entity(e1.Hash())
-			cachedAttrs := db.Cache().GetCachedAttrs(eBytes)
+			cachedAttrs := db.Cache().GetCachedAttrs(e1)
 			assert.NotNil(t, cachedAttrs, "should have cached attrs tracked")
 
 			// Second call should use cache
@@ -289,7 +288,7 @@ func TestResolveEntityAttributes_UsesCachedEntries(t *testing.T) {
 }
 
 func TestResolveEntityAttributes_NonexistentEntity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createEntityResolveTestDB(t, mode)
 

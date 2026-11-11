@@ -90,13 +90,11 @@ type gateReviewHistory struct {
 	txIDs    []datalog.ElementID
 }
 
-func buildGateReviewHistory(t *testing.T, c gateReviewCase, algebra bool) gateReviewHistory {
+// buildGateReviewHistory writes c into a database on the leg given, under
+// the leg's planner options.
+func buildGateReviewHistory(t *testing.T, c gateReviewCase, mode optimizerMode) gateReviewHistory {
 	t.Helper()
-	opts := DefaultPlannerOptions()
-	opts.EnableAlgebraOptimizer = algebra
-	d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", Schema: gateReviewSchema(c.cardinality, c.unique), PlannerOptions: &opts})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, d.Close()) })
+	d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: gateReviewSchema(c.cardinality, c.unique)})
 	e0 := datalog.NewIdentity("gate-review:e0")
 	e1 := datalog.NewIdentity("gate-review:e1")
 	e2 := datalog.NewIdentity("gate-review:e2")
@@ -203,76 +201,98 @@ func gateReviewAnswer(rel executor.Relation, err error) ([][]interface{}, error)
 	return tuples, nil
 }
 
-// Every route's get-else on $src answers with the algebra optimizer on what
-// it answers with it off, the per-tuple lookup, over generated histories,
-// with $src each handle in turn through one database's plan cache.
+// gateReviewRun is one answer of a route's text with $src one view of a
+// history: the view's name, and the tuples or the error.
+type gateReviewRun struct {
+	view   string
+	tuples [][]interface{}
+	err    error
+}
+
+// gateReviewAnswers runs every route's text over every view of h in order,
+// through h's database and its plan cache, and records each answer by route
+// and view.
+func gateReviewAnswers(t *testing.T, h gateReviewHistory) [][]gateReviewRun {
+	t.Helper()
+	views := gateReviewViews(h)
+	answers := make([][]gateReviewRun, len(gateReviewRoutes))
+	for r, route := range gateReviewRoutes {
+		answers[r] = make([]gateReviewRun, len(views))
+		for v, view := range views {
+			inputs := []interface{}{WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): view.view})}
+			if route.rules != "" {
+				rs, err := parser.ParseRules(route.rules)
+				require.NoError(t, err)
+				inputs = append(inputs, rs)
+			}
+			tuples, err := gateReviewAnswer(h.db.Query(route.text, inputs...))
+			answers[r][v] = gateReviewRun{view: view.name, tuples: tuples, err: err}
+		}
+	}
+	return answers
+}
+
+// Every route's get-else on $src answers on every leg what it answers on the
+// reference leg, the per-tuple lookup, over generated histories, with $src
+// each handle in turn through one database's plan cache.
 func TestGateReview_GetElseOnEveryRouteAnswersAlikeOnBothOptimizerPaths(t *testing.T) {
 	diverged := map[string]int{}
 	first := map[string]string{}
 	for i, c := range generateGateReviewCases(20261103, 120) {
-		on := buildGateReviewHistory(t, c, true)
-		off := buildGateReviewHistory(t, c, false)
-		onViews, offViews := gateReviewViews(on), gateReviewViews(off)
-		for _, route := range gateReviewRoutes {
-			for v := range onViews {
-				run := func(h gateReviewHistory, view *Database) ([][]interface{}, error) {
-					inputs := []interface{}{WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): view})}
-					if route.rules != "" {
-						rs, err := parser.ParseRules(route.rules)
-						require.NoError(t, err)
-						inputs = append(inputs, rs)
+		want := gateReviewAnswers(t, buildGateReviewHistory(t, c, referenceMode))
+		for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
+			got := gateReviewAnswers(t, buildGateReviewHistory(t, c, mode))
+			for r, route := range gateReviewRoutes {
+				for v := range got[r] {
+					w, g := want[r][v], got[r][v]
+					viewKind := g.view
+					if len(viewKind) > 5 && viewKind[:5] == "as-of" {
+						viewKind = "as-of"
 					}
-					return gateReviewAnswer(h.db.Query(route.text, inputs...))
-				}
-				want, wantErr := run(off, offViews[v].view)
-				got, gotErr := run(on, onViews[v].view)
-				viewKind := onViews[v].name
-				if len(viewKind) > 5 && viewKind[:5] == "as-of" {
-					viewKind = "as-of"
-				}
-				key := route.name + " / " + viewKind
-				if (wantErr == nil) != (gotErr == nil) || !reflect.DeepEqual(want, got) {
-					diverged[key]++
-					if _, seen := first[key]; !seen {
-						first[key] = fmt.Sprintf("case %d %v: off %v %v, on %v %v", i, c, want, wantErr, got, gotErr)
+					key := mode.name + " / " + route.name + " / " + viewKind
+					if (w.err == nil) != (g.err == nil) || !reflect.DeepEqual(w.tuples, g.tuples) {
+						diverged[key]++
+						if _, seen := first[key]; !seen {
+							first[key] = fmt.Sprintf("case %d %v: reference %v %v, leg %v %v", i, c, w.tuples, w.err, g.tuples, g.err)
+						}
 					}
 				}
 			}
 		}
 	}
-	require.Empty(t, diverged, "routes and views where the optimizer-on path answers otherwise than the optimizer-off path, first instance of each: %v", first)
+	require.Empty(t, diverged, "legs, routes and views answering otherwise than the reference leg, first instance of each: %v", first)
 }
 
 // The plan cache serves a plan made on one handle to another only where the
-// other's sources answer the plan's questions alike: one database runs each
-// route's text over each handle in turn, and every answer equals the answer
-// a fresh database with no plan cache gives on the optimizer-off path.
+// other's sources answer the plan's questions alike: one database on each leg
+// runs the text over each handle in turn, and every answer equals the answer
+// a fresh reference-leg database, with no plan served, gives for that handle.
 func TestGateReview_ThePlanCacheServesNoPlanAHandleAnswersOtherwise(t *testing.T) {
+	text := `[:find ?e ?v :where [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]`
 	for i, c := range generateGateReviewCases(7, 60) {
-		on := buildGateReviewHistory(t, c, true)
-		views := gateReviewViews(on)
-		text := `[:find ?e ?v :where [?e :t/name _] [(get-else $ ?e :t/a "none") ?v]]`
-		{
+		for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
+			leg := buildGateReviewHistory(t, c, mode)
+			views := gateReviewViews(leg)
 			for v := range views {
-				off := buildGateReviewHistory(t, c, false)
-				offViews := gateReviewViews(off)
-				want, wantErr := gateReviewAnswer(off.db.Query(text, WithSources(map[query.Symbol]executor.PatternMatcher{datalog.SymDollar: offViews[v].view})))
-				got, gotErr := gateReviewAnswer(on.db.Query(text, WithSources(map[query.Symbol]executor.PatternMatcher{datalog.SymDollar: views[v].view})))
-				where := fmt.Sprintf("case %d %v view %q", i, c, views[v].name)
-				require.Equal(t, wantErr == nil, gotErr == nil, "%s: off err %v, on err %v", where, wantErr, gotErr)
+				reference := buildGateReviewHistory(t, c, referenceMode)
+				referenceViews := gateReviewViews(reference)
+				want, wantErr := gateReviewAnswer(reference.db.Query(text, WithSources(map[query.Symbol]executor.PatternMatcher{datalog.SymDollar: referenceViews[v].view})))
+				got, gotErr := gateReviewAnswer(leg.db.Query(text, WithSources(map[query.Symbol]executor.PatternMatcher{datalog.SymDollar: views[v].view})))
+				where := fmt.Sprintf("case %d %v leg %s view %q", i, c, mode.name, views[v].name)
+				require.Equal(t, wantErr == nil, gotErr == nil, "%s: reference err %v, leg err %v", where, wantErr, gotErr)
 				require.Equal(t, want, got, where)
 			}
 		}
 	}
 }
 
-// Every route answers its query, on each optimizer path, over a history
-// whose $src is the latest view, so the differential above compares answers
-// and not two refusals.
+// Every route answers its query, on every leg, over a history whose $src is
+// the history handle, so the differential above compares answers and not two
+// refusals.
 func TestGateReview_EveryRouteAnswers(t *testing.T) {
 	c := gateReviewCase{cardinality: schema.CardinalityOne, txs: 2, installAfter: -1, ops: []gateReviewOp{{tx: 0, entity: 0, value: "x"}, {tx: 1, entity: 0, value: "y"}}}
-	for _, algebra := range []bool{false, true} {
-		h := buildGateReviewHistory(t, c, algebra)
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
+		h := buildGateReviewHistory(t, c, mode)
 		for _, route := range gateReviewRoutes {
 			inputs := []interface{}{WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): h.db.History()})}
 			if route.rules != "" {
@@ -281,52 +301,54 @@ func TestGateReview_EveryRouteAnswers(t *testing.T) {
 				inputs = append(inputs, rs)
 			}
 			got, err := gateReviewAnswer(h.db.Query(route.text, inputs...))
-			require.NoError(t, err, "%s, algebra %v", route.name, algebra)
-			require.NotEmpty(t, got, "%s, algebra %v", route.name, algebra)
+			require.NoError(t, err, "%s, %s", route.name, mode.name)
+			require.NotEmpty(t, got, "%s, %s", route.name, mode.name)
 		}
 	}
 }
 
-// On the optimizer-on path the get-else scan rewrite applies on every route
-// with $src the latest view, so the differential above compares a rewritten
-// plan with the per-tuple lookup on each route.
+// On the algebra legs the get-else scan rewrite applies on every route with
+// $src the latest view, so the differential above compares a rewritten plan
+// with the per-tuple lookup on each route.
 func TestGateReview_TheRewriteAppliesOnEveryRoute(t *testing.T) {
-	for _, route := range gateReviewRoutes {
-		applied := 0
-		opts := DefaultPlannerOptions()
-		opts.Handler = func(e annotations.Event) {
-			if e.Name == annotations.AlgebraGetElseScanApply {
-				applied++
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption), func(m optimizerMode) bool { return m.algebra }) {
+		for _, route := range gateReviewRoutes {
+			applied := 0
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{
+				Schema: gateReviewSchema(schema.CardinalityOne, nil),
+				AnnotationHandler: func(e annotations.Event) {
+					if e.Name == annotations.AlgebraGetElseScanApply {
+						applied++
+					}
+				},
+			})
+			inputs := []interface{}{WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): d})}
+			if route.rules != "" {
+				rs, err := parser.ParseRules(route.rules)
+				require.NoError(t, err)
+				inputs = append(inputs, rs)
 			}
+			got, err := gateReviewAnswer(d.Query(route.text, inputs...))
+			require.NoError(t, err, "%s, %s", route.name, mode.name)
+			require.Empty(t, got, "%s, %s", route.name, mode.name)
+			require.Positive(t, applied, "%s, %s: the rewrite applies", route.name, mode.name)
 		}
-		d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", Schema: gateReviewSchema(schema.CardinalityOne, nil), PlannerOptions: &opts})
-		require.NoError(t, err)
-		inputs := []interface{}{WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): d})}
-		if route.rules != "" {
-			rs, err := parser.ParseRules(route.rules)
-			require.NoError(t, err)
-			inputs = append(inputs, rs)
-		}
-		got, err := gateReviewAnswer(d.Query(route.text, inputs...))
-		require.NoError(t, err, route.name)
-		require.Empty(t, got, route.name)
-		require.Positive(t, applied, "%s: the rewrite applies", route.name)
-		require.NoError(t, d.Close())
 	}
 }
 
 // Every route's text runs twice on one database with $src the database,
 // with SetSchema declaring :t/a cardinality-many and a second value asserted
-// between the runs; the second run answers on the optimizer-on path what it
-// answers on the optimizer-off path.
+// between the runs; the second run answers on every leg what it answers on
+// the reference leg.
 func TestGateReview_EveryRouteAnswersAlikeAfterSetSchemaBetweenRuns(t *testing.T) {
+	c := gateReviewCase{cardinality: schema.CardinalityOne, txs: 1, installAfter: -1, ops: []gateReviewOp{{tx: 0, entity: 0, value: "x"}, {tx: 0, entity: 1, value: "y"}}}
 	diverged := map[string]string{}
 	for _, route := range gateReviewRoutes {
-		var answers [2][][]interface{}
-		var errs [2]error
-		for i, algebra := range []bool{false, true} {
-			c := gateReviewCase{cardinality: schema.CardinalityOne, txs: 1, installAfter: -1, ops: []gateReviewOp{{tx: 0, entity: 0, value: "x"}, {tx: 0, entity: 1, value: "y"}}}
-			h := buildGateReviewHistory(t, c, algebra)
+		// secondRun builds the history on the leg, runs the route's text,
+		// installs the cardinality-many declaration, asserts a second value and
+		// answers the text's second run.
+		secondRun := func(mode optimizerMode) ([][]interface{}, error) {
+			h := buildGateReviewHistory(t, c, mode)
 			run := func() ([][]interface{}, error) {
 				inputs := []interface{}{WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): h.db})}
 				if route.rules != "" {
@@ -337,17 +359,21 @@ func TestGateReview_EveryRouteAnswersAlikeAfterSetSchemaBetweenRuns(t *testing.T
 				return gateReviewAnswer(h.db.Query(route.text, inputs...))
 			}
 			first, err := run()
-			require.NoError(t, err, route.name)
-			require.NotEmpty(t, first, route.name)
+			require.NoError(t, err, "%s, %s", route.name, mode.name)
+			require.NotEmpty(t, first, "%s, %s", route.name, mode.name)
 			require.NoError(t, h.db.SetSchema(gateReviewSchema(schema.CardinalityMany, nil)))
 			tx := h.db.NewTransaction()
 			require.NoError(t, tx.Add(h.entities[0], datalog.NewKeyword(":t/a"), "z"))
 			_, err = tx.Commit()
 			require.NoError(t, err)
-			answers[i], errs[i] = run()
+			return run()
 		}
-		if (errs[0] == nil) != (errs[1] == nil) || !reflect.DeepEqual(answers[0], answers[1]) {
-			diverged[route.name] = fmt.Sprintf("off %v %v, on %v %v", answers[0], errs[0], answers[1], errs[1])
+		want, wantErr := secondRun(referenceMode)
+		for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
+			got, gotErr := secondRun(mode)
+			if (wantErr == nil) != (gotErr == nil) || !reflect.DeepEqual(want, got) {
+				diverged[mode.name+" / "+route.name] = fmt.Sprintf("reference %v %v, leg %v %v", want, wantErr, got, gotErr)
+			}
 		}
 	}
 	require.Empty(t, diverged)

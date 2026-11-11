@@ -613,6 +613,10 @@ These are all avoidance disguised as engineering judgment. The correct answer is
 
 ## Query Planning and Execution Architecture
 
+### The Plan States Meaning; the Executor Carries It Out
+
+The planner states what a query means: each scope's phases, each clause's route, the sites it reads, and what each scope is given and what it produces. The executor and the storage beneath it carry that out. The EA cache, entity prefetch, attribute-fetch fusion, scan sharing's sequences and how a relation is held are theirs. They work inside what the plan states, and they never change an answer. When execution disagrees with the plan, the execution detail is fixed to honor the plan, never pulled up into it. A planner rule that reads, predicts or states an executor or storage detail is a second copy of the executor's internals. The tell: a planning rule whose support cites executor or storage code, such as a relation's representation, a size, what a read loads, or which reads a source answers another way. The instances: a group planned as held because the executor held it in memory, a held invocation's argument shape read to predict a rename, prefetch's read planned as a step, and fusion proposed as a planned route.
+
 ### Modern Architecture (October 2025)
 
 #### RealizedPlan & QueryExecutor (Stage B)
@@ -925,6 +929,18 @@ Generate random valid queries and verify no panics or crashes.
 
 ---
 
+### Testing Cache Changes
+
+**A change to how the EA cache is used is tested with the cache disabled as well.** Which reads consult the cache, which views it serves, and what it keys on are each a change to its use. Every test of such a change runs with `DatabaseOptions.DisableCache` unset and set, and both answer alike. The tell: a test of a cache route that opens its database only with the cache on.
+
+---
+
+### Testing Prefetch
+
+**Entity prefetch never changes what a query answers, as the EA cache never does.** Prefetch only fills the cache, and the cache answers what storage answers. So a query gives the same tuples, or the same error, with prefetch on and off. Prefetch is an executor concern and works inside the route the plan states. It never reads a group the plan reads in windows ahead of the clause that consumes it. Prefetch is an axis of the optimizer matrix, and every engine test answers alike on every leg. A test of prefetch's own mechanism asserts that mechanism on the prefetch-on legs, and its answer alike on every leg. The tell: an answer that holds only with prefetch on, or a prefetch that reads a windowed group whole.
+
+---
+
 ### Testing Query Optimizations
 
 **CRITICAL**: Query optimizations are NOT tested the same way as regular features.
@@ -976,6 +992,17 @@ Test that optimization doesn't break edge cases:
 // Test with nil values, empty relations, single tuples
 // Verify no panics, no data corruption
 ```
+
+#### 6. An Option a Test Enables Is an Axis of the Matrix
+A planner option any test turns on is an axis of the optimizer matrix: `optimizerMode` and `optionLegs` in `datalog/storage`, and each query-executing package's own copy of the legs and of `legsFor` in its `optimizer_modes_test.go` (`datalog/executor`, `datalog/db`, `datalog/qb`, `datalog/reflect`, `datalog/wasmtest`, `tests` and `cmd/datalog`), each pinned to the design by its own copies of the pair-coverage, reference-and-default-profile, options-carry and legs-by-reach tests.
+
+The legs are a pairwise covering design: every pair of axes takes all four settings on some leg. The first leg is the reference, every option off, and one leg is the default profile.
+
+Every engine test runs the legs `legsFor` answers for the options its queries reach, one leg per setting of that reach the design needs, two legs agreeing on the reach being one leg: two legs for one option, four for two or three, one per setting the legs hold for four or more, and the default profile alone for none. Every leg answers alike. Under js/wasm a test binary runs on one thread, so there a reach of one or more options runs the default profile and, where it differs from the default profile on the reach, the reference, and the pairwise design runs natively. The reach is measured, and the loop carries the measurement as its literal, never a reach read off the test's text: under `-reach` every leg runs under a recording handler, and each package's `reach_report_test.go` writes per test the options whose events fired. A test absent from the report keeps every option. A test that installs a handler of its own on the options installs it through the mode's `recording`, which carries the recorder ahead of it, and one that gives a handler at a database's open gives it as it is, since the database hands every event to it and to the handler its planner options carry, so its reach is recorded as every other test's. In `datalog/storage` and `tests`, whose recorder rides on the database's open, a test that builds an executor or a matcher from the mode's planner options installs their handler through `recordingReach`, a nil handler included. A test of the store, what it persists or how it reads, loops `backendModes` through `legsFor` with no reach, one leg per backend.
+
+A test whose subject is the option's own mechanism names the option in its reach, keeps the legs that carry it through `legsWhere` over `legsFor`'s answer, and sets no option itself. A pin none of the legs given carries runs on the first leg of the design that carries it, per backend, so under js/wasm a mechanism test still runs on a leg that holds its pin. A test asserting the mechanism with its option on and its absence with it off keeps each setting's legs through `legsWhere`, the on legs then the off legs. In `datalog/executor`, whose matrix keeps a mechanism test's legs through `optimizerModesWhere` over every mode, such a test runs every mode. A test that runs a query through the built CLI loops `cliOptimizeFlags`, the two values of `-optimize`, the one planner option the binary exposes.
+
+An optimization decides how a query runs, never what it answers. A test that needs an optimization for its answer or its precondition has let a performance option stand in for correctness. The tell: an option set inside one test's body and absent from the matrix. The instance: entity prefetch was set inside single tests, and one passed only because prefetch's read decided a route at run time.
 
 ---
 

@@ -42,16 +42,14 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 	testCases := []struct {
 		name             string
 		query            string
-		symmetric        bool
 		expectedCount    int
 		checkCorrectness func(t *testing.T, results []executor.Tuple)
 	}{
 		{
-			name: "asymmetric_simple_join",
+			name: "simple_join",
 			query: `[:find ?name ?age
 			         :where [?p :person/name ?name]
 			                [?p :person/age ?age]]`,
-			symmetric:     false,
 			expectedCount: 100,
 			checkCorrectness: func(t *testing.T, results []executor.Tuple) {
 				// Verify join correctness: name and age must match
@@ -82,38 +80,11 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 			},
 		},
 		{
-			name: "symmetric_simple_join",
-			query: `[:find ?name ?age
-			         :where [?p :person/name ?name]
-			                [?p :person/age ?age]]`,
-			symmetric:     true,
-			expectedCount: 100,
-			checkCorrectness: func(t *testing.T, results []executor.Tuple) {
-				for _, tuple := range results {
-					name, ok1 := tuple[0].(string)
-					age, ok2 := tuple[1].(int64)
-					if !ok1 || !ok2 {
-						t.Errorf("Type mismatch: %T, %T", tuple[0], tuple[1])
-						continue
-					}
-
-					var personID int
-					fmt.Sscanf(name, "Name%d", &personID)
-					expectedAge := int64(20 + personID)
-					if age != expectedAge {
-						t.Errorf("Join corruption: %s has age %d, expected %d",
-							name, age, expectedAge)
-					}
-				}
-			},
-		},
-		{
-			name: "asymmetric_with_filter",
+			name: "with_filter",
 			query: `[:find ?name
 			         :where [?p :person/name ?name]
 			                [?p :person/age ?age]
 			                [(> ?age 50)]]`,
-			symmetric:     false,
 			expectedCount: 69, // ages 51-119 (IDs 31-99)
 			checkCorrectness: func(t *testing.T, results []executor.Tuple) {
 				for _, tuple := range results {
@@ -130,28 +101,9 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 				}
 			},
 		},
-		{
-			name: "symmetric_with_filter",
-			query: `[:find ?name
-			         :where [?p :person/name ?name]
-			                [?p :person/age ?age]
-			                [(> ?age 50)]]`,
-			symmetric:     true,
-			expectedCount: 69,
-			checkCorrectness: func(t *testing.T, results []executor.Tuple) {
-				for _, tuple := range results {
-					name := tuple[0].(string)
-					var personID int
-					fmt.Sscanf(name, "Name%d", &personID)
-					if personID <= 30 {
-						t.Errorf("Filter failed: %s should not appear", name)
-					}
-				}
-			},
-		},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -169,15 +121,13 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 						t.Fatalf("Parse failed: %v", err)
 					}
 
-					// Create executor with appropriate options
-					opts := executor.ExecutorOptions{
-						EnableStreamingJoins:    true,
-						EnableSymmetricHashJoin: tc.symmetric,
-						DefaultHashTableSize:    256,
-					}
+					popts := mode.plannerOptions()
+					popts.Handler = recordingReach(t, nil)
+					opts := executor.ExecutorOptionsFromPlanner(popts)
+					opts.DefaultHashTableSize = 256
 
 					matcher := NewPatternMatcherWithOptions(db.Store(), opts)
-					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+					exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
 					// Execute through full pipeline
 					result, err := exec.Execute(q)
@@ -226,49 +176,29 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 }
 
 // TestStorageBackedJoinLimitE2E tests LIMIT queries through full execution path
-// This is where symmetric hash join should show massive speedup
 func TestStorageBackedJoinLimitE2E(t *testing.T) {
 	testCases := []struct {
-		name      string
-		query     string
-		symmetric bool
-		limit     int
+		name  string
+		query string
+		limit int
 	}{
 		{
-			name: "asymmetric_limit_10",
+			name: "limit_10",
 			query: `[:find ?name ?email
 			         :where [?p :person/name ?name]
 			                [?p :person/email ?email]]`,
-			symmetric: false,
-			limit:     10,
+			limit: 10,
 		},
 		{
-			name: "symmetric_limit_10",
+			name: "limit_100",
 			query: `[:find ?name ?email
 			         :where [?p :person/name ?name]
 			                [?p :person/email ?email]]`,
-			symmetric: true,
-			limit:     10,
-		},
-		{
-			name: "asymmetric_limit_100",
-			query: `[:find ?name ?email
-			         :where [?p :person/name ?name]
-			                [?p :person/email ?email]]`,
-			symmetric: false,
-			limit:     100,
-		},
-		{
-			name: "symmetric_limit_100",
-			query: `[:find ?name ?email
-			         :where [?p :person/name ?name]
-			                [?p :person/email ?email]]`,
-			symmetric: true,
-			limit:     100,
+			limit: 100,
 		},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -285,14 +215,13 @@ func TestStorageBackedJoinLimitE2E(t *testing.T) {
 						t.Fatalf("Parse failed: %v", err)
 					}
 
-					opts := executor.ExecutorOptions{
-						EnableStreamingJoins:    true,
-						EnableSymmetricHashJoin: tc.symmetric,
-						DefaultHashTableSize:    256,
-					}
+					popts := mode.plannerOptions()
+					popts.Handler = recordingReach(t, nil)
+					opts := executor.ExecutorOptionsFromPlanner(popts)
+					opts.DefaultHashTableSize = 256
 
 					matcher := NewPatternMatcherWithOptions(db.Store(), opts)
-					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+					exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
 					result, err := exec.Execute(q)
 					if err != nil {

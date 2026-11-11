@@ -15,7 +15,7 @@ import (
 // with cardinality-many (add-wins set) CRDT semantics. This is a regression
 // test for a panic caused by using []byte as a map key in resolveAddWinsSet.
 func TestCardinalityMany_ByteValues(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testCardinalityManyByteValues(t, mode)
 		})
@@ -69,7 +69,7 @@ func testCardinalityManyByteValues(t *testing.T, mode optimizerMode) {
 // TestCardinalityMany_ByteValues_Retract verifies retraction works for []byte
 // values in cardinality-many sets.
 func TestCardinalityMany_ByteValues_Retract(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testCardinalityManyByteValuesRetract(t, mode)
 		})

@@ -137,9 +137,8 @@ func validateFinalizationLiveness(
 }
 
 // terminalSymbols is the set the final projection and finalization read, the
-// set the planner keeps to the find boundary and the algebra path's
-// join-project insertion keeps: the find's variables, aggregate arguments and
-// pull variables, with the retained sort symbols. Under an aggregating find
+// set the planner keeps to the find boundary: the find's variables, aggregate
+// arguments and pull variables, with the retained sort symbols. Under an aggregating find
 // the aggregate runs over the whole join
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §3), so the set is every
 // symbol the join binds beside them: what each top-level clause provides and

@@ -1,7 +1,6 @@
 package executor_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,7 +10,6 @@ import (
 	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
-	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 func TestAttributeFetchBundleTraversesInputOnce(t *testing.T) {
@@ -30,15 +28,6 @@ func TestAttributeFetchBundleTraversesInputOnce(t *testing.T) {
 		{E: e2, A: codeAttr, V: "R2"},
 		{E: e2, A: nameAttr, V: "N2"},
 	}).Matcher()
-	exec := NewQueryExecutor(matcher, nil, ExecutorOptions{EnableAttributeFetchFusion: true})
-
-	inputProperties := RelationProperties{Keys: [][]query.Symbol{{entity}}}
-	input := NewIteratorCountingRelation(NewMaterializedRelationWithProperties(
-		[]query.Symbol{entity, kind},
-		[]Tuple{{e1, "room"}, {e2, "room"}},
-		ExecutorOptions{},
-		inputProperties,
-	))
 	clauses := []query.Clause{
 		&query.DataPattern{Elements: []query.PatternElement{
 			query.Variable{Name: entity},
@@ -51,30 +40,43 @@ func TestAttributeFetchBundleTraversesInputOnce(t *testing.T) {
 			query.Variable{Name: name},
 		}},
 	}
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return m.Fusion() }) {
+		t.Run(mode.Name(), func(t *testing.T) {
+			exec := NewQueryExecutor(matcher, nil, ExecutorOptionsFromPlanner(mode.PlannerOptions()))
+			inputProperties := RelationProperties{Keys: [][]query.Symbol{{entity}}}
+			input := NewIteratorCountingRelation(NewMaterializedRelationWithProperties(
+				[]query.Symbol{entity, kind},
+				[]Tuple{{e1, "room"}, {e2, "room"}},
+				ExecutorOptions{},
+				inputProperties,
+			))
 
-	groups, consumed, err := exec.TryFuseAttributeFetchBundle(
-		NewContext(),
-		clauses,
-		[]Relation{input},
-	)
-	require.NoError(t, err)
-	require.Equal(t, 2, consumed)
-	require.Equal(t, 1, input.IteratorCalls(), "bundle must traverse the input relation once")
-	require.Len(t, groups, 1)
-	require.Equal(t, RelationProperties{Keys: inputProperties.Keys, Identities: []query.Symbol{entity}}, groups[0].Properties(),
-		"the bundle carries the input's keys, and its entity variable holds identities, the only entities it answers")
+			groups, consumed, err := exec.TryFuseAttributeFetchBundle(
+				NewContext(),
+				clauses,
+				[]Relation{input},
+			)
+			require.NoError(t, err)
+			require.Equal(t, 2, consumed)
+			require.Equal(t, 1, input.IteratorCalls(), "bundle must traverse the input relation once")
+			require.Len(t, groups, 1)
+			require.Equal(t, RelationProperties{Keys: inputProperties.Keys, Identities: []query.Symbol{entity}}, groups[0].Properties(),
+				"the bundle carries the input's keys, and its entity variable holds identities, the only entities it answers")
 
-	got, err := CollectTuples(groups[0], nil)
-	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{
-		{e1, "room", "R1", "N1"},
-		{e2, "room", "R2", "N2"},
-	}, got)
+			got, err := CollectTuples(groups[0], nil)
+			require.NoError(t, err)
+			require.ElementsMatch(t, [][]interface{}{
+				{e1, "room", "R1", "N1"},
+				{e2, "room", "R2", "N2"},
+			}, got)
+		})
+	}
 }
 
 // After the pattern binding an entity, a run of patterns fetching that
-// entity's attributes fuses: one fetch is reported per attribute, over every
-// entity, and the query answers what it answers with fusion off.
+// entity's attributes fuses on the legs with attribute-fetch fusion: one
+// fetch is reported per attribute, over every entity. On the other legs
+// nothing is fused. Every leg answers the same tuples.
 func TestASameEntityAttributeRunFusesAndAnswersAsUnfused(t *testing.T) {
 	kind, code, name := datalog.NewKeyword(":place/kind"), datalog.NewKeyword(":place/code"), datalog.NewKeyword(":place/name")
 	e1, e2 := datalog.NewIdentity("bundle:e1"), datalog.NewIdentity("bundle:e2")
@@ -90,43 +92,38 @@ func TestASameEntityAttributeRunFusesAndAnswersAsUnfused(t *testing.T) {
 		attr    datalog.Keyword
 		in, out int
 	}
-	for _, algebra := range []bool{true, false} {
-		for _, fusion := range []bool{true, false} {
-			t.Run(fmt.Sprintf("algebra=%v/fusion=%v", algebra, fusion), func(t *testing.T) {
-				var fetches []fetch
-				opts := storage.DefaultPlannerOptions()
-				opts.EnableAlgebraOptimizer = algebra
-				opts.EnableAttributeFetchFusion = fusion
-				d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(func(e annotations.Event) {
-					if e.Name == annotations.PatternFusedFetch {
-						fetches = append(fetches, fetch{attr: e.Data["attr"].(datalog.Keyword), in: e.Data["in"].(int), out: e.Data["out"].(int)})
-					}
-				}))
-				require.NoError(t, err)
-				defer func() { require.NoError(t, d.Close()) }()
-				tx := d.NewTransaction()
-				for _, f := range []struct {
-					e datalog.Identity
-					a datalog.Keyword
-					v string
-				}{
-					{e1, kind, "room"}, {e1, code, "R1"}, {e1, name, "N1"},
-					{e2, kind, "room"}, {e2, code, "R2"}, {e2, name, "N2"},
-				} {
-					require.NoError(t, tx.Add(f.e, f.a, f.v))
+	for _, mode := range LegsFor(t, FusionOption) {
+		t.Run(mode.Name(), func(t *testing.T) {
+			var fetches []fetch
+			d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(mode.PlannerOptions()), db.WithAnnotationHandler(func(e annotations.Event) {
+				if e.Name == annotations.PatternFusedFetch {
+					fetches = append(fetches, fetch{attr: e.Data["attr"].(datalog.Keyword), in: e.Data["in"].(int), out: e.Data["out"].(int)})
 				}
-				_, err = tx.Commit()
-				require.NoError(t, err)
+			}))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, d.Close()) }()
+			tx := d.NewTransaction()
+			for _, f := range []struct {
+				e datalog.Identity
+				a datalog.Keyword
+				v string
+			}{
+				{e1, kind, "room"}, {e1, code, "R1"}, {e1, name, "N1"},
+				{e2, kind, "room"}, {e2, code, "R2"}, {e2, name, "N2"},
+			} {
+				require.NoError(t, tx.Add(f.e, f.a, f.v))
+			}
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-				got, err := CollectTuples(d.Query(text))
-				require.NoError(t, err)
-				require.ElementsMatch(t, want, got)
-				if fusion {
-					require.ElementsMatch(t, []fetch{{code, 2, 2}, {name, 2, 2}}, fetches, "each attribute after the binding pattern is fetched over both entities")
-				} else {
-					require.Empty(t, fetches, "nothing is fused with the option off")
-				}
-			})
-		}
+			got, err := CollectTuples(d.Query(text))
+			require.NoError(t, err)
+			require.ElementsMatch(t, want, got)
+			if mode.Fusion() {
+				require.ElementsMatch(t, []fetch{{code, 2, 2}, {name, 2, 2}}, fetches, "each attribute after the binding pattern is fetched over both entities")
+			} else {
+				require.Empty(t, fetches, "nothing is fused with the option off")
+			}
+		})
 	}
 }

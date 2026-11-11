@@ -222,10 +222,8 @@ func (it *countingMockIterator) Close() error {
 func (it *countingMockIterator) Error() error { return it.err }
 
 func TestStreamingRelationWithBuffering(t *testing.T) {
-	// Test that StreamingRelation uses auto-materialization for multiple iterations
-	// EnableTrueStreaming=false allows multiple Iterator() calls via materialization
-	opts := ExecutorOptions{EnableTrueStreaming: false}
-
+	// A StreamingRelation marked by Materialize() answers every Iterator()
+	// call from the cache its first iteration fills.
 	t.Run("MultipleIterations", func(t *testing.T) {
 		tuples := []Tuple{
 			{1, "alice", 100},
@@ -234,7 +232,7 @@ func TestStreamingRelationWithBuffering(t *testing.T) {
 		symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 
 		source := &sliceIterator{tuples: tuples, pos: -1}
-		rel := NewStreamingRelationWithOptions(symbols, source, opts)
+		rel := NewStreamingRelation(symbols, source)
 
 		// Call Materialize() to enable multiple iterations
 		_ = rel.Materialize()

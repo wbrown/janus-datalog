@@ -164,7 +164,7 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Execute with decorrelation DISABLED first to verify test data
 			execNoDecor := NewExecutorWithOptions(matcher, nil, mode.ZeroPlannerOptions())

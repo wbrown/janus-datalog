@@ -77,7 +77,7 @@ func TestAMemoryDatabaseNamedAsASourceAnswersItsResolvedView(t *testing.T) {
 			[][]interface{}{{one}, {two}, {three}}},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, algebraOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				host, err := db.OpenMemory(db.WithPlannerOptions(mode.plannerOptions()))

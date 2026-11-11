@@ -14,33 +14,64 @@ type BlobReader interface {
 // DatomFromKey reconstructs a datom from an index key.
 // Pass nil when Tier-3 values are not expected.
 func DatomFromKey(index IndexType, key []byte, encoder *BinaryKeyEncoder, blobs BlobReader) (datalog.Datom, error) {
-	return decodeDatomFromKey(index, key, encoder, blobs)
+	return decodeDatomFromKey(index, key, encoder, blobs, runDecode{})
 }
 
-func decodeDatomFromKey(index IndexType, key []byte, encoder *BinaryKeyEncoder, blobs BlobReader) (datalog.Datom, error) {
+// fixedComponents marks which of a datom's entity, attribute and value a run's
+// prefix fixes: every key the run yields carries the same bytes at each.
+type fixedComponents struct {
+	e, a, v bool
+}
+
+// runDecode is what decoding a key takes from the run the key belongs to:
+// fixed, the components the run's prefix fixes, and shared, a datom of the run
+// already decoded, whose fixed components the key carries alike. A key read
+// alone, or the first of its run, decodes with no shared datom.
+type runDecode struct {
+	fixed  fixedComponents
+	shared *datalog.Datom
+}
+
+// decodeDatomFromKey reconstructs a datom from an index key, taking the
+// components run fixes from run's shared datom when it holds one and decoding
+// the rest.
+func decodeDatomFromKey(index IndexType, key []byte, encoder *BinaryKeyEncoder, blobs BlobReader, run runDecode) (datalog.Datom, error) {
 	// DecodeKey returns fixed-size arrays directly (no heap escape)
 	entity, attr, vBytes, tx, op, afterRef, err := encoder.DecodeKey(index, key)
 	if err != nil {
 		return datalog.Datom{}, fmt.Errorf("failed to decode key: %w", err)
 	}
 
-	v, err := valueFromKeySpan(vBytes, blobs)
-	if err != nil {
-		return datalog.Datom{}, err
+	datom := datalog.Datom{
+		Tx:       Tx(tx).ToElementID(),
+		Op:       datalog.CRDTOp(op),
+		AfterRef: Tx(afterRef).ToElementID(),
 	}
-
+	shared := run.shared
 	// E is reconstructed from the stored 20-byte hash only: entities are
 	// content-addressed and the seed string is never persisted (see the
 	// datalog.identity doc). String() renders the L85 of the hash; store the
 	// name as an attribute if you need it back.
-	return datalog.Datom{
-		E:        datalog.InternIdentityFromHash(entity),
-		A:        datalog.InternKeywordFromBytes(attr),
-		V:        v,
-		Tx:       Tx(tx).ToElementID(),
-		Op:       datalog.CRDTOp(op),
-		AfterRef: Tx(afterRef).ToElementID(),
-	}, nil
+	if shared != nil && run.fixed.e {
+		datom.E = shared.E
+	} else {
+		datom.E = datalog.InternIdentityFromHash(entity)
+	}
+	if shared != nil && run.fixed.a {
+		datom.A = shared.A
+	} else {
+		datom.A = datalog.InternKeywordFromBytes(attr)
+	}
+	if shared != nil && run.fixed.v {
+		datom.V = shared.V
+	} else {
+		v, err := valueFromKeySpan(vBytes, blobs)
+		if err != nil {
+			return datalog.Datom{}, err
+		}
+		datom.V = v
+	}
+	return datom, nil
 }
 
 // valueFromKeySpan decodes a value from its key-encoded span: one type byte

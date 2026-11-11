@@ -98,10 +98,12 @@ func (m runMembership) holds(key []byte) bool {
 }
 
 // EncodedRun is a ScanBound projected onto binary keys: the range a scan walks,
-// and the rule deciding which keys inside it the bound actually names.
+// the rule deciding which keys inside it the bound actually names, and the
+// components the bound's prefix fixes in every key the run yields.
 type EncodedRun struct {
 	Start, End []byte
 	Membership runMembership
+	Fixed      fixedComponents
 }
 
 // txToDescending applies bitwise NOT to Tx bytes for descending sort order.
@@ -461,6 +463,16 @@ func (e *BinaryKeyEncoder) EncodeScanBound(b ScanBound) (EncodedRun, error) {
 		run.Membership.size = len(start) + widthBehind(order, len(b.Prefix))
 	} else {
 		run.Membership.exact = true
+	}
+	for _, component := range order[:len(b.Prefix)] {
+		switch component {
+		case componentE:
+			run.Fixed.e = true
+		case componentA:
+			run.Fixed.a = true
+		case componentV:
+			run.Fixed.v = true
+		}
 	}
 	return run, nil
 }

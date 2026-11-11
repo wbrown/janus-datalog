@@ -14,18 +14,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// cacheKeyFor builds the cache key for an (entity, attribute) pair the way the storage
-// layer does, for inspecting cache state in tests.
-func cacheKeyFor(e datalog.Identity, a datalog.Keyword) CacheKey {
-	sd := ToStorageDatom(datalog.Datom{E: e, A: a})
-	return CacheKey{E: sd.E, A: sd.A}
-}
-
 // TestTruncateToInvalidatesCache verifies the rewind drops a rewound (E, A)'s slot, not just
 // its entry. With the slot gone the key reads the cache's floor, which the rewind raised, so
 // a resolution that read the removed datoms is not stored for it.
 func TestTruncateToInvalidatesCache(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -45,7 +38,7 @@ func TestTruncateToInvalidatesCache(t *testing.T) {
 			require.NoError(t, d.QueryInto(&ages, `[:find ?a :in $ ?e :where [?e :person/age ?a]]`, e))
 			require.Equal(t, []int64{30}, ages)
 
-			key := cacheKeyFor(e, ageAttr)
+			key := CacheKey{E: e, A: ageAttr}
 			slot, hadSlot := d.cache.slots.Load(key)
 			require.True(t, hadSlot && slot.entry != nil, "the read should have populated the cache")
 
@@ -70,7 +63,7 @@ func TestTruncateToInvalidatesCache(t *testing.T) {
 // deterministic by holding the in-flight transaction open, which parks the rollback in its
 // drain.
 func TestTruncateToDropsWritesStartedDuringRollback(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -117,7 +110,7 @@ func TestTruncateToDropsWritesStartedDuringRollback(t *testing.T) {
 // a duplicate (Lamport, ReplicaID). Run under -race to also catch unsynchronized access to
 // the drain state.
 func TestTruncateToConcurrentWritersNoCollision(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

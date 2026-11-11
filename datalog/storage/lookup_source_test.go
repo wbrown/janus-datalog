@@ -11,7 +11,7 @@ import (
 // A database, and the matcher it builds, are each one source: the lookup of
 // the source under any name reads that database.
 func TestLookupSource_OfOneSourceIsThatSourceUnderAnyName(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			one := datalog.NewIdentity("lookup-source:one")

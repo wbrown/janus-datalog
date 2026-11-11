@@ -8,7 +8,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -43,7 +42,7 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -71,9 +70,9 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 			_, err = tx.Commit()
 			assert.NoError(t, err)
 
-			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
-			exec := executor.NewExecutorWithOptions(matcher, db,
-				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := executor.NewExecutorWithOptions(db.Matcher(), db, popts)
 
 			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
@@ -118,7 +117,7 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -141,9 +140,9 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 			_, err := tx.Commit()
 			assert.NoError(t, err)
 
-			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
-			exec := executor.NewExecutorWithOptions(matcher, db,
-				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := executor.NewExecutorWithOptions(db.Matcher(), db, popts)
 
 			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
@@ -214,7 +213,7 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 		name string
 		s    *schema.Schema
 	}{{"no schema", nil}, {"declared", declared}} {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			t.Run(sc.name+"/"+mode.name, func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sc.s})
 
@@ -228,12 +227,9 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 				_, err := tx.Commit()
 				assert.NoError(t, err)
 
-				matcher := executor.PatternMatcher(NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{}))
-				if sc.s != nil {
-					matcher = db.Matcher()
-				}
-				exec := executor.NewExecutorWithOptions(matcher, db,
-					planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
+				popts := mode.plannerOptions()
+				popts.Handler = recordingReach(t, nil)
+				exec := executor.NewExecutorWithOptions(db.Matcher(), db, popts)
 
 				tuples, err := executor.CollectTuples(exec.Execute(parsed))
 				assert.NoError(t, err)

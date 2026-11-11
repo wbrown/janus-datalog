@@ -44,7 +44,7 @@ func notSpanningFixture(t *testing.T, d *Database) (flagged, unflagged, otherFla
 // is WHERE-bound in its own group, and the NOT must exclude exactly the
 // entities flagged with the outer value — not every entity with any flag.
 func TestNotSpanningDisjointGroups(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, symmetricOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
@@ -70,7 +70,7 @@ func TestNotSpanningDisjointGroups(t *testing.T) {
 // disjoint groups — the declared header selects and bridges them (the
 // original defect errored per-group instead).
 func TestNotJoinSpanningDisjointGroups(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, symmetricOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
@@ -97,7 +97,7 @@ func TestNotJoinSpanningDisjointGroups(t *testing.T) {
 // the bound-input relation as a symbol in its own group; the NOT's bridging
 // must pull that group in exactly as for a WHERE-bound correlate.
 func TestNotBodyConsumesInBoundParameter(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
@@ -144,7 +144,7 @@ func notSpanningExpected(unflagged, otherFlag datalog.Identity) map[string]bool 
 // valid Datomic; the declaration matches trivially against the environment's
 // single tuple.
 func TestNotJoinDeclaredEnvHeaderPatternProvided(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
@@ -169,7 +169,7 @@ func TestNotJoinDeclaredEnvHeaderPatternProvided(t *testing.T) {
 // predicate. The header declaration makes the correlation interface
 // explicit; the environment supplies the value.
 func TestNotJoinDeclaredEnvHeaderPredicateConsumed(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
@@ -195,7 +195,7 @@ func TestNotJoinDeclaredEnvHeaderPredicateConsumed(t *testing.T) {
 // :in-bound symbol only through a predicate. Plain not infers the
 // correlation interface, so no header is involved.
 func TestNotBodyPredicateConsumesInBoundParameter(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
@@ -224,7 +224,7 @@ func TestNotBodyPredicateConsumesInBoundParameter(t *testing.T) {
 // a flag no thing carries the body has none and every thing remains.
 func TestHeaderlessNotReadingOnlyAnInputDecidesTheScope(t *testing.T) {
 	clauses := []string{`[?e :entity/kind "thing"]`, `(not [?x :entity/flag ?flag])`}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			flagged, unflagged, otherFlag := notSpanningFixture(t, d)
@@ -260,7 +260,7 @@ func TestHeaderlessNotReadingOnlyAnInputDecidesTheScope(t *testing.T) {
 // input is answered when no thing carries the flag and nothing is answered
 // when one does.
 func TestOneFormWhereOfAnEnvironmentOnlyNotDecidesTheScope(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			flagged, _, _ := notSpanningFixture(t, d)
@@ -285,7 +285,7 @@ func TestOneFormWhereOfAnEnvironmentOnlyNotDecidesTheScope(t *testing.T) {
 // name of an input the header does not name as the body's own: the body
 // excludes every flagged entity, whatever the input holds.
 func TestNotJoinBodySeesOnlyItsHeader(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, _ := notSpanningFixture(t, d)
@@ -311,7 +311,7 @@ func TestNotJoinBodySeesOnlyItsHeader(t *testing.T) {
 // is refused at preparation naming the form and the variable, a query input
 // sharing the name included, on both modes.
 func TestNotJoinOmittedHeaderPredicateConsumptionRejected(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
@@ -339,7 +339,7 @@ func TestNotJoinOmittedHeaderPredicateConsumptionRejected(t *testing.T) {
 // edited into a literal with the header left behind; silent tolerance would
 // hide that authoring error.
 func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
@@ -363,7 +363,7 @@ func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
 // WHERE-bound header symbol — the sibling shape: both modes must reject it,
 // not let the executor key the anti-join on the unused symbol vacuously.
 func TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
@@ -387,7 +387,7 @@ func TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors(t *testing.T) {
 // (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.4): the planner refuses it
 // on both paths, naming the variable.
 func TestNotJoinHeaderSymbolBoundNowhereErrors(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
@@ -408,7 +408,7 @@ func TestNotJoinHeaderSymbolBoundNowhereErrors(t *testing.T) {
 // control: a body predicate consuming a symbol bound nowhere is still an
 // error, not silently existential.
 func TestNotBodyPredicateConsumesUnboundSymbolErrors(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
@@ -450,7 +450,7 @@ func collectEntityFlagResults(t *testing.T, rel executor.Relation) map[string]bo
 // relation. The result must be the union of per-value anti-joins — a fix
 // that only works for a single scalar fails the cold-value tuples.
 func TestNotJoinDeclaredEnvHeaderCollectionInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			flagged, unflagged, otherFlag := notSpanningFixture(t, d)
@@ -481,7 +481,7 @@ func TestNotJoinDeclaredEnvHeaderCollectionInput(t *testing.T) {
 // scalar symbols. Only "thing" matches the fixture, so the answer is the
 // scalar shape's answer.
 func TestNotJoinScalarEnvWithCollectionDataInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
@@ -507,7 +507,7 @@ func TestNotJoinScalarEnvWithCollectionDataInput(t *testing.T) {
 // over. The "other" kind matches no entity; the answer is the "thing"
 // entities.
 func TestNotJoinScalarEnvBesideARelationInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)

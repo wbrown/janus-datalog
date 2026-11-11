@@ -91,7 +91,7 @@ func assertCacheModesAgree(
 func TestCacheMatrix_AConstant(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes, fusionOption) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -130,7 +130,7 @@ func TestCacheMatrix_AConstant(t *testing.T) {
 func TestCacheMatrix_AFromScalarInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -170,7 +170,7 @@ func TestCacheMatrix_AFromScalarInput(t *testing.T) {
 func TestCacheMatrix_AUnbound(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -225,7 +225,7 @@ func TestCacheMatrix_AUnbound(t *testing.T) {
 func TestCacheMatrix_EConstantAUnbound(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -289,7 +289,7 @@ func TestCacheMatrix_VOnlyBound(t *testing.T) {
 
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, func(e annotations.Event) {
 						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
@@ -357,7 +357,7 @@ func TestCacheMatrix_VOnlyBound(t *testing.T) {
 func TestCacheMatrix_VOnlyBound_Supersede(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -426,7 +426,7 @@ func TestCacheMatrix_VOnlyBound_Supersede(t *testing.T) {
 func TestVOnlyBound_CardinalityMany_Removed(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, func(e annotations.Event) {
 						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
@@ -531,7 +531,7 @@ func TestVOnlyBound_CardinalityMany_Removed(t *testing.T) {
 func TestVOnlyBound_MixedCardinality(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -593,7 +593,7 @@ func TestVOnlyBound_MixedCardinality(t *testing.T) {
 func TestVOnlyBound_Schemaless(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -633,7 +633,7 @@ func TestVOnlyBound_Schemaless(t *testing.T) {
 func TestCacheMatrix_AVBound(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -686,7 +686,7 @@ func TestCacheMatrix_AVBound(t *testing.T) {
 func TestCacheMatrix_EFromCollection_AFromScalar(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -736,7 +736,7 @@ func TestCacheMatrix_EFromCollection_AFromScalar(t *testing.T) {
 func TestCacheMatrix_CardinalityMany(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -790,7 +790,7 @@ func TestCacheMatrix_CardinalityMany(t *testing.T) {
 func TestCacheMatrix_PullIntoComparison(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -833,7 +833,7 @@ func TestCacheMatrix_PullIntoComparison(t *testing.T) {
 func TestCacheMatrix_AFromCollection(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -891,7 +891,7 @@ func TestCacheMatrix_AFromCollection(t *testing.T) {
 func TestCacheMatrix_AFromTupleInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -934,7 +934,7 @@ func TestCacheMatrix_AFromTupleInput(t *testing.T) {
 func TestCacheMatrix_AFromRelationInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -997,7 +997,7 @@ func TestCacheMatrix_AFromRelationInput(t *testing.T) {
 func TestCacheMatrix_ABoundViaJoin(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes, fusionOption) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -1055,7 +1055,7 @@ func TestCacheMatrix_ABoundViaJoin(t *testing.T) {
 func TestCacheMatrix_EAndABothFromCollections(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -1116,7 +1116,7 @@ func TestCacheMatrix_EAndABothFromCollections(t *testing.T) {
 func TestCacheMatrix_WithNotClause(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes, fusionOption) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -1184,7 +1184,7 @@ func TestCacheMatrix_WithNotClause(t *testing.T) {
 func TestCacheMatrix_WithOrClause(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes, fusionOption) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -1248,7 +1248,7 @@ func TestCacheMatrix_WithOrClause(t *testing.T) {
 func TestCacheMatrix_WithAggregation(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes, aggregationOption) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -1300,7 +1300,7 @@ func TestCacheMatrix_WithAggregation(t *testing.T) {
 func TestCacheMatrix_CardinalityVector(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -1373,45 +1373,44 @@ func TestCacheMatrix_CardinalityVector(t *testing.T) {
 // See BUG_CACHE_EMPTY_VECTOR_NEVER_SET.
 func TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral(t *testing.T) {
 	// The optimizer axis is outside the cache axis: the two cache arms are
-	// compared against each other, so both must come from the same backend.
-	for _, omode := range optimizerModes {
+	// compared against each other, so both come from the same backend and run
+	// in the one subtest that compares them.
+	for _, omode := range legsFor(optimizerModes) {
 		t.Run(omode.name, func(t *testing.T) {
 			tuplesPerMode := map[string]int{}
 
 			for _, mode := range cacheTestModes {
-				t.Run(mode.name, func(t *testing.T) {
-					db := createCacheTestDB(t, omode, mode.disableCache, nil)
+				db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
-					skill := datalog.NewKeyword(":person/skill")
-					s := schema.NewSchema()
-					s.Add(&schema.AttributeDefinition{
-						Ident:       skill,
-						ValueType:   schema.TypeString,
-						Cardinality: schema.CardinalityVector,
-					})
-					require.NoError(t, db.SetSchema(s))
-
-					// One entity, written under a different attribute, so the entity
-					// exists and :person/skill genuinely never was.
-					who := datalog.NewIdentity("person:alice")
-					tx := db.NewTransaction()
-					require.NoError(t, tx.Set(who, datalog.NewKeyword(":person/name"), "Alice"))
-					_, err := tx.Commit()
-					require.NoError(t, err)
-
-					pattern := &query.DataPattern{
-						Elements: []query.PatternElement{
-							query.Constant{Value: who},
-							query.Constant{Value: skill},
-							query.Constant{Value: []interface{}{}},
-						},
-					}
-
-					m := db.Matcher().(*PatternMatcher)
-					rel, err := m.matchUnboundAsRelation(nil, pattern, nil, nil)
-					require.NoError(t, err)
-					tuplesPerMode[mode.name] = drainRelation(t, rel)
+				skill := datalog.NewKeyword(":person/skill")
+				s := schema.NewSchema()
+				s.Add(&schema.AttributeDefinition{
+					Ident:       skill,
+					ValueType:   schema.TypeString,
+					Cardinality: schema.CardinalityVector,
 				})
+				require.NoError(t, db.SetSchema(s), mode.name)
+
+				// One entity, written under a different attribute, so the entity
+				// exists and :person/skill genuinely never was.
+				who := datalog.NewIdentity("person:alice")
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(who, datalog.NewKeyword(":person/name"), "Alice"), mode.name)
+				_, err := tx.Commit()
+				require.NoError(t, err, mode.name)
+
+				pattern := &query.DataPattern{
+					Elements: []query.PatternElement{
+						query.Constant{Value: who},
+						query.Constant{Value: skill},
+						query.Constant{Value: []interface{}{}},
+					},
+				}
+
+				m := db.Matcher().(*PatternMatcher)
+				rel, err := m.matchUnboundAsRelation(nil, pattern, nil, nil)
+				require.NoError(t, err, mode.name)
+				tuplesPerMode[mode.name] = drainRelation(t, rel)
 			}
 
 			require.Equal(t, tuplesPerMode["cache_disabled"], tuplesPerMode["cache_enabled"],
@@ -1428,7 +1427,7 @@ func TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral(t *testing.T) {
 func TestCacheMatrix_ABoundViaSubquery(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes, fusionOption) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -1494,7 +1493,7 @@ func TestCacheMatrix_ABoundViaSubquery(t *testing.T) {
 func TestCacheMatrix_AsOfQuery(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes, fusionOption) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -1545,7 +1544,7 @@ func TestCacheMatrix_AsOfQuery(t *testing.T) {
 func TestCacheMatrix_SchemaAfterWrite(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
@@ -1613,7 +1612,7 @@ func TestCacheMatrix_SchemaAfterWrite(t *testing.T) {
 func TestCacheMatrix_AllUnbound(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 

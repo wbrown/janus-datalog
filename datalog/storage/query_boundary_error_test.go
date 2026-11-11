@@ -99,7 +99,7 @@ func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
 // on the successor key. Datom()/Key() must report no current position — not
 // decode the out-of-range neighbor.
 func TestKeyOnlyIterator_DatomRejectsEndBoundSuccessor(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

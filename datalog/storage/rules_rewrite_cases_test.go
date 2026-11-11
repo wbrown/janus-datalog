@@ -263,7 +263,7 @@ func rewriteCases() []rewriteCase {
 // its provider, and an or over the recursion bound at every position.
 func TestRules_IsolatedRewriteCasesOnTheFourEdgeGraph(t *testing.T) {
 	cases := rewriteCases()
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := writeRewriteGraph(t, d)

@@ -145,7 +145,7 @@ func TestRefuteFixpoint_LowerOccurrencesUnderNotAndFallback(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, fusionOption) {
 			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: copiesSchema()})
 				tx := d.NewTransaction()
@@ -200,7 +200,7 @@ func TestRefuteFixpoint_LowerOccurrencesUnderNotAndFallback(t *testing.T) {
 								}
 							}
 							require.NotNil(t, body.Marked, "%v: stratum %v: the lower entry of %s is marked on a predicate", inv, stratum.Stratum.Predicates, body.Rule.Name)
-						require.Equal(t, []query.Symbol{query.DeltaSymbol(body.Marked)}, deltas, "%v: stratum %v: the lower entry of %s invokes the delta of the predicate it is marked on, once", inv, stratum.Stratum.Predicates, body.Rule.Name)
+							require.Equal(t, []query.Symbol{query.DeltaSymbol(body.Marked)}, deltas, "%v: stratum %v: the lower entry of %s invokes the delta of the predicate it is marked on, once", inv, stratum.Stratum.Predicates, body.Rule.Name)
 						}
 					}
 				}
@@ -228,7 +228,7 @@ func TestRefuteFixpoint_FirstClauseOfEachDeltaCopyThroughExplain(t *testing.T) {
 		                                     [(reach ?x ?z) [?x :edge ?y] [(q [:find ?w :in $ % ?y :where (reach ?y ?w)] $ % ?y) [[?z] ...]]]]`},
 	}
 	for _, tc := range cases {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption) {
 			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: copiesSchema()})
 				rules := mustRuleSet(t, tc.rules)

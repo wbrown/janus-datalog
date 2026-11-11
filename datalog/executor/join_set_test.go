@@ -12,11 +12,11 @@ import (
 
 // The join of two sets answers each matching pair once and no tuple twice
 // (docs/proposals/JOIN_OUTPUT_IS_A_SET_PROOF.md, T1 and T2), through the
-// streaming arm in either setting of EnableStreamingJoins and through the
-// symmetric arm. The streaming arm hands back one workspace it overwrites on
-// the next pull, so it answers RequiresCopy true, and an empty build answers
-// the empty relation without opening its probe side
-// (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T1, T4, T5 and T6).
+// hash join's streaming arm over materialized sides and over a streaming
+// probe, and through the symmetric arm. The streaming arm hands back one
+// workspace it overwrites on the next pull, so it answers RequiresCopy true,
+// and an empty build answers the empty relation without opening its probe
+// side (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T1, T4, T5 and T6).
 func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 	e := datalog.NewSymbol("?e")
 	l := datalog.NewSymbol("?l")
@@ -165,8 +165,8 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 				}
 			}
 
-			t.Run("with streaming joins off", func(t *testing.T) {
-				arm := "the hash join with streaming joins off"
+			t.Run("over materialized sides", func(t *testing.T) {
+				arm := "the hash join over materialized sides"
 				var events []annotations.Event
 				opts := ExecutorOptions{Handler: func(event annotations.Event) { events = append(events, event) }}
 				result := HashJoinWithOptions(
@@ -178,13 +178,10 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 				hashArm(t, arm, events, count)
 			})
 
-			t.Run("with streaming joins on", func(t *testing.T) {
-				arm := "the hash join with streaming joins on"
+			t.Run("over a streaming probe", func(t *testing.T) {
+				arm := "the hash join over a streaming probe"
 				var events []annotations.Event
-				opts := ExecutorOptions{
-					EnableStreamingJoins: true,
-					Handler:              func(event annotations.Event) { events = append(events, event) },
-				}
+				opts := ExecutorOptions{Handler: func(event annotations.Event) { events = append(events, event) }}
 				right := NewStreamingRelationWithOptions(rightSymbols, &sliceIterator{tuples: c.right, pos: -1}, opts)
 				result := HashJoinWithOptions(NewMaterializedRelation(leftSymbols, c.left), right, join, opts)
 				reportsSize(t, arm, result)
@@ -198,10 +195,7 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 			t.Run("over a probe that reuses its workspace", func(t *testing.T) {
 				arm := "the hash join over a probe that reuses its workspace"
 				var events []annotations.Event
-				opts := ExecutorOptions{
-					EnableStreamingJoins: true,
-					Handler:              func(event annotations.Event) { events = append(events, event) },
-				}
+				opts := ExecutorOptions{Handler: func(event annotations.Event) { events = append(events, event) }}
 				right := newReusingWorkspaceStream(rightSymbols, c.right)
 				result := HashJoinWithOptions(NewMaterializedRelation(leftSymbols, c.left), right, join, opts)
 				reportsSize(t, arm, result)
@@ -215,7 +209,6 @@ func TestAJoinOfTwoSetsAnswersEachPairOnce(t *testing.T) {
 			t.Run("symmetric", func(t *testing.T) {
 				var events []annotations.Event
 				opts := ExecutorOptions{
-					EnableStreamingJoins:    true,
 					EnableSymmetricHashJoin: true,
 					Handler:                 func(event annotations.Event) { events = append(events, event) },
 				}

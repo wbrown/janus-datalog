@@ -11,6 +11,7 @@ package executor
 import (
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 )
@@ -22,9 +23,14 @@ type iterGuard struct {
 	closer func() error
 }
 
+// tupleSeqState is the source a tuple sequence's cells advance: its iterator,
+// closed once by whichever of the chain's end, a reader's Close or the
+// finalizer comes first, the failure that close answered, kept for every later
+// call, and whether the close has run.
 type tupleSeqState struct {
 	it        Iterator
 	closeOnce sync.Once
+	closed    atomic.Bool
 	errMu     sync.Mutex
 	err       error
 }
@@ -35,6 +41,7 @@ func (s *tupleSeqState) close() error {
 		s.errMu.Lock()
 		s.err = err
 		s.errMu.Unlock()
+		s.closed.Store(true)
 	})
 	s.errMu.Lock()
 	defer s.errMu.Unlock()
@@ -52,7 +59,15 @@ type LazySeq struct {
 	err      error        // cached error from thunk
 	thunk    func()       // sets hasElems/first/rest/err directly as side effects
 	closer   func() error // optional: closes underlying resource (iterator)
+	closed   func() bool  // optional: reports whether the resource's close has run
 	guard    *iterGuard   // prevents GC of iterator while cells are reachable
+}
+
+// sourceClosed reports whether the sequence's source has been closed, by the
+// chain's end, a reader's Close or the finalizer. A sequence over no source
+// has nothing to close and answers false.
+func (ls *LazySeq) sourceClosed() bool {
+	return ls.closed != nil && ls.closed()
 }
 
 // realize calls the thunk and caches first/rest. Thread-safe via sync.Once:
@@ -111,6 +126,7 @@ func NewTupleSeq(it Iterator, needsCopy bool) *LazySeq {
 	runtime.SetFinalizer(guard, func(g *iterGuard) { _ = g.closer() })
 	ls := newTupleCell(state, needsCopy, guard)
 	ls.closer = state.close
+	ls.closed = state.closed.Load
 	return ls
 }
 
@@ -131,8 +147,10 @@ func newTupleCell(state *tupleSeqState, needsCopy bool, guard *iterGuard) *LazyS
 		}
 		ls.hasElems = true
 		ls.first = tuple
-		ls.rest = newTupleCell(state, needsCopy, guard)
-		ls.rest.(*LazySeq).closer = state.close
+		rest := newTupleCell(state, needsCopy, guard)
+		rest.closer = state.close
+		rest.closed = state.closed.Load
+		ls.rest = rest
 	}
 	return ls
 }

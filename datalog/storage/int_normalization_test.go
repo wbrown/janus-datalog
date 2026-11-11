@@ -59,7 +59,7 @@ func queryTuples(t *testing.T, db *Database, q string, args ...interface{}) []st
 // back as the canonical int64. Before the fix this passed schema validation and
 // then panicked at encode.
 func TestWrite_GoIntValueDoesNotPanic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openIntNormDB(t, mode)
 			e := datalog.NewIdentity("alice")
@@ -88,7 +88,7 @@ func TestWrite_GoIntValueDoesNotPanic(t *testing.T) {
 // the input relation's int value never joined the stored int64 (ValuesEqual was
 // type-strict).
 func TestQuery_IntInputMatchesInt64StoredValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openIntNormDB(t, mode)
 			age := datalog.NewKeyword(":person/age")
@@ -115,7 +115,7 @@ func TestQuery_IntInputMatchesInt64StoredValue(t *testing.T) {
 // predicate operand (CompareValues) yield the same match. Before the fix these
 // disagreed — the join silently failed while the = predicate matched.
 func TestPredicateAndJoinAgreeOnIntInt64(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := openIntNormDB(t, mode)
 			age := datalog.NewKeyword(":person/age")
@@ -145,7 +145,7 @@ func TestPredicateAndJoinAgreeOnIntInt64(t *testing.T) {
 // int64 before the retraction is recorded, so it retracts the equivalent
 // stored value rather than silently missing it.
 func TestRetract_GoIntValueMatchesStoredInt64(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s := schema.NewSchema()
 			numbers := datalog.NewKeyword(":person/lucky-numbers")

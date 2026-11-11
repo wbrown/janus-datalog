@@ -24,7 +24,7 @@ type dbIDPulled struct {
 // nothing answers nil under a wildcard, and an explicit :db/id is answered
 // for any identity.
 func TestPull_DBIDAnswersTheEntityAtEveryEntryPoint(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":t/name").Type(schema.TypeString).Add().

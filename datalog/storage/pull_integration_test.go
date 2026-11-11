@@ -10,7 +10,7 @@ import (
 )
 
 func TestPullIntegration_StandaloneAPI(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -202,7 +202,7 @@ func TestPullIntegration_StandaloneAPI(t *testing.T) {
 // TestPullWildcardPatternMatching tests that the underlying pattern matching works
 // for entity-only patterns used by wildcard pull
 func TestPullWildcardPatternMatching(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -352,7 +352,7 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 }
 
 func TestPullIntegration_InQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

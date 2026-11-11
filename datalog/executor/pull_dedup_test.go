@@ -26,7 +26,7 @@ func TestPullWithLimitTwoTuples(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -70,7 +70,7 @@ func TestPullWithRelationInputUnion(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 

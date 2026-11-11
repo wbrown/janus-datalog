@@ -17,13 +17,13 @@ import (
 func TestExecuteWithRelations_RefusedWhenContextDone(t *testing.T) {
 	var matcher PatternMatcher
 	q := mustParse(t, `[:find ?p :where [?p :page/kind "leaf"]]`)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 			var events []annotations.Event
 			opts := mode.plannerOptions()
-			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			opts.Handler = mode.recording(func(e annotations.Event) { events = append(events, e) })
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			_, err := exec.ExecuteWithRelations(NewContext().WithCancellation(ctx), q, nil)
 			if !errors.Is(err, context.Canceled) {

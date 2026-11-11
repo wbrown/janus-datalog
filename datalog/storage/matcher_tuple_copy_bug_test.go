@@ -32,7 +32,7 @@ func TestMatcherTupleCopyBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	require.NoError(t, err)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -57,12 +57,10 @@ func TestMatcherTupleCopyBug(t *testing.T) {
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			// CRITICAL: Use streaming to trigger the buffer reuse bug
-			opts := executor.ExecutorOptions{
-				EnableTrueStreaming: true,
-			}
-			matcher := NewPatternMatcherWithOptions(db.store, opts)
-			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			matcher := NewPatternMatcherWithOptions(db.store, executor.ExecutorOptionsFromPlanner(popts))
+			exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
 			result, err := exec.Execute(q)
 			require.NoError(t, err)

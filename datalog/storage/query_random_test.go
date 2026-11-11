@@ -1634,7 +1634,7 @@ func TestQueryShapesOnRandomGraphsMatchTheReference(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("%d_entities", run.entities), func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 				t.Run(mode.name, func(t *testing.T) {
 					differing := 0
 					for seed, g := range byseed {

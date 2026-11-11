@@ -145,6 +145,6 @@ func (it *nonReusingIterator) extractBoundValues(bindingTuple executor.Tuple) (e
 }
 
 func (it *nonReusingIterator) matchesWithBinding(datom *datalog.Datom, bindingTuple executor.Tuple) bool {
-	e, a, v, tx := it.extractBoundValues(bindingTuple)
-	return it.matcher.matchesDatom(datom, e, a, v, tx)
+	values := it.patternExtractor.Extract(bindingTuple)
+	return it.matcher.matchesDatom(datom, values.E, values.A, values.V, values.T, values.Added)
 }

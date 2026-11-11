@@ -46,7 +46,7 @@ func TestFrame_ABranchProvidingARequiredSymbolReadsIt(t *testing.T) {
 		{"or-join over a local", "?e ?w", "(or-join [[?e]] (and " + localCycle + "))", []string{"a b", "b b", "c a"}},
 		{"not over a local", "?e ?w", "(not " + localCycle + ")", nil},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, edgeFacts())
@@ -84,7 +84,7 @@ func TestFrame_ABranchNoOrderRunsIsRefusedAtQuery(t *testing.T) {
 		{"a subject holding tuples", kindFacts()},
 		{"an empty subject", []fact{{named("z"), ":t/n", int64(1)}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, store := range stores {
 				t.Run(store.name, func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestFrame_ABranchNoOrderRunsIsRefusedAtQuery(t *testing.T) {
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §2.3 and §4.1).
 func TestExplain_RefusesABranchNoOrderRunsAsQueryDoes(t *testing.T) {
 	const text = `[:find ?e ?x :where [?x :t/r 2.0] [?e :t/k ?a] [?x :t/k :p] (or-join [?e] [?e :t/q ?m] (and [(identity ?x) ?e] [(identity ?e) ?x])) (not [(identity ?m) ?e] [(identity ?e) ?m])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, kindFacts())
@@ -138,7 +138,7 @@ func numberFacts() []fact {
 // an or-join holding it keeps every entity.
 func TestFrame_AnArithmeticCycleOverARequiredSymbolRuns(t *testing.T) {
 	const cycle = `[(+ ?n 1) ?v] [(- ?v 1) ?n]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, numberFacts())

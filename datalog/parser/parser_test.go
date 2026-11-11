@@ -185,8 +185,8 @@ func TestParseErrors(t *testing.T) {
 		},
 		{
 			name:  "invalid pattern length",
-			input: `[:find ?e :where [?e ?a ?v ?tx ?op]]`,
-			error: "data pattern must have 1 to 4 elements, got 5",
+			input: `[:find ?e :where [?e ?a ?v ?tx ?added ?extra]]`,
+			error: "data pattern must have 1 to 5 elements, got 6",
 		},
 		{
 			name:  "non-vector pattern",
@@ -204,6 +204,35 @@ func TestParseErrors(t *testing.T) {
 			if !contains(err.Error(), tt.error) {
 				t.Errorf("expected error containing %q, got %q", tt.error, err.Error())
 			}
+		})
+	}
+}
+
+// TestAFiveElementPatternParsesRendersAndParsesBack pins that a data pattern
+// of five elements, the fifth whether the datom asserts, parses with each
+// element at its position, renders, and parses back to the same clauses,
+// whether the fifth is a variable or the constant true or false.
+func TestAFiveElementPatternParsesRendersAndParsesBack(t *testing.T) {
+	for _, fifth := range []struct {
+		text    string
+		element query.PatternElement
+	}{
+		{"?added", query.Variable{Name: datalog.NewSymbol("?added")}},
+		{"true", query.Constant{Value: true}},
+		{"false", query.Constant{Value: false}},
+	} {
+		t.Run(fifth.text, func(t *testing.T) {
+			q, err := ParseQuery(`[:find ?e ?v :where [?e :w/one ?v ?tx ` + fifth.text + `]]`)
+			require.NoError(t, err)
+			require.Len(t, q.Where, 1)
+			pattern, ok := q.Where[0].(*query.DataPattern)
+			require.Truef(t, ok, "the clause is a data pattern, got %T", q.Where[0])
+			require.Len(t, pattern.Elements, 5)
+			assert.Equal(t, fifth.element, pattern.Elements[4], "the fifth element")
+
+			back, err := ParseQuery(q.String())
+			require.NoError(t, err, q.String())
+			assert.Equal(t, q.Where, back.Where, "the rendering parses back to the same clauses")
 		})
 	}
 }
@@ -394,6 +423,12 @@ func TestParseSubqueryErrors(t *testing.T) {
 			input: `[:find ?x
 			         :where [(foo [:find ?y :where [?e :foo ?y]] ?s) ?x]]`,
 			error: "unsupported function: foo",
+		},
+		{
+			name: "a non-vector constant at a collection parameter",
+			input: `[:find ?x
+			         :where [(q [:find ?y :in $ [?v ...] :where [?e :foo ?v] [?e :bar ?y]] $ "x") [[?x]]]]`,
+			error: `argument 2 is "x", and the collection parameter [?v ...] takes a vector`,
 		},
 	}
 

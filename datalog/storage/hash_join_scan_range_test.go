@@ -50,7 +50,7 @@ func TestHashJoinScanRangeBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -108,7 +108,9 @@ func TestHashJoinScanRangeBug(t *testing.T) {
 			}
 
 			// Same options as datalog-cli; binding-driven scans use HashJoinScan.
-			exec := db.NewExecutorWithOptions(mode.plannerOptions())
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
+			exec := db.NewExecutorWithOptions(popts)
 
 			// Time the query - should be <100ms but currently can be 10+ seconds
 			start := time.Now()

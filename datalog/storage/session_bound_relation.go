@@ -40,10 +40,12 @@ func (c *queryCompletion) fire(drained int, err error) {
 }
 
 // sessionBoundRelation ties a query's ReadSession and its completion to its
-// result: the session closes, and the query is reported complete, when the
-// result's iterator is exhausted or closed, whichever comes first. Access
-// paths that bypass Iterator() — derived relations, formatted dumps — leave
-// release to the session's finalizer backstop and report no completion.
+// result: the session closes and the query is reported complete when the
+// result's iterator is exhausted or closed, whichever comes first. The
+// result it wraps is the executor's, which closes the query's shared scans
+// at the same moment, before the session they read from. Access paths that
+// bypass Iterator() — derived relations, formatted dumps — leave release to
+// the session's finalizer backstop and report no completion.
 type sessionBoundRelation struct {
 	executor.Relation
 	session ReadSession
@@ -72,8 +74,9 @@ func (r *sessionBoundRelation) Rename(subst query.Substitution) (executor.Relati
 
 // sessionBoundIterator reports the query complete and releases the session
 // at exhaustion or Close, counting the tuples it yields on the way. Error
-// answers the inner iterator's failure, and Close answers the session's close
-// failure beside the inner iterator's, so each reaches the reader once.
+// answers the inner iterator's failure, and Close answers the session's
+// close failure beside the inner iterator's, so each reaches the reader
+// once.
 type sessionBoundIterator struct {
 	executor.Iterator
 	session    ReadSession

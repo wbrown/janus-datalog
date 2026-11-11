@@ -59,7 +59,7 @@ func queryEntityEmail(t *testing.T, db *Database, e datalog.Identity) string {
 // TestEntityView_NoSupersession: alice's latest assertion is not contested
 // by any other entity. The walk emits the latest.
 func TestEntityView_NoSupersession(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -84,7 +84,7 @@ func TestEntityView_NoSupersession(t *testing.T) {
 // later. Alice's latest (V2) is superseded by bob; her walk falls back
 // to V1 which nobody else has claimed.
 func TestEntityView_FallbackToOlder(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -123,7 +123,7 @@ func TestEntityView_FallbackToOlder(t *testing.T) {
 // V3 then V2. Alice's walk skips V3 (bob wins) and V2 (bob wins again),
 // falls back to V1.
 func TestEntityView_MultiLayerFallback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -162,7 +162,7 @@ func TestEntityView_MultiLayerFallback(t *testing.T) {
 // beaten by another entity's later claim of the same value. Alice has
 // no current email.
 func TestEntityView_AllSuperseded_NoValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -207,7 +207,7 @@ func TestEntityView_AllSuperseded_NoValue(t *testing.T) {
 // TestEntityView_RemoveCancelsSet: alice asserted V then removed it.
 // The walk must not "fall back" to the removed value.
 func TestEntityView_RemoveCancelsSet(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -234,7 +234,7 @@ func TestEntityView_RemoveCancelsSet(t *testing.T) {
 // again. Her walk sees Set(V) as the highest-Tx entry, not superseded.
 // Emit V.
 func TestEntityView_RemoveThenReassert(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -266,7 +266,7 @@ func TestEntityView_RemoveThenReassert(t *testing.T) {
 // applies — no walk, no fallback. Two entities with the same name both
 // have that name in their entity-view.
 func TestEntityView_NonUnique_NoFallback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -306,7 +306,7 @@ func TestEntityView_NonUnique_NoFallback(t *testing.T) {
 // TestVViewEntityViewSymmetry_Fallback: in the fallback scenario, the
 // V-view and entity-view must agree about who owns what.
 func TestVViewEntityViewSymmetry_Fallback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -353,7 +353,7 @@ func TestVViewEntityViewSymmetry_Fallback(t *testing.T) {
 // moved to V', and was superseded at V'. Her fallback should return V
 // (since she's the only claimant of V still standing). V-view must agree.
 func TestVViewEntityViewSymmetry_MovedOnWithFallback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -399,7 +399,7 @@ func TestVViewEntityViewSymmetry_MovedOnWithFallback(t *testing.T) {
 // resolution entirely, returning every assertion including superseded
 // ones.
 func TestEntityView_HistoryMode_RawDatoms(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -455,7 +455,7 @@ func TestEntityView_HistoryMode_RawDatoms(t *testing.T) {
 // TestEntityView_AsOf_BeforeSupersession: as-of the tx where alice set
 // v2 (but before bob's takeover), alice's entity-view is v2.
 func TestEntityView_AsOf_BeforeSupersession(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -496,7 +496,7 @@ func TestEntityView_AsOf_BeforeSupersession(t *testing.T) {
 // TestEntityView_AsOf_AfterSupersession: as-of a Tx after bob's takeover,
 // alice's entity-view falls back to v1.
 func TestEntityView_AsOf_AfterSupersession(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -539,7 +539,7 @@ func TestEntityView_AsOf_AfterSupersession(t *testing.T) {
 // TestEntityView_PullReflectsFallback: Pull for alice returns her
 // fallback email, not her superseded latest.
 func TestEntityView_PullReflectsFallback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 

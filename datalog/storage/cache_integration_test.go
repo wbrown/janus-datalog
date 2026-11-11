@@ -23,7 +23,7 @@ func createCacheIntegrationTestDatabase(t *testing.T, mode optimizerMode) *Datab
 // TestQueryPathUsesCache verifies that the matcher created by Database.Matcher()
 // has the cache wired in and uses it for lookups.
 func TestQueryPathUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -58,13 +58,10 @@ func TestQueryPathUsesCache(t *testing.T) {
 			assert.Equal(t, "Alice", val)
 
 			// Verify the cache was populated
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], name.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: name}
 
 			// The cache should now have an entry for this (E, A) pair
-			entry, err := db.Cache().GetOrResolve(key, bm.GetCardinality(name), bm, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, bm.schema.GetAttribute(name), bm, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -74,7 +71,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 
 // TestPullAPIUsesCache verifies that Pull API lookups go through the cache.
 func TestPullAPIUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -126,7 +123,7 @@ func TestPullAPIUsesCache(t *testing.T) {
 // TestCacheInvalidatedOnCommit verifies that committing a transaction
 // invalidates affected cache entries.
 func TestCacheInvalidatedOnCommit(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -172,7 +169,7 @@ func TestCacheInvalidatedOnCommit(t *testing.T) {
 // TestMultipleMatchersShareCache verifies that multiple matchers from the same
 // database share the same cache instance.
 func TestMultipleMatchersShareCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -215,7 +212,7 @@ func TestMultipleMatchersShareCache(t *testing.T) {
 // TestAsOfDoesNotUseCache verifies that as-of queries bypass the cache
 // since the cache only stores the latest state.
 func TestAsOfDoesNotUseCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -258,7 +255,7 @@ func TestAsOfDoesNotUseCache(t *testing.T) {
 
 // TestVectorCacheIntegration verifies that vector attributes work with the cache.
 func TestVectorCacheIntegration(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -298,7 +295,7 @@ func TestVectorCacheIntegration(t *testing.T) {
 // TestCacheResolverInterface verifies that PatternMatcher implements CacheResolver
 // correctly when used by the cache.
 func TestCacheResolverInterface(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -324,32 +321,28 @@ func TestCacheResolverInterface(t *testing.T) {
 			// Get matcher which implements CacheResolver
 			matcher := db.Matcher().(*PatternMatcher)
 
-			// Test that matcher can be used as a CacheResolver
-			eBytes := Entity(e.Hash())
-			var nameAttr, tagsAttr Attribute
-			copy(nameAttr[:], name.String())
-			copy(tagsAttr[:], tags.String())
-
 			// Test GetCardinality
 			assert.Equal(t, schema.CardinalityOne, matcher.GetCardinality(name))
 			assert.Equal(t, schema.CardinalityMany, matcher.GetCardinality(tags))
 
 			// Test ResolveLWW
 			lww := &scanReport{}
-			val, maxID, present, err := matcher.ResolveLWW(eBytes, nameAttr, lww)
+			val, resolvedTx, maxID, present, err := matcher.ResolveLWW(e, name, matcher.schema.GetAttribute(name), lww)
 			require.NoError(t, err)
 			assert.True(t, present, "the (E, A) carries datoms, so it is present")
 			assert.Equal(t, "Alice", val)
 			assert.NotZero(t, maxID.Lamport)
+			assert.Equal(t, maxID, resolvedTx, "under the plain rule the resolved datom's Tx is the version")
 			assert.Positive(t, lww.scanned, "resolution read the index and must report it")
 
 			// Test ResolveAddWins
 			addWins := &scanReport{}
-			set, maxID, present, err := matcher.ResolveAddWins(eBytes, tagsAttr, addWins)
+			set, memberTx, maxID, present, err := matcher.ResolveAddWins(e, tags, addWins)
 			require.NoError(t, err)
 			assert.True(t, present, "the (E, A) carries datoms, so it is present")
 			_, hasDev := set[memberKey("dev")]
 			assert.True(t, hasDev)
+			assert.NotZero(t, memberTx[memberKey("dev")].Lamport, "a member carries its newest assertion's Tx")
 			assert.NotZero(t, maxID.Lamport)
 			assert.Positive(t, addWins.scanned, "resolution read the index and must report it")
 		})
@@ -359,7 +352,7 @@ func TestCacheResolverInterface(t *testing.T) {
 // TestQueryExecutionUsesCache verifies that actual Datalog queries
 // (not just LookupAttribute) use the cache through the Match() path.
 func TestQueryExecutionUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -392,14 +385,11 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 			assert.Equal(t, "Alice", result[0][0])
 
 			// Verify the cache was populated by the query
-			eBytes := Entity(e.Hash())
-			var nameAttr Attribute
-			copy(nameAttr[:], name.String())
-			key := CacheKey{E: eBytes, A: nameAttr}
+			key := CacheKey{E: e, A: name}
 
 			// The cache should now have an entry from the query execution
 			matcher := db.Matcher().(*PatternMatcher)
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.schema.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after query execution")
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -410,7 +400,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 // TestJoinQueryUsesCache verifies that join queries with bound E from bindings
 // also use the cache path.
 func TestJoinQueryUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -456,13 +446,10 @@ func TestJoinQueryUsesCache(t *testing.T) {
 			assert.Equal(t, "LA", names["Bob"])
 
 			// Verify the cache was populated for the city attribute
-			e1Bytes := Entity(e1.Hash())
-			var cityAttr Attribute
-			copy(cityAttr[:], city.String())
-			key := CacheKey{E: e1Bytes, A: cityAttr}
+			key := CacheKey{E: e1, A: city}
 
 			matcher := db.Matcher().(*PatternMatcher)
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(city), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.schema.GetAttribute(city), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after join query")
 			assert.Equal(t, "NYC", entry.OneValue())
@@ -473,7 +460,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 // TestCardinalityManyQueryUsesCache verifies queries on cardinality-many
 // attributes use the cache.
 func TestCardinalityManyQueryUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -515,13 +502,10 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 			assert.True(t, found["golang"])
 
 			// Verify the cache was populated
-			eBytes := Entity(e.Hash())
-			var tagsAttr Attribute
-			copy(tagsAttr[:], tags.String())
-			key := CacheKey{E: eBytes, A: tagsAttr}
+			key := CacheKey{E: e, A: tags}
 
 			matcher := db.Matcher().(*PatternMatcher)
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.schema.GetAttribute(tags), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
 			_, hasDeveloper := entry.ManySet()[memberKey("developer")]
@@ -538,7 +522,7 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 // set is cached, so the next scan reads no set from storage. A member
 // withdrawn and a member added after the scan are what the next scan answers.
 func TestCardinalityManyUnboundScanUsesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -578,10 +562,8 @@ func TestCardinalityManyUnboundScanUsesCache(t *testing.T) {
 				bob:   {"designer": true},
 			}, sets(), "the scan answers every entity's current set")
 
-			var tagsAttr Attribute
-			copy(tagsAttr[:], tags.String())
 			for _, e := range []datalog.Identity{alice, bob} {
-				assert.True(t, db.Cache().GetCachedAttrs(Entity(e.Hash()))[tagsAttr],
+				assert.True(t, db.Cache().GetCachedAttrs(e)[tags],
 					"the scan resolves %s's set through the cache, so the set is cached after it", e)
 			}
 
@@ -602,7 +584,7 @@ func TestCardinalityManyUnboundScanUsesCache(t *testing.T) {
 // TestCacheConcurrency verifies that concurrent cache access with real storage
 // is thread-safe and returns correct values.
 func TestCacheConcurrency(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createCacheIntegrationTestDatabase(t, mode)
 
@@ -626,13 +608,10 @@ func TestCacheConcurrency(t *testing.T) {
 			matcher := db.Matcher().(*PatternMatcher)
 			cache := db.Cache()
 
-			eBytes := Entity(e.Hash())
-			var nameAttr Attribute
-			copy(nameAttr[:], name.String())
-			key := CacheKey{E: eBytes, A: nameAttr}
+			key := CacheKey{E: e, A: name}
 
 			// Populate initial entry
-			_, err = cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
+			_, err = cache.GetOrResolve(key, matcher.schema.GetAttribute(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 
 			var wg sync.WaitGroup
@@ -642,7 +621,7 @@ func TestCacheConcurrency(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					entry, err := cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
+					entry, err := cache.GetOrResolve(key, matcher.schema.GetAttribute(name), matcher, cache.ReadPoint(), nil, DiscardIntake)
 					assert.NoError(t, err)
 					assert.NotNil(t, entry)
 					assert.Equal(t, "Alice", entry.OneValue(), "every reader is served the value the store holds")

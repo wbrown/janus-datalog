@@ -142,8 +142,14 @@ func (d *Database) Import(r io.Reader) error {
 // with the ElementIDs the dump carries, and advances the Lamport clock past
 // the highest of them so later writes order after the imported data. Empty
 // lines and lines starting with ; are ignored. It declares nothing: the
-// caller composes the schema once the datoms are in.
+// caller composes the schema once the datoms are in. It ends through
+// completeReplay on every exit: the batches asserted before a failure are in
+// the store, so the cache is cleared whether or not the replay reached its
+// end, and the clock is restored only when it did.
 func (d *Database) replayEDN(r io.Reader) error {
+	var maxElementID datalog.ElementID
+	defer func() { d.completeReplay(maxElementID) }()
+
 	scanner := bufio.NewScanner(r)
 	// Increase buffer size for long lines
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -188,16 +194,11 @@ func (d *Database) replayEDN(r io.Reader) error {
 		}
 	}
 
-	// Advance the Lamport clock past the highest ElementID in storage.
-	// Without this, subsequent writes (Add/Remove) get Lamport values
-	// lower than imported data, causing CRDT resolution failures.
-	maxElementID, err := d.store.MaxElementID()
+	highest, err := d.store.MaxElementID()
 	if err != nil {
 		return fmt.Errorf("failed to get max ElementID after import: %w", err)
 	}
-	if !maxElementID.IsZero() {
-		d.clock.Restore(maxElementID)
-	}
+	maxElementID = highest
 	return nil
 }
 

@@ -29,7 +29,7 @@ func TestAnAsOfHandleOnTheVBoundRouteAnswersTheMembersAtOrBeforeItsTarget(t *tes
 		{"open attribute", `[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`},
 		{"constant attribute", `[:find ?e :in $ ?v :where [?e :z/tags ?v]]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 			tx := db.NewTransaction()

@@ -16,7 +16,7 @@ import (
 // The reproduction needs storage-backed resolution rather than an in-memory
 // relation, so it runs against every backend the build has.
 func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
-	eachMode(t, testMultipleAggregateSubqueriesNilBug)
+	eachMode(t, testMultipleAggregateSubqueriesNilBug, algebraOption, symmetricOption, fusionOption, aggregationOption)
 }
 
 func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {

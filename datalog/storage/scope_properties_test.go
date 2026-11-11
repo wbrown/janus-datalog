@@ -29,7 +29,7 @@ func TestSubjectKeySurvivesAFallbackPatternBranchOfCardinalityOne(t *testing.T) 
 	rules := mustRuleSet(t, `[[(node ?e ?n) [?e :t/n ?n]]]`)
 	subjectQuery := `[:find ?e ?n :in $ % :where (node ?e ?n)]`
 	formQuery := `[:find ?e ?n ?v :in $ % :where (node ?e ?n) (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: declared})
 			names := commitFacts(t, d, facts)

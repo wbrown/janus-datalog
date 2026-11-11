@@ -269,7 +269,7 @@ Both optimizer modes phase a prepared query. With the algebra engine on, the pla
 
 The plan cache serves a plan under the structural hash of five parts: the prepared query, the rule set, the options that shape a plan, the symbols bound when the plan was made, and which of the scope's invocations are held (`query.Held`). A query's hash folds its typed parts, a symbol or keyword by its interned pointer and a constant by its value hash, each node under its kind (`Query.Hash`); the rule set's folds its rules in the set's order, computed once at the set's construction (`RuleSet.Hash`), since a plan is the walk over the bodies the query's invocations run (`SCOPE_EXECUTION_AND_CONTRACTS.md` §4.1). A hit compares the parts in full (`Query.Equal`, `RuleSet.Equal`), so a collision is a miss, and two sets built from one text, a query's `%` parsed from its text at each execution, are one identity. Every plan enters the cache (goal 10 of `SCOPE_EXECUTION_AND_CONTRACTS.md`).
 
-The bound symbols reach a plan at two places. `planWithBindings` unions them into the symbols the `:in` seeds. A non-empty set turns `EnableJoinProjectInsertion` off for the algebra bridge. So two plans made under one key are one plan.
+The bound symbols reach a plan at one place: `planWithBindings` unions them into the symbols the `:in` seeds. So two plans made under one key are one plan.
 
 The scopes' and the rule bodies' plans:
 
@@ -386,7 +386,7 @@ The package's shape is `main`'s, which is the clarity goal 4 names:
 
 ## 7. The two oracles
 
-The algebra engine on against off checks whether the optimizer preserves meaning. That covers compile fidelity, decorrelation, the get-else rewrite, project insertion, and any order the decompiler produces, each against the clause-based path on the same prepared query. The optimizer-mode matrix runs every query under both. The texts `datalog/internal/queryfuzz` draws over the whole grammar run under both paths on one dataset per backend in `TestQueriesAnswerAlikeUnderBothOptimizerModes` (`datalog/storage`), which reports a refusal on one path beside an answer on the other and two answers that differ.
+The algebra engine on against off checks whether the optimizer preserves meaning. That covers compile fidelity, decorrelation, the get-else rewrite, and any order the decompiler produces, each against the clause-based path on the same prepared query. The optimizer-mode matrix runs every query under both. The texts `datalog/internal/queryfuzz` draws over the whole grammar run under both paths on one dataset per backend in `TestQueriesAnswerAlikeUnderBothOptimizerModes` (`datalog/storage`), which reports a refusal on one path beside an answer on the other and two answers that differ.
 
 The Go reference in the differential tests checks the semantics of §2. It is an interpreter of the generated query over the generated datoms, and the text the engine parses is rendered from that same query. For the rules shapes, the closures `closureOf` and `parityClosureOf` compute the reference. None of it shares code with the inference, the planner or the executor. When the two engine paths disagree, the matrix says that one is wrong, and the reference says which. When both are wrong alike, only the reference sees it.
 

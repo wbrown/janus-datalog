@@ -15,7 +15,7 @@ import (
 // =============================================================================
 
 func TestGetElseBasic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -111,7 +111,7 @@ func TestGetElseBasic(t *testing.T) {
 }
 
 func TestGetElseNumericDefault(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -166,7 +166,7 @@ func TestGetElseNumericDefault(t *testing.T) {
 // =============================================================================
 
 func TestMissingAsPredicate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -219,7 +219,7 @@ func TestMissingAsPredicate(t *testing.T) {
 // empty relation, and the algebra bridge must not reject it for lacking a
 // prior relation.
 func TestLeadingMissingWithInBoundEntity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Collected for the failure dump below and registered at open, since
 			// everything the database builds is constructed with it. Nothing
@@ -319,7 +319,7 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 }
 
 func TestMissingAsExpression(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -374,7 +374,7 @@ func TestMissingAsExpression(t *testing.T) {
 }
 
 func TestMissingMultipleAttributes(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -431,7 +431,7 @@ func TestMissingMultipleAttributes(t *testing.T) {
 // =============================================================================
 
 func TestGetSomeBasic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -501,7 +501,7 @@ func TestGetSomeBasic(t *testing.T) {
 }
 
 func TestGetSomeNoMatch(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -549,7 +549,7 @@ func TestGetSomeNoMatch(t *testing.T) {
 // =============================================================================
 
 func TestCombinedDatabaseFunctions(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -615,7 +615,7 @@ func TestCombinedDatabaseFunctions(t *testing.T) {
 }
 
 func TestDatabaseFunctionWithAggregation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -665,7 +665,7 @@ func TestDatabaseFunctionWithAggregation(t *testing.T) {
 }
 
 func TestDatabaseFunctionWithOrderBy(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -715,7 +715,7 @@ func TestDatabaseFunctionWithOrderBy(t *testing.T) {
 // =============================================================================
 
 func TestGetElseWithVectorDefault(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Schema with a vector attribute
 			s, err := schema.NewBuilder().
@@ -812,7 +812,7 @@ func TestGetElseWithVectorDefault(t *testing.T) {
 // =============================================================================
 
 func TestGetElseWithNullishValues(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -861,7 +861,7 @@ func TestGetElseWithNullishValues(t *testing.T) {
 }
 
 func TestDatabaseFunctionWithInputParameters(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -907,7 +907,7 @@ func TestDatabaseFunctionWithInputParameters(t *testing.T) {
 // []interface{}, but TypedDefaulter should convert it to []string (or the
 // appropriate typed slice) to match the attribute's schema type.
 func TestGetElseWithPopulatedVectorDefault(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":entity/name").Type(schema.TypeString).Add().
@@ -976,7 +976,7 @@ func TestGetElseWithPopulatedVectorDefault(t *testing.T) {
 
 func TestLookupAttributeDirectly(t *testing.T) {
 	// Test the LookupAttribute method directly on PatternMatcher
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

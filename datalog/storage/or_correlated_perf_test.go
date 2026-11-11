@@ -19,7 +19,7 @@ import (
 //
 // See BUG-CORRELATED-UNION-PARTIAL-OUTER-RELATION.md
 func TestOrCorrelatedUnionPartialOuterRelation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

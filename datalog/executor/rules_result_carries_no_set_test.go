@@ -19,7 +19,7 @@ func TestExecuteWithRelations_AResultCarriesNoDerivedSet(t *testing.T) {
 	x, n := datalog.NewSymbol("?x"), datalog.NewSymbol("?n")
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(factsDatabase(t, ChainDatoms(6)), nil, mode.PlannerOptions())
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)

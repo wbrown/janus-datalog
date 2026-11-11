@@ -55,6 +55,52 @@ func followsRules() []*Rule {
 
 func sym(name string) Symbol { return datalog.NewSymbol(name) }
 
+// reach is the predicates the roots' rules invoke at any depth, the roots
+// among them: a predicate the roots never reach is left out, so is a name
+// the set does not define, an invocation inside a form's body reaches its
+// predicate, and a predicate with required positions is reached as any
+// other.
+func TestRuleSet_ReachIsTheClosureOfTheRootsInvocations(t *testing.T) {
+	at := defineRule("at", []string{"?t", "?o"}, scopePattern("?o", "page/name", "?t"))
+	at.Required = []Symbol{sym("?t")}
+	rs := mustRuleSet(t, []*Rule{
+		defineRule("g", []string{"?o"}, scopePattern("?o", "page/age", "?n")),
+		defineRule("a", []string{"?o"}, invoke("wr", "?o")),
+		defineRule("wr", []string{"?o"}, scopePattern("?o", "page/age", "?n"), &NotJoinClause{RequiredVars: []Symbol{sym("?o")}, Clauses: []Clause{invoke("at", "?o", "?t")}}),
+		at,
+	})
+	for _, c := range []struct {
+		name  string
+		roots []string
+		want  []string
+	}{
+		{"a root reaching nothing", []string{"g"}, []string{"g"}},
+		{"a root reaching a chain through a form", []string{"a"}, []string{"a", "wr", "at"}},
+		{"two roots", []string{"a", "g"}, []string{"a", "wr", "at", "g"}},
+		{"a name the set does not define", []string{"nope"}, nil},
+		{"no roots", nil, nil},
+	} {
+		var roots []Symbol
+		for _, r := range c.roots {
+			roots = append(roots, sym(r))
+		}
+		want := map[Symbol]bool{}
+		for _, w := range c.want {
+			want[sym(w)] = true
+		}
+		got := rs.reach(roots)
+		if len(got) != len(want) {
+			t.Errorf("%s: reach %v, want %v", c.name, got, want)
+			continue
+		}
+		for p := range want {
+			if !got[p] {
+				t.Errorf("%s: reach %v lacks %s", c.name, got, p)
+			}
+		}
+	}
+}
+
 func mustRuleSet(t *testing.T, rules []*Rule) *RuleSet {
 	t.Helper()
 	rs, err := NewRuleSet(rules)

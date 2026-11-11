@@ -12,7 +12,7 @@ import (
 
 // TestExecuteQuery tests basic query execution without parameters
 func TestExecuteQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -67,7 +67,7 @@ func TestExecuteQuery(t *testing.T) {
 // multi-symbol relation join fails to compare. Repro for a narrative-generators batch
 // content query returning 0 tuples on [[?key ?subject] ...].
 func TestRelationInput_RefAndKeywordSymbols(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -173,7 +173,7 @@ func TestRelationInput_RefAndKeywordSymbols(t *testing.T) {
 // leaves the result untouched, fail empties it. Skipping it silently returns
 // unfiltered tuples: a wrong answer, not an optimization.
 func TestConstantOnlyPredicateFiltersUniformly(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -229,7 +229,7 @@ func TestConstantOnlyPredicateFiltersUniformly(t *testing.T) {
 // becomes result data, so the value must render into every returned tuple,
 // including as an aggregate argument.
 func TestConstantInputRenderedInFind(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -269,7 +269,7 @@ func TestConstantInputRenderedInFind(t *testing.T) {
 
 // TestExecuteQueryWithScalarInput tests single scalar input parameter
 func TestExecuteQueryWithScalarInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -316,7 +316,7 @@ func TestExecuteQueryWithScalarInput(t *testing.T) {
 
 // TestExecuteQueryWithMultipleScalarInputs tests multiple scalar parameters
 func TestExecuteQueryWithMultipleScalarInputs(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -369,7 +369,7 @@ func TestExecuteQueryWithMultipleScalarInputs(t *testing.T) {
 
 // TestExecuteQueryWithCollectionInput tests collection input [?var ...]
 func TestExecuteQueryWithCollectionInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -429,7 +429,7 @@ func TestExecuteQueryWithCollectionInput(t *testing.T) {
 // TestExecuteQueryWithTupleInput tests the tuple input [?var1 ?var2], one
 // slice bound as one tuple over its symbols.
 func TestExecuteQueryWithTupleInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -471,7 +471,7 @@ func TestExecuteQueryWithTupleInput(t *testing.T) {
 // same tuples: a binding is a relation whatever its spelling, and a tuple is
 // the relation of one tuple.
 func TestTupleInputAndAOneTupleRelationInputAnswerTheSameTuples(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -516,7 +516,7 @@ func TestTupleInputAndAOneTupleRelationInputAnswerTheSameTuples(t *testing.T) {
 
 // TestExecuteQueryWithRelationInput tests relation input [[?var1 ?var2] ...]
 func TestExecuteQueryWithRelationInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -567,7 +567,7 @@ func TestExecuteQueryWithRelationInput(t *testing.T) {
 // element yields Kind Interface, not Slice; the admission must unwrap it
 // (BUG_CLI_RELATION_INPUT_EDN_REJECTED).
 func TestRelationInputAcceptsInterfaceWrappedTuples(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -613,7 +613,7 @@ func TestRelationInputAcceptsInterfaceWrappedTuples(t *testing.T) {
 
 // TestExecuteQueryWithTimeInput tests time.Time values as inputs
 func TestExecuteQueryWithTimeInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -682,7 +682,7 @@ func TestExecuteQueryWithTimeInput(t *testing.T) {
 
 // TestExecuteQueryInputErrors tests error handling for input mismatches
 func TestExecuteQueryInputErrors(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

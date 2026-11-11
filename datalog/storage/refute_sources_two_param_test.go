@@ -136,18 +136,20 @@ func refuteOutcome(t *testing.T, d *Database, text string) string {
 	return strings.Join(rendered, " ")
 }
 
-// A correlated subquery with two correlation parameters answers alike on
-// both optimizer paths whatever names its binding writes, relation or tuple
-// (CLAUDE.md, Semantic Preservation). REFUTE_SOURCES_GOLDEN names a file of
-// the merge-base's unoptimized answers (REFUTE_SOURCES_WRITE=1 records it).
+// A correlated subquery with two correlation parameters answers on every leg
+// what the reference leg answers, whatever names its binding writes, relation
+// or tuple (CLAUDE.md, Semantic Preservation). REFUTE_SOURCES_GOLDEN names a
+// file of the merge-base's unoptimized answers (REFUTE_SOURCES_WRITE=1 records
+// the reference's there), and REFUTE_SOURCES_DUMP a file the reference's and
+// each leg's answers are written to.
 func TestRefuteSources_TwoParameterDecorrelationAnswersAlikeOnBothPaths(t *testing.T) {
 	var queries []string
 	for _, generated := range refuteTwoParamQueries() {
 		queries = append(queries, generated.text)
 	}
-	outcomes := map[bool]map[string]string{}
-	applied := map[string]bool{}
-	for _, mode := range optimizerModes {
+	// answers is what each query answers on a mode, and which queries the
+	// algebra optimizer decorrelated on it.
+	answers := func(t *testing.T, mode optimizerMode) (map[string]string, map[string]bool) {
 		var decorrelated bool
 		handler := func(event annotations.Event) {
 			if event.Name == annotations.AlgebraDecorrelateApply {
@@ -157,45 +159,50 @@ func TestRefuteSources_TwoParameterDecorrelationAnswersAlikeOnBothPaths(t *testi
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: handler})
 		commitFacts(t, d, refuteTwoParamFacts())
 		answered := map[string]string{}
+		applied := map[string]bool{}
 		for _, text := range queries {
 			decorrelated = false
 			answered[text] = refuteOutcome(t, d, text)
-			if mode.algebra && decorrelated {
+			if decorrelated {
 				applied[text] = true
 			}
 		}
-		outcomes[mode.algebra] = answered
+		return answered, applied
 	}
-	on, off := outcomes[true], outcomes[false]
+	reference, _ := answers(t, referenceMode)
+	dumped := map[string]map[string]string{"reference": reference}
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
+		answered, applied := answers(t, mode)
+		dumped[mode.name] = answered
+		for _, text := range queries {
+			t.Run(mode.name+"/"+text, func(t *testing.T) {
+				require.False(t, strings.HasPrefix(reference[text], "error:"), "the reference leg answers: %s", reference[text])
+				require.Equal(t, reference[text], answered[text], "the leg answers what the reference leg answers (decorrelated: %v)", applied[text])
+			})
+		}
+	}
 	if dump := os.Getenv("REFUTE_SOURCES_DUMP"); dump != "" {
-		encoded, err := json.MarshalIndent(map[string]map[string]string{"on": on, "off": off}, "", " ")
+		encoded, err := json.MarshalIndent(dumped, "", " ")
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(dump, encoded, 0o644))
-	}
-	for _, text := range queries {
-		t.Run(text, func(t *testing.T) {
-			require.False(t, strings.HasPrefix(off[text], "error:"), "the unoptimized path answers: %s", off[text])
-			require.Equal(t, off[text], on[text], "the optimizer answers what the unoptimized path answers (decorrelated: %v)", applied[text])
-		})
 	}
 	golden := os.Getenv("REFUTE_SOURCES_GOLDEN")
 	if golden == "" {
 		return
 	}
 	if os.Getenv("REFUTE_SOURCES_WRITE") == "1" {
-		encoded, err := json.MarshalIndent(off, "", " ")
+		encoded, err := json.MarshalIndent(reference, "", " ")
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(golden, encoded, 0o644))
 		return
 	}
 	encoded, err := os.ReadFile(golden)
 	require.NoError(t, err)
-	var reference map[string]string
-	require.NoError(t, json.Unmarshal(encoded, &reference))
+	var recorded map[string]string
+	require.NoError(t, json.Unmarshal(encoded, &recorded))
 	for _, text := range queries {
-		t.Run("reference "+text, func(t *testing.T) {
-			require.Equal(t, reference[text], off[text], "the unoptimized path answers what the merge-base answers")
-			require.Equal(t, reference[text], on[text], "the optimizer answers what the merge-base answers")
+		t.Run("golden "+text, func(t *testing.T) {
+			require.Equal(t, recorded[text], reference[text], "the reference leg answers what the merge-base answers")
 		})
 	}
 }
@@ -217,7 +224,7 @@ func TestRefuteSources_EachTwoParameterSubqueryTakesTheDecorrelationDecisionOfIt
 			declined = append(declined, event.Data["reason"])
 		}
 	}
-	d := createOptimizerModeDB(t, pinned(optimizerModes, true)[0], DatabaseOptions{AnnotationHandler: handler})
+	d := createOptimizerModeDB(t, legsWhere(legsFor(optimizerModes, algebraOption, aggregationOption), func(m optimizerMode) bool { return m.algebra })[0], DatabaseOptions{AnnotationHandler: handler})
 	commitFacts(t, d, refuteTwoParamFacts())
 	shapes := map[bool]int{}
 	for _, query := range refuteTwoParamQueries() {

@@ -56,26 +56,20 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	})
 
 	// Deduplicate (sorted, so duplicates are adjacent)
-	deduped := make([]Entity, 0, len(entities))
-	var prev Entity
-	for _, eid := range entities {
-		var e Entity
-		copy(e[:], eid.Bytes())
-		if len(deduped) > 0 && e == prev {
+	deduped := make([]datalog.Identity, 0, len(entities))
+	for _, e := range entities {
+		if len(deduped) > 0 && e == deduped[len(deduped)-1] {
 			continue
 		}
 		deduped = append(deduped, e)
-		prev = e
 	}
 
 	readPoint := m.cacheBound()
 	for _, e := range deduped {
-		// Bind E on EATV. The dedup above works in the storage projection, so
-		// the identity is re-interned here; the constructor returns the
-		// canonical pointer for an already-interned hash.
+		// Bind E on EATV.
 		iter, err := OpenScan(m.reader, report, ScanBound{
 			Index:  EATV,
-			Prefix: []datalog.Value{datalog.NewIdentityFromHash(e)},
+			Prefix: []datalog.Value{e},
 		})
 		if err != nil {
 			return err
@@ -86,7 +80,6 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 
 		// Single-pass: iterate EATV, accumulate datoms per (E, A) group,
 		// dispatch to cache at each attribute boundary.
-		var currentAttr Attribute
 		var currentKeyword datalog.Keyword
 		var currentDatoms []datalog.Datom
 		hasGroup := false
@@ -103,20 +96,16 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 				continue
 			}
 
-			var aBytes Attribute
-			copy(aBytes[:], d.A.String())
-
-			if hasGroup && aBytes != currentAttr {
+			if hasGroup && d.A != currentKeyword {
 				// Attribute boundary — resolve and cache the previous group
 				card := m.GetCardinality(currentKeyword)
-				if key, ok := m.cacheKey(e, currentAttr); ok {
+				if key, ok := m.cacheKey(e, currentKeyword); ok {
 					m.cache.PopulateFromDatoms(key, card, currentDatoms, readPoint)
 					populated++
 				}
 				currentDatoms = currentDatoms[:0]
 			}
 
-			currentAttr = aBytes
 			currentKeyword = d.A
 			currentDatoms = append(currentDatoms, *d)
 			hasGroup = true
@@ -130,7 +119,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		// Flush last group
 		if hasGroup && len(currentDatoms) > 0 {
 			card := m.GetCardinality(currentKeyword)
-			if key, ok := m.cacheKey(e, currentAttr); ok {
+			if key, ok := m.cacheKey(e, currentKeyword); ok {
 				m.cache.PopulateFromDatoms(key, card, currentDatoms, readPoint)
 				populated++
 			}

@@ -35,7 +35,7 @@ func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 		t.Fatalf("parser rejected a legal nested-existential not-join: %v", err)
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := exec.Execute(q)

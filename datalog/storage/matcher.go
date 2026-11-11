@@ -94,7 +94,7 @@ func (m *PatternMatcher) shouldFilterTx(datomTx datalog.ElementID) bool {
 // use the cache at all. History mode returns ok=false — raw datoms are never
 // cached. Latest and as-of matchers both return the (E, A) key, which names no
 // view: an as-of matcher reads its view's cache (Cache.ForView).
-func (m *PatternMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
+func (m *PatternMatcher) cacheKey(e datalog.Identity, a datalog.Keyword) (CacheKey, bool) {
 	if m.mode == historyMode {
 		return CacheKey{}, false
 	}
@@ -216,21 +216,22 @@ func (m *PatternMatcher) SetCache(c *Cache) {
 // no part of the key — patterns differing only in constants share one
 // builder, and building the key never renders the pattern.
 type tupleBuilderKey struct {
-	e, a, v, t int8
-	out        [4]query.Symbol
-	n          int8
+	e, a, v, t, added int8
+	out               [query.PatternPositions]query.Symbol
+	n                 int8
 }
 
 func newTupleBuilderKey(pattern *query.DataPattern, symbols []query.Symbol) tupleBuilderKey {
-	if len(symbols) > 4 {
-		panic(fmt.Sprintf("a data pattern provides at most 4 symbols, got %d: %v", len(symbols), symbols))
+	if len(symbols) > query.PatternPositions {
+		panic(fmt.Sprintf("a data pattern provides at most %d symbols, got %d: %v", query.PatternPositions, len(symbols), symbols))
 	}
 	key := tupleBuilderKey{
-		e: tuplePosition(symbols, pattern.GetE()),
-		a: tuplePosition(symbols, pattern.GetA()),
-		v: tuplePosition(symbols, pattern.GetV()),
-		t: tuplePosition(symbols, pattern.GetT()),
-		n: int8(len(symbols)),
+		e:     tuplePosition(symbols, pattern.GetE()),
+		a:     tuplePosition(symbols, pattern.GetA()),
+		v:     tuplePosition(symbols, pattern.GetV()),
+		t:     tuplePosition(symbols, pattern.GetT()),
+		added: tuplePosition(symbols, pattern.GetAdded()),
+		n:     int8(len(symbols)),
 	}
 	copy(key.out[:], symbols)
 	return key
@@ -456,7 +457,9 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 			if tx != nil && v == nil {
 				eid, ok := datalog.DerefElementID(tx)
 				if !ok {
-					panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
+					// Unreachable: a transaction constant is validated at the
+					// match's entry (query.ValidateTransactionBinding).
+					panic(fmt.Sprintf("BUG: non-ElementID transaction constant reached chooseIndex: %T", tx))
 				}
 				return ScanBound{Index: ATEV, Prefix: []datalog.Value{aKw, eid}}
 			}
@@ -488,10 +491,12 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 		// VAET: V → A → E → Tx↓ - groups by A, enabling efficient cardinality lookup
 		return ScanBound{Index: VAET, Prefix: []datalog.Value{v}}
 	} else if tx != nil {
-		// Use TAEV index. Tx is always an ElementID by contract.
+		// Only Tx bound - use TAEV index.
 		eid, ok := datalog.DerefElementID(tx)
 		if !ok {
-			panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
+			// Unreachable: a transaction constant is validated at the match's
+			// entry (query.ValidateTransactionBinding).
+			panic(fmt.Sprintf("BUG: non-ElementID transaction constant reached chooseIndex: %T", tx))
 		}
 		return ScanBound{Index: TAEV, Prefix: []datalog.Value{eid}}
 	}
@@ -505,25 +510,27 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 // typedPositionBindingCheck returns the per-tuple check the binding-driven
 // match selects its bindings under at its entry (MatchWithConstraints):
 // whether the tuple's value for the pattern's entity-position variable is an
-// Identity, its value for the attribute-position variable is a Keyword, and,
-// under a constant attribute, its value for the value-position variable is
-// not a vector. A tuple failing it names no entity, no attribute and no
-// datom's value, the typed non-match of the equality join, so it contributes
-// zero tuples and no seek is constructed for it. The entity and attribute
-// positions are each inhabited by one type, so those arms decide from the
-// value alone. A vector at the value position names a declared vector
-// attribute's whole collection, so whether it matches depends on the
-// attribute. Under a constant attribute the vector equals no datom this
-// selection's routes read: outside History a pattern on a vector attribute
-// is intercepted before the selection by the vector arm of
-// MatchWithConstraints, and under History a datom is read as written, an
-// element and never a collection. Under a variable attribute the tuple
-// passes and the attribute decides downstream: the join routes compare the
-// vector against each resolved collection, and the V-validation route
-// answers it through matchVectorUnderOpenAttribute. Returns nil when no
-// checked position is bound by these symbols — no check is needed.
+// Identity, its value for the attribute-position variable is a Keyword, its
+// value for the transaction-position variable is an ElementID, as a value or
+// through a pointer, and, under a constant attribute, its value for the
+// value-position variable is not a vector. A tuple failing it names no
+// entity, no attribute, no transaction and no datom's value, the typed
+// non-match of the equality join, so it contributes zero tuples and no seek
+// is constructed for it. The entity, attribute and transaction positions are
+// each inhabited by one type, so those arms decide from the value alone. A
+// vector at the value position names a declared vector attribute's whole
+// collection, so whether it matches depends on the attribute. Under a
+// constant attribute the vector equals no datom this selection's routes
+// read: outside History a pattern on a vector attribute is intercepted before
+// the selection by the vector arm of MatchWithConstraints, and under History
+// a datom is read as written, an element and never a collection. Under a
+// variable attribute the tuple passes and the attribute decides downstream:
+// the join routes compare the vector against each resolved collection, and
+// the V-validation route answers it through matchVectorUnderOpenAttribute.
+// Returns nil when no checked position is bound by these symbols — no check
+// is needed.
 func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbol) func(executor.Tuple) bool {
-	eIdx, aIdx, vIdx := -1, -1, -1
+	eIdx, aIdx, vIdx, tIdx := -1, -1, -1, -1
 	if v, ok := pattern.GetE().(query.Variable); ok {
 		eIdx = query.SymbolIndex(symbols, v.Name)
 	}
@@ -535,7 +542,10 @@ func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbo
 			vIdx = query.SymbolIndex(symbols, v.Name)
 		}
 	}
-	if eIdx < 0 && aIdx < 0 && vIdx < 0 {
+	if v, ok := pattern.GetT().(query.Variable); ok {
+		tIdx = query.SymbolIndex(symbols, v.Name)
+	}
+	if eIdx < 0 && aIdx < 0 && vIdx < 0 && tIdx < 0 {
 		return nil
 	}
 	return func(tuple executor.Tuple) bool {
@@ -552,16 +562,26 @@ func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbo
 		if vIdx >= 0 && vIdx < len(tuple) && datalog.IsVector(tuple[vIdx]) {
 			return false
 		}
+		if tIdx >= 0 && tIdx < len(tuple) {
+			if _, ok := datalog.DerefElementID(tuple[tIdx]); !ok {
+				return false
+			}
+		}
 		return true
 	}
 }
 
-// matchesDatom checks if a datom matches the pattern constraints
-func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface{}) bool {
-	// Tx is the one position with a pointer form: a bound Tx arrives as either an
-	// ElementID or a *ElementID, so it is compared by value below.
-	if ptr, ok := tx.(*datalog.ElementID); ok {
-		tx = *ptr
+// matchesDatom checks if a datom matches the pattern constraints: the values
+// bound at its entity, attribute, value and transaction positions, and at the
+// fifth, whether the datom asserts, nil where a position is unbound.
+func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx, added interface{}) bool {
+	// A bound fifth position matches the datoms whose operation answers it,
+	// and a value that is not a boolean matches none.
+	if added != nil {
+		asserts, ok := added.(bool)
+		if !ok || asserts != datom.Op.Asserts() {
+			return false
+		}
 	}
 
 	// Check entity
@@ -606,26 +626,18 @@ func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interfac
 		}
 	}
 
-	// Check transaction
+	// Check transaction: a bound Tx arrives as an ElementID or a *ElementID,
+	// and is compared by value.
 	if tx != nil {
-		switch txv := tx.(type) {
-		case uint64:
-			if datom.Tx.Lamport != txv {
-				return false
-			}
-		case int64:
-			if datom.Tx.Lamport != uint64(txv) {
-				return false
-			}
-		case int:
-			if datom.Tx.Lamport != uint64(txv) {
-				return false
-			}
-		case datalog.ElementID:
-			if datom.Tx != txv {
-				return false
-			}
-		default:
+		txv, ok := datalog.DerefElementID(tx)
+		if !ok {
+			// Unreachable: a constant is validated at the user boundary
+			// (query.ValidateTransactionBinding) and a binding is selected at
+			// the match's entry (typedPositionBindingCheck). Fail loudly: the
+			// transaction position is inhabited only by ElementID.
+			panic(fmt.Sprintf("BUG: non-ElementID transaction binding reached matchesDatom: %T", tx))
+		}
+		if datom.Tx != txv {
 			return false
 		}
 	}
@@ -641,15 +653,17 @@ func (m *PatternMatcher) valuesEqual(v1, v2 interface{}) bool {
 
 // CanFuseAttributeFetch reports whether a match of attr on the matcher
 // answers, per entity, the one value LookupAttribute answers: true in the
-// latest view for an attribute the matcher resolves cardinality-one, whether
-// its schema defines it so or holds no definition of it, since
-// LookupAttribute and CRDTResolvingIterator both resolve an attribute with no
-// definition by LWW. False for a cardinality-many attribute, whose match
-// answers each member as a tuple of its own, for a cardinality-vector
-// attribute, and on a history or as-of matcher. The matcher is one source and
-// answers for itself under any name, so the source is not read.
+// latest and as-of views for an attribute the matcher resolves
+// cardinality-one, whether its schema defines it so or holds no definition of
+// it, since LookupAttribute and CRDTResolvingIterator both resolve an
+// attribute with no definition by LWW. On an as-of matcher both read the
+// datoms at or before its target. False for a cardinality-many attribute,
+// whose match answers each member as a tuple of its own, for a
+// cardinality-vector attribute, and on a History matcher, whose match answers
+// every datom. The matcher is one source and answers for itself under any
+// name, so the source is not read.
 func (m *PatternMatcher) CanFuseAttributeFetch(_ query.Symbol, attr datalog.Keyword) bool {
-	if m.mode != latestMode {
+	if m.mode == historyMode {
 		return false
 	}
 	if m.schema == nil {
@@ -673,26 +687,42 @@ func (m *PatternMatcher) LookupSource(_ query.Symbol) (executor.EntityLookupMatc
 // current members as one value, in no fixed order. A cardinality-vector
 // attribute answers its vector, typed by the schema's value type, once the
 // vector has been written, an emptied vector included.
-func (m *PatternMatcher) LookupAttribute(
+func (m *PatternMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool, error) {
+	var def *schema.AttributeDefinition
+	if m.schema != nil {
+		def = m.schema.GetAttribute(attr)
+	}
+	return m.lookupAttribute(entity, attr, def)
+}
+
+// AttributeLookup returns the lookup of attr, which answers at each entity
+// what LookupAttribute answers for that entity and attr.
+func (m *PatternMatcher) AttributeLookup(attr datalog.Keyword) (query.AttributeLookup, error) {
+	var def *schema.AttributeDefinition
+	if m.schema != nil {
+		def = m.schema.GetAttribute(attr)
+	}
+	return func(entity datalog.Identity) (interface{}, bool, error) {
+		return m.lookupAttribute(entity, attr, def)
+	}, nil
+}
+
+// lookupAttribute answers entity's value of attr as LookupAttribute does,
+// resolved as def decides: attr's definition, nil when the schema declares
+// none, which gives its cardinality, its uniqueness and its value type.
+func (m *PatternMatcher) lookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,
+	def *schema.AttributeDefinition,
 ) (value interface{}, found bool, lookupErr error) {
 	if entity == nil {
 		return nil, false, nil
 	}
 
-	// Convert to storage format
-	eBytes := entity.Bytes()
-	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
-
-	// Determine cardinality and value type for correct resolution
-	card := schema.CardinalityOne // default
+	card := resolvedCardinality(def)
 	var valueType datalog.Keyword
-	if m.schema != nil {
-		if def := m.schema.GetAttribute(attr); def != nil {
-			card = def.Cardinality
-			valueType = def.ValueType
-		}
+	if def != nil {
+		valueType = def.ValueType
 	}
 
 	// The caller is handed an (E, A), not a pattern, so entity and attribute are
@@ -744,12 +774,9 @@ func (m *PatternMatcher) LookupAttribute(
 	// Try cache first for O(1) access. An as-of matcher reads its view's cache
 	// (Cache.ForView); History matchers bypass cache entirely.
 	if m.cache != nil && m.mode != historyMode {
-		eEntity := Entity(eBytes)
-		var aAttr Attribute
-		copy(aAttr[:], aStorage[:])
-		key, _ := m.cacheKey(eEntity, aAttr)
+		key, _ := m.cacheKey(entity, attr)
 
-		entry, err := m.cache.GetOrResolve(key, card, m, m.cacheBound(), m.handler, report)
+		entry, err := m.cache.GetOrResolve(key, def, m, m.cacheBound(), m.handler, report)
 		if err != nil {
 			return nil, false, err
 		}
@@ -790,9 +817,7 @@ func (m *PatternMatcher) LookupAttribute(
 			Prefix: []datalog.Value{entity, attr},
 		}
 		run = &bound
-		var aAttr Attribute
-		copy(aAttr[:], aStorage[:])
-		v, _, _, err := m.ResolveLWW(Entity(eBytes), aAttr, report)
+		v, _, _, _, err := m.ResolveLWW(entity, attr, def, report)
 		if err != nil {
 			return nil, false, err
 		}
@@ -804,7 +829,7 @@ func (m *PatternMatcher) LookupAttribute(
 
 	if card == schema.CardinalityVector {
 		// For cardinality-vector, resolve the entire RGA and return as typed slice
-		result, err := m.resolveVector(eBytes[:], aStorage[:], report)
+		result, err := m.resolveVector(entity, attr, report)
 		if err != nil {
 			// The report already holds what the failed resolution read; only the
 			// run goes unnamed, because the failure is why there is no bound to
@@ -822,7 +847,7 @@ func (m *PatternMatcher) LookupAttribute(
 
 	// For cardinality-many, resolve the full set membership with add-wins
 	// semantics.
-	set, err := m.resolveAddWinsSet(eBytes[:], aStorage[:], report)
+	set, err := m.resolveAddWinsSet(entity, attr, report)
 	if err != nil {
 		return nil, false, err
 	}
@@ -930,10 +955,6 @@ func (m *PatternMatcher) LookupAllAttributes(
 		return nil, nil
 	}
 
-	// Convert to storage format
-	eBytes := entity.Bytes()
-	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
-
 	// Entity and attribute are the cause: this read is handed an (E, A), not a
 	// pattern. Runs are counted rather than named — see the fallback.
 	var opened time.Time
@@ -960,18 +981,14 @@ func (m *PatternMatcher) LookupAllAttributes(
 	// Try cache first for O(1) access. An as-of matcher reads its view's cache
 	// (Cache.ForView); History matchers bypass cache entirely.
 	if m.cache != nil && m.mode != historyMode {
-		eEntity := Entity(eBytes)
-		var aAttr Attribute
-		copy(aAttr[:], aStorage[:])
-		key, _ := m.cacheKey(eEntity, aAttr)
+		key, _ := m.cacheKey(entity, attr)
 
-		card := schema.CardinalityOne
+		var def *schema.AttributeDefinition
 		if m.schema != nil {
-			if def := m.schema.GetAttribute(attr); def != nil {
-				card = def.Cardinality
-			}
+			def = m.schema.GetAttribute(attr)
 		}
-		entry, err := m.cache.GetOrResolve(key, card, m, m.cacheBound(), m.handler, report)
+		card := resolvedCardinality(def)
+		entry, err := m.cache.GetOrResolve(key, def, m, m.cacheBound(), m.handler, report)
 		if err != nil {
 			return nil, err
 		}
@@ -1021,10 +1038,6 @@ func (m *PatternMatcher) lookupAllAttributesFallback(
 	// AEVT orders A → E → V → Tx, so (A, E) is its leading prefix.
 	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{attr, entity}}
 
-	// The set and vector resolvers below still take storage projections.
-	eBytes := entity.Bytes()
-	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
-
 	// Peek at first datom to determine op type
 	iter, err := OpenKeyScan(m.reader, report, bound)
 	if err != nil {
@@ -1059,7 +1072,7 @@ func (m *PatternMatcher) lookupAllAttributesFallback(
 		if report != nil {
 			report.peers++
 		}
-		result, err := m.resolveAddWinsSet(eBytes, aStorage[:], report)
+		result, err := m.resolveAddWinsSet(entity, attr, report)
 		if err != nil {
 			return nil, fmt.Errorf("resolving add-wins set: %w", err)
 		}
@@ -1074,7 +1087,7 @@ func (m *PatternMatcher) lookupAllAttributesFallback(
 		if report != nil {
 			report.peers++
 		}
-		result, err := m.resolveVector(eBytes, aStorage[:], report)
+		result, err := m.resolveVector(entity, attr, report)
 		if err != nil {
 			return nil, fmt.Errorf("resolving RGA vector: %w", err)
 		}

@@ -16,7 +16,7 @@ import (
 // someone says which side of that line it falls on.
 func forkingModes(t *testing.T) (forking, refusing []optimizerMode) {
 	t.Helper()
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		switch mode.backend.Name {
 		case "memory-trees":
 			forking = append(forking, mode)

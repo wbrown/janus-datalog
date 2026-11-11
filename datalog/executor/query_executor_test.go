@@ -727,3 +727,28 @@ func TestExecuteEnumerateUnderTheTupleForm(t *testing.T) {
 		require.ErrorContains(t, err, "3 values, 2 variables")
 	})
 }
+
+// A pattern's match query carries its phase's :find and :in, and the phase's
+// :order-by and :limit only when the pattern is the phase's one clause: an
+// order or a limit over several clauses is the phase's, not the pattern's.
+func TestAPatternsMatchQueryCarriesItsPhasesOrderAndLimitOnlyAlone(t *testing.T) {
+	e, v := datalog.NewSymbol("?e"), datalog.NewSymbol("?v")
+	first := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: e}, query.Constant{Value: datalog.NewKeyword(":t/a")}, query.Variable{Name: v},
+	}}
+	second := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: e}, query.Constant{Value: datalog.NewKeyword(":t/b")}, query.Blank{},
+	}}
+	limit := 3
+	find := []query.FindElement{query.FindVariable{Symbol: e}}
+	in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}}
+	order := []query.OrderByClause{{Variable: e}}
+
+	alone := patternMatchQuery(&query.Query{Find: find, In: in, Where: []query.Clause{first}, OrderBy: order, Limit: &limit}, first)
+	require.Equal(t, &query.Query{Find: find, In: in, Where: []query.Clause{first}, OrderBy: order, Limit: &limit}, alone,
+		"alone in its phase, the pattern carries the phase's order and limit")
+
+	beside := patternMatchQuery(&query.Query{Find: find, In: in, Where: []query.Clause{first, second}, OrderBy: order, Limit: &limit}, second)
+	require.Equal(t, &query.Query{Find: find, In: in, Where: []query.Clause{second}}, beside,
+		"beside another clause, the pattern carries neither")
+}

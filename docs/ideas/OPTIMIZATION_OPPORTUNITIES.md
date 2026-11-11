@@ -448,12 +448,15 @@ remain hash-table construction and insertion.
 
 ### Join materialization check
 
-`BenchmarkComplexQueryJoinMaterialization` runs the same production-shaped
-query with only `EnableStreamingJoins` changed:
+`BenchmarkComplexQueryJoinMaterialization` ran the same production-shaped
+query with only `EnableStreamingJoins` changed (2026-07). The benchmark and
+the option were removed in 2026-11: the hash join answers a streaming relation
+over its iterator whenever the build holds a tuple, in every setting, so the
+option selected nothing (`docs/reference/PLANNER_OPTIONS.md`).
 
 | Mode | Time | Memory | Allocations |
 |---|---:|---:|---:|
-| Materialized (default) | 48.57 ms | 82.78 MiB | 1.088M |
+| Materialized (then the default) | 48.57 ms | 82.78 MiB | 1.088M |
 | Streaming | 52.48 ms | 85.91 MiB | 1.179M |
 | Delta | **+8.04%** | **+3.78%** | **+8.34%** |
 
@@ -693,9 +696,10 @@ statistically unchanged: 48.37 → 47.94 ms/op (`p=0.143`), with memory
 
 The first compositional algebra step is now complete with logical/physical
 separation intact: the optimizer validates schemas/free requirements after every
-rewrite and lowers the optimized tree back into nested Datalog. `Project`
-becomes a relation-binding subquery; only `ClauseBasedPlanner` constructs
-`RealizedPlan`.
+rewrite and lowers the optimized tree back into nested Datalog. The one
+`Project` the compiler makes is childless and lowers to no clause, and a
+`Project` over clauses has no clause form; only `ClauseBasedPlanner`
+constructs `RealizedPlan`.
 
 The July 13 checkpoint measured 46.89 ms/op median (44.26–52.90 ms), 84.04
 MiB/op, and 1.043M allocations/op. Relative to
@@ -735,11 +739,14 @@ Candidate investigations:
 1. **Completed (July 13, 2026):** lower optimized algebra into nested Datalog so
    rewrites survive while the optimizer remains `Query → Query`. Structural
    operator tests and exact optimized/off tuple differentials are green.
-2. Backward liveness and inner-join `Project` insertion are proven and retained
-   behind default-off `EnableJoinProjectInsertion`. Lowering the projection as a
+2. Inner-join `Project` insertion by backward liveness was removed with
+   `EnableJoinProjectInsertion` (2026-11). Lowering the projection as a
    relation-binding subquery regressed a focused benchmark by 60.4% time, 60.7%
-   memory, and 79.8% allocations. Ready `Select` movement through
-   joins/subqueries/fallback remains unimplemented.
+   memory, and 79.8% allocations, and a projection lowered as a scope carried
+   nothing of the enclosing scope across its boundary;
+   [JOIN_PROJECT_INSERTION.md](JOIN_PROJECT_INSERTION.md) records the idea.
+   Ready `Select` movement through joins/subqueries/fallback remains
+   unimplemented.
 3. **Completed (July 13, 2026):** fuse proven CardinalityOne literal constraints
    into cache-backed per-tuple lookup/filter traversal. Focused 1K/10K workloads
    improve 21.9–23.2% time, 35.3–38.8% memory, and 42.3–43.4% allocations.
@@ -853,11 +860,11 @@ Final confidence gates on 2026-07-12:
 
 - Recent hash-join inner-loop changes are already measured and effective.
 - Planning latency is measured in microseconds.
-- Scan sharing and entity prefetch are benchmarked as neutral in the default
-  workload.
+- Entity prefetch is benchmarked as neutral in the default workload.
 - Symmetric hash join trades throughput for time-to-first-row.
-- Streaming hash joins are **8.04% slower**, use **3.78% more memory**, and
-  allocate **8.34% more** on the complex checkpoint; keep them opt-in.
+- The streaming-join setting measured **8.04% slower**, **3.78% more memory**
+  and **8.34% more allocations** on the complex checkpoint (2026-07, the join
+  materialization check above).
 - Do not tune the current merge join before its ordering contract is explicit.
   It sorts full tuples lexicographically while extracting a join key by datom
   position. Physical properties should represent the required order first.

@@ -390,7 +390,7 @@ func TestNewWindowedIteratorComposesTheModulesOverTheSubject(t *testing.T) {
 
 // The module events carry their payloads under the form: the build names
 // the branch, its symbols, the subject's and the size; the subject tuple
-// event renders the tuple; the exhausted event carries the form alone; and
+// event carries the tuple; the exhausted event carries the form alone; and
 // with no handler nothing is reported.
 func TestModuleEventsCarryTheirPayloadsUnderTheForm(t *testing.T) {
 	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
@@ -410,7 +410,7 @@ func TestModuleEventsCarryTheirPayloadsUnderTheForm(t *testing.T) {
 	require.Equal(t, 7, events[0].Data["branch_size"])
 	require.Equal(t, annotations.ScopeSubjectTuple, events[1].Name)
 	require.Equal(t, "or-default-join", events[1].Data[annotations.KeyForm])
-	require.Equal(t, "[1]", events[1].Data["tuple"])
+	require.Equal(t, Tuple{int64(1)}, events[1].Data["tuple"])
 	require.Equal(t, annotations.ScopeSubjectExhausted, events[2].Name)
 	require.Equal(t, map[string]interface{}{annotations.KeyForm: "or-default-join"}, events[2].Data)
 

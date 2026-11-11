@@ -31,6 +31,13 @@ func (op CRDTOp) HasAfterRef() bool {
 	return op == OpRGAInsert || op == OpRGATombstone
 }
 
+// Asserts reports whether a datom of this operation asserts its value, true
+// for OpNone, OpCRDTAdd and OpRGAInsert, or withdraws it, false for
+// OpCRDTRemove and OpRGATombstone. A data pattern's fifth position binds it.
+func (op CRDTOp) Asserts() bool {
+	return op != OpCRDTRemove && op != OpRGATombstone
+}
+
 // Datom is the fundamental unit of data in a Datalog system
 // It represents a single fact: Entity-Attribute-Value-Transaction
 type Datom struct {
@@ -42,10 +49,20 @@ type Datom struct {
 	AfterRef ElementID // RGA position reference (only used when Op.HasAfterRef() is true)
 }
 
-// keyword is the unexported base type for attribute keywords.
-// Unlike entities, keywords are interned strings, not hashes.
+// keyword is the unexported base type for attribute keywords. Unlike an
+// entity, which is named by a content hash, a keyword is identified by its
+// interned pointer. hash is the 64-bit FNV-1a hash of value, computed once
+// where the keyword is interned, which an in-memory structure routes on.
 type keyword struct {
 	value string // The keyword string (e.g., ":user/name")
+	hash  uint64
+}
+
+// Hash64 is the 64-bit FNV-1a hash of the keyword's text, computed once when
+// the keyword was interned, so a structure keyed by keywords routes on it
+// without reading the text.
+func (k Keyword) Hash64() uint64 {
+	return k.hash
 }
 
 // Keyword is the exported pointer type, always interned.

@@ -38,7 +38,7 @@ func (r *rewriteAdornments) made() [][]bool {
 // alone, so the fixpoint derives what the binding reaches and never the
 // binding paired with the scan's every value (REWRITE_ORDER_PROOF.md T5).
 func TestRules_ABoundInvocationBeforeAScanIsRewrittenForItsBindingAlone(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			adorned := &rewriteAdornments{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})
@@ -59,7 +59,7 @@ func TestRules_ABoundInvocationBeforeAScanIsRewrittenForItsBindingAlone(t *testi
 // the seed component alone
 // (A_CLAUSE_OUTSIDE_THE_SEED_COMPONENT_BINDS_NOTHING_PROOF.md §7).
 func TestRules_ATopLevelInvocationBesideAValueConstantPatternIsRewrittenForBothPositions(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			adorned := &rewriteAdornments{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})
@@ -79,7 +79,7 @@ func TestRules_ATopLevelInvocationBesideAValueConstantPatternIsRewrittenForBothP
 func TestRules_ABodyWrittenBeforeItsBinderDerivesWhatTheBindingReaches(t *testing.T) {
 	const invocationFirst = `[[(reach ?a ?b) [?a :edge ?b]]
 	                          [(reach ?a ?c) (reach ?b ?c) [?a :edge ?b]]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			opts := mode.plannerOptions()
 			opts.MaxDerivedTuples = 100
@@ -104,7 +104,7 @@ func TestRules_ABoundInvocationOfAPredicateDerivedWholeDerivesNoAdornedCopy(t *t
 	                     [(r ?k) [?k :type :node] (s ?k _)]
 	                     [(s ?a ?b) [?a :edge ?b]]]`
 	adornedS := query.AdornedSymbol(datalog.NewSymbol("s"), []bool{true, false})
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			begun := &strataBegun{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: begun.handle})

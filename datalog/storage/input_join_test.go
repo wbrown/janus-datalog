@@ -25,7 +25,7 @@ func countFacts() []fact {
 // over the whole join: the count of the entities whose :t/c is among the
 // relation's values, 1 and 0, is one tuple, 3.
 func TestRelationInput_APureAggregateIsOverTheWholeJoin(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, countFacts())
@@ -41,7 +41,7 @@ func TestRelationInput_APureAggregateIsOverTheWholeJoin(t *testing.T) {
 // aggregate per group, one group per value of the input: one entity at :t/c
 // 0 and two at :t/c 1.
 func TestRelationInput_GroupKeysNamingTheInputAnswerPerTuple(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, countFacts())
@@ -72,7 +72,7 @@ func TestInputForms_OneRuleForCollectionTupleAndRelation(t *testing.T) {
 		{"collection", "[?c ...]", []interface{}{int64(1)}},
 		{"relation", "[[?c] ...]", []interface{}{[]interface{}{int64(1)}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, countFacts())
@@ -111,7 +111,7 @@ func TestRelationInput_AStreamingResultReadsItsOwnTuples(t *testing.T) {
 		want = append(want, fmt.Sprintf("%d %d", i, i+1))
 	}
 	sort.Strings(want)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)
@@ -140,7 +140,7 @@ func scalarInputFacts() []fact {
 // beside a count, is the product's one value beside the count of the whole
 // body.
 func TestScalarInput_ReadByNoClauseIsTheProductsValueBesideTheCount(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, scalarInputFacts())
@@ -155,7 +155,7 @@ func TestScalarInput_ReadByNoClauseIsTheProductsValueBesideTheCount(t *testing.T
 // whatever the same value written as a ground answers, the two spellings
 // being one relation.
 func TestScalarInput_ABranchReadsItAsTheGroundSpellingDoes(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, scalarInputFacts())
@@ -173,7 +173,7 @@ func TestScalarInput_ABranchReadsItAsTheGroundSpellingDoes(t *testing.T) {
 // and one evaluation over the whole input: the closure from n1 and from n3
 // over a chain of five, with one magic-sets event.
 func TestRules_ABoundInvocationOverARelationInputRunsOnce(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			counts := &ruleEventCounts{}
 			opts := mode.plannerOptions()
@@ -201,7 +201,7 @@ func TestInputReadByNoClause_IsAFactorOfTheCount(t *testing.T) {
 		{"collection", "[?w ...]", []interface{}{int64(1), int64(2), int64(3)}},
 		{"relation", "[[?w] ...]", []interface{}{[]interface{}{int64(1)}, []interface{}{int64(2)}, []interface{}{int64(3)}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, countFacts())
@@ -221,7 +221,7 @@ func TestInputReadByNoClause_IsAFactorOfTheCount(t *testing.T) {
 // entities carrying :t/c beside two carrying :t/k count six, and beside a
 // pattern matching nothing count what a find over nothing counts.
 func TestDisjointGroup_IsAFactorOfTheCount(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, scalarInputFacts())
@@ -252,7 +252,7 @@ func TestOrderBy_ARelationInputSymbolNoClauseBindsOrdersTheJoin(t *testing.T) {
 		[]interface{}{int64(2), int64(10)},
 		[]interface{}{int64(3), int64(20)},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, facts)
@@ -276,7 +276,7 @@ func TestOrderBy_ARelationInputSymbolNoClauseBindsOrdersTheJoin(t *testing.T) {
 func TestOrderBy_ACollectionInputSymbolNoClauseReadsOrdersTheProduct(t *testing.T) {
 	p, q, s := named("p"), named("q"), named("s")
 	facts := []fact{{p, ":t/c", int64(1)}, {q, ":t/c", int64(2)}, {s, ":t/c", int64(3)}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, facts)

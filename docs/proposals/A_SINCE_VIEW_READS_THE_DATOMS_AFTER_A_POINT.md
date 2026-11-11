@@ -13,8 +13,8 @@
 - A pattern that binds nothing on the view reads TAEV down to P and no further, as a scan count shows.
 - A pattern with a bound attribute or value on the view answers the datoms past P that carry it.
 - The view passed as `$since` joins with `$` in one query.
-- `[$since ?e ?a ?v ?tx false]` answers the withdrawals past P (`../bugs/BUG_HISTORY_CANNOT_TELL_A_WITHDRAWAL_FROM_AN_ASSERTION.md`).
-- After a commit that changes nothing, the view of the database past that commit's predecessor's point answers no datom (`../bugs/BUG_AN_EMPTY_COMMIT_WRITES_A_COMMIT_MARK.md`).
+- `[$since ?e ?a ?v ?tx false]` answers the withdrawals past P (`../bugs/resolved/BUG_HISTORY_CANNOT_TELL_A_WITHDRAWAL_FROM_AN_ASSERTION.md`).
+- After a commit that changes nothing, the view of the database past that commit's predecessor's point answers no datom (`../bugs/resolved/BUG_AN_EMPTY_COMMIT_WRITES_A_COMMIT_MARK.md`).
 - `Since` on a latest or an `AsOf` handle is refused, naming the handle's view.
 
 ## 3. What exists
@@ -39,8 +39,8 @@
 ## 5. What the view holds
 
 - The view holds every datom written after P, the engine's own included.
-- A commit's `:db/txInstant` mark is a datom, so each commit past P appears in the view by its mark. `TRANSACTION_ENVELOPES.md` moves the mark off the datoms.
-- A commit that holds nothing writes a mark today, which is no fact. `BUG_AN_EMPTY_COMMIT_WRITES_A_COMMIT_MARK.md` removes it. After that fix, a database that changed nothing past P has an empty view.
+- A commit's `:db/txInstant` mark is a datom, so each commit past P that writes a datom appears in the view by its mark. `TRANSACTION_ENVELOPES.md` moves the mark off the datoms.
+- A commit that holds nothing writes no mark, so a database that changed nothing past P has an empty view.
 - A snapshot taken past P writes its `:db.snapshot/*` marker, which is a fact and appears in the view. A reader that asks whether its own facts changed reads the view before it takes the snapshot.
 
 ## 6. The uses

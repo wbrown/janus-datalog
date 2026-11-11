@@ -80,8 +80,9 @@ func TestResolveLWWFromDatoms_SameLamportDifferentReplica(t *testing.T) {
 // =============================================================================
 
 func TestResolveAddWinsFromDatoms_Empty(t *testing.T) {
-	members, maxID := ResolveAddWinsFromDatoms(nil)
+	members, memberTx, maxID := ResolveAddWinsFromDatoms(nil)
 	assert.Empty(t, members)
+	assert.Empty(t, memberTx)
 	assert.Equal(t, datalog.ElementID{}, maxID)
 }
 
@@ -91,12 +92,15 @@ func TestResolveAddWinsFromDatoms_OnlyAdds(t *testing.T) {
 		testDatom(elemID(101, 1), "tag2", datalog.OpCRDTAdd),
 	}
 
-	members, maxID := ResolveAddWinsFromDatoms(datoms)
+	members, memberTx, maxID := ResolveAddWinsFromDatoms(datoms)
 	_, hasTag1 := members[memberKey("tag1")]
 	_, hasTag2 := members[memberKey("tag2")]
 	assert.True(t, hasTag1)
 	assert.True(t, hasTag2)
 	assert.Equal(t, 2, len(members))
+	// Each member's Tx is its own assertion's, not the group's highest.
+	assert.Equal(t, elemID(100, 1), memberTx[memberKey("tag1")])
+	assert.Equal(t, elemID(101, 1), memberTx[memberKey("tag2")])
 	assert.Equal(t, elemID(101, 1), maxID)
 }
 
@@ -107,10 +111,11 @@ func TestResolveAddWinsFromDatoms_AddThenRemove_RemoveWins(t *testing.T) {
 		testDatom(elemID(200, 1), "tag1", datalog.OpCRDTRemove),
 	}
 
-	members, _ := ResolveAddWinsFromDatoms(datoms)
+	members, memberTx, _ := ResolveAddWinsFromDatoms(datoms)
 	_, hasTag1 := members[memberKey("tag1")]
 	assert.False(t, hasTag1)
 	assert.Equal(t, 0, len(members))
+	assert.Empty(t, memberTx)
 }
 
 func TestResolveAddWinsFromDatoms_RemoveThenAdd_AddWins(t *testing.T) {
@@ -120,9 +125,10 @@ func TestResolveAddWinsFromDatoms_RemoveThenAdd_AddWins(t *testing.T) {
 		testDatom(elemID(200, 1), "tag1", datalog.OpCRDTAdd),
 	}
 
-	members, _ := ResolveAddWinsFromDatoms(datoms)
+	members, memberTx, _ := ResolveAddWinsFromDatoms(datoms)
 	_, hasTag1 := members[memberKey("tag1")]
 	assert.True(t, hasTag1)
+	assert.Equal(t, elemID(200, 1), memberTx[memberKey("tag1")])
 }
 
 func TestResolveAddWinsFromDatoms_Concurrent_AddWins(t *testing.T) {
@@ -132,9 +138,10 @@ func TestResolveAddWinsFromDatoms_Concurrent_AddWins(t *testing.T) {
 		testDatom(elemID(100, 2), "tag1", datalog.OpCRDTRemove), // Same Lamport, higher replica
 	}
 
-	members, _ := ResolveAddWinsFromDatoms(datoms)
+	members, memberTx, _ := ResolveAddWinsFromDatoms(datoms)
 	_, hasTag1 := members[memberKey("tag1")]
 	assert.True(t, hasTag1) // Add wins at same Lamport
+	assert.Equal(t, elemID(100, 1), memberTx[memberKey("tag1")])
 }
 
 func TestResolveAddWinsFromDatoms_MultipleValues(t *testing.T) {
@@ -150,7 +157,7 @@ func TestResolveAddWinsFromDatoms_MultipleValues(t *testing.T) {
 		testDatom(elemID(300, 1), "tag3", datalog.OpCRDTAdd),
 	}
 
-	members, maxID := ResolveAddWinsFromDatoms(datoms)
+	members, memberTx, maxID := ResolveAddWinsFromDatoms(datoms)
 	_, hasTag1 := members[memberKey("tag1")]
 	_, hasTag2 := members[memberKey("tag2")]
 	_, hasTag3 := members[memberKey("tag3")]
@@ -158,6 +165,10 @@ func TestResolveAddWinsFromDatoms_MultipleValues(t *testing.T) {
 	assert.True(t, hasTag2)  // Only added
 	assert.True(t, hasTag3)  // Re-added
 	assert.Equal(t, 2, len(members))
+	// A re-added member's Tx is the re-assertion's; a member asserted once
+	// carries that assertion's, below the group's highest.
+	assert.Equal(t, elemID(150, 1), memberTx[memberKey("tag2")])
+	assert.Equal(t, elemID(300, 1), memberTx[memberKey("tag3")])
 	assert.Equal(t, elemID(300, 1), maxID)
 }
 
@@ -167,8 +178,9 @@ func TestResolveAddWinsFromDatoms_OnlyRemoves(t *testing.T) {
 		testDatom(elemID(100, 1), "tag1", datalog.OpCRDTRemove),
 	}
 
-	members, _ := ResolveAddWinsFromDatoms(datoms)
+	members, memberTx, _ := ResolveAddWinsFromDatoms(datoms)
 	assert.Empty(t, members)
+	assert.Empty(t, memberTx)
 }
 
 // =============================================================================

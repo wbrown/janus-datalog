@@ -263,6 +263,10 @@ const smallGroupValues = 8
 
 // startNewGroup initializes state for a new (E, A) group.
 func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
+	// The cardinality and the unique rule are the attribute's, and the
+	// iterator's schema holds one definition per attribute for its life, so a
+	// group of the previous group's attribute keeps them.
+	sameAttribute := it.hasGroup && datom.A == it.currentA
 	it.currentE = datom.E
 	it.currentA = datom.A
 	it.hasGroup = true
@@ -270,16 +274,18 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	// Determine cardinality from schema
 	// If no schema definition exists for this attribute, use CardinalityUnknown
 	// which defaults to CardinalityOne (LWW) semantics
-	it.card = schema.CardinalityUnknown
-	it.uniqueMode = false
-	if it.schema != nil {
-		if attr := it.schema.GetAttribute(datom.A); attr != nil {
-			it.card = attr.Cardinality
-			// Unique CardinalityOne attributes use the walk-based
-			// resolution. Other cardinalities ignore Unique (uniqueness
-			// applies only to single-valued attributes).
-			if attr.Cardinality == schema.CardinalityOne && attr.HasUniqueConstraint() {
-				it.uniqueMode = true
+	if !sameAttribute {
+		it.card = schema.CardinalityUnknown
+		it.uniqueMode = false
+		if it.schema != nil {
+			if attr := it.schema.GetAttribute(datom.A); attr != nil {
+				it.card = attr.Cardinality
+				// Unique CardinalityOne attributes use the walk-based
+				// resolution. Other cardinalities ignore Unique (uniqueness
+				// applies only to single-valued attributes).
+				if attr.Cardinality == schema.CardinalityOne && attr.HasUniqueConstraint() {
+					it.uniqueMode = true
+				}
 			}
 		}
 	}
@@ -472,16 +478,12 @@ func (it *CRDTResolvingIterator) Error() error {
 // emission — correct by construction without having to materialize
 // the full group.
 func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool, error) {
-	var aBytes Attribute
-	copy(aBytes[:], datom.A.String())
-	eBytes := Entity(datom.E.Hash())
-
 	// Accrues whether or not the check fails: a failed supersession check
 	// still read the index to fail.
 	//
 	// What the decision read goes unused: no cache entry is built from a
 	// streamed datom.
-	decision, _, err := it.matcher.walkApplyEntry(it.uniqueWalk, datom, eBytes, aBytes, it.report)
+	decision, _, err := it.matcher.walkApplyEntry(it.uniqueWalk, datom, datom.E, datom.A, it.report)
 	if err != nil {
 		return false, err
 	}

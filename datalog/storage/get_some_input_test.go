@@ -19,7 +19,7 @@ import (
 // data pattern. This should work: get-some looks up attributes on the input
 // entity and binds the first attribute found to ?attr and its value to ?id.
 func TestGetSome_WithScalarInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -83,7 +83,7 @@ func TestGetSome_WithScalarInput(t *testing.T) {
 // TestGetSome_WithScalarInput_NoMatch tests get-some when the entity has
 // none of the requested attributes. Should return empty results, not panic.
 func TestGetSome_WithScalarInput_NoMatch(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -147,7 +147,7 @@ func getSomeGroupsFixture(t *testing.T, db *Database) (named, bare datalog.Ident
 // must be consumed by the expression, never escape into tuples
 // (BUG_GETSOME_ALL_ATTRS_MISSING_PANICS_TUPLE_KEY_HASH).
 func TestGetSome_InBoundEntityWithGroups_AllMissing(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, bare := getSomeGroupsFixture(t, db)
@@ -170,7 +170,7 @@ func TestGetSome_InBoundEntityWithGroups_AllMissing(t *testing.T) {
 // same arm: the sentinel carries the value and must be unwrapped before the
 // binding enters tuples (BUG_GETSOME_ALL_ATTRS_MISSING_PANICS_TUPLE_KEY_HASH).
 func TestGetSome_InBoundEntityWithGroups_AttrPresent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			named, _ := getSomeGroupsFixture(t, db)
@@ -198,7 +198,7 @@ func TestGetSome_InBoundEntityWithGroups_AttrPresent(t *testing.T) {
 // :entity/name, the other finds nothing — the miss must drop only its own
 // Run's tuples (BUG_GETSOME_ALL_ATTRS_MISSING_PANICS_TUPLE_KEY_HASH).
 func TestGetSome_RelationInputEntities_MixedFound(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			named, bare := getSomeGroupsFixture(t, db)
@@ -231,7 +231,7 @@ func TestGetSome_RelationInputEntities_MixedFound(t *testing.T) {
 // with-groups and no-groups environment arms
 // (BUG_GETSOME_ALL_ATTRS_MISSING_PANICS_TUPLE_KEY_HASH).
 func TestGetSome_LiteralEntity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			getSomeGroupsFixture(t, db)
@@ -268,7 +268,7 @@ func TestGetSome_LiteralEntity(t *testing.T) {
 // ?e is a group symbol and the expression evaluates per tuple — the path
 // that always consumed the sentinel correctly.
 func TestGetSome_CollectionInputEntities_MixedFound(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			named, bare := getSomeGroupsFixture(t, db)

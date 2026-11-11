@@ -30,7 +30,7 @@ func TestNotClause(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -132,7 +132,7 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 		},
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -191,7 +191,7 @@ func TestNotClauseWithExistentialBodyVariable(t *testing.T) {
 		},
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -277,7 +277,7 @@ func TestOrDefaultJoinBranchLocalAlphaEquivalence(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			run := func(local query.Symbol) map[int64]bool {
 				t.Helper()
@@ -364,7 +364,7 @@ func TestOrJoinBranchLocalAlphaEquivalence(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			run := func(local query.Symbol) map[int64]bool {
 				t.Helper()
@@ -412,7 +412,7 @@ func TestNotClauseNoMatches(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -477,7 +477,7 @@ func TestNotClauseAllMatch(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -546,7 +546,7 @@ func TestNotJoinClause(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -624,7 +624,7 @@ func TestOrClause(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -713,7 +713,7 @@ func TestOrJoinClause(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -791,7 +791,7 @@ func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 	// Directly test the query executor
 	matcher := factsDatabase(t, nil)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -842,7 +842,7 @@ func TestOrFallbackWithGroundExpression(t *testing.T) {
 	// When pattern matches nothing, ground should provide default value
 	matcher := factsDatabase(t, nil) // Empty database
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -906,7 +906,7 @@ func TestOrFallbackFirstBranchMatches(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -967,7 +967,7 @@ func TestOrFallbackMultipleBranches(t *testing.T) {
 	nonexistent1 := datalog.NewKeyword(":nonexistent1")
 	nonexistent2 := datalog.NewKeyword(":nonexistent2")
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1038,7 +1038,7 @@ func TestOrFallbackWithArithmeticExpression(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1115,7 +1115,7 @@ func TestOrFallbackPatternOnlyUnionSemantics(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1175,7 +1175,7 @@ func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1239,7 +1239,7 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1335,16 +1335,16 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Register an annotation handler to debug OR fallback behavior
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(event annotations.Event) {
+			opts.Handler = mode.Recording(func(event annotations.Event) {
 				if strings.HasPrefix(event.Name, "or-fallback/") {
 					events = append(events, event)
 				}
-			}
+			})
 			queryExecutor := NewExecutorWithOptions(matcher, nil, opts)
 
 			// Build the query:
@@ -1471,14 +1471,14 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Register an annotation handler to see what's happening
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(event annotations.Event) {
+			opts.Handler = mode.Recording(func(event annotations.Event) {
 				events = append(events, event)
-			}
+			})
 			executor := NewExecutorWithOptions(matcher, nil, opts)
 
 			// Query:
@@ -1603,7 +1603,7 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1701,7 +1701,7 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 	statusAttr := datalog.NewKeyword(":task/status")
 	completeStatus := datalog.NewKeyword(":status/complete")
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1796,7 +1796,7 @@ func TestOrCorrelatedUnionWithIdentityBranch(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -1905,7 +1905,7 @@ func TestOrUnionIncludesAllBranches(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -2023,7 +2023,7 @@ func TestClauseOrderIndependenceForNot(t *testing.T) {
 				t.Fatalf("failed to parse query: %v", err)
 			}
 
-			for _, mode := range OptimizerModes {
+			for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 				t.Run(mode.Name(), func(t *testing.T) {
 					executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -2107,7 +2107,7 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 				t.Fatalf("failed to parse query: %v", err)
 			}
 
-			for _, mode := range OptimizerModes {
+			for _, mode := range LegsFor(t, FusionOption) {
 				t.Run(mode.Name(), func(t *testing.T) {
 					executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 					inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
@@ -2176,7 +2176,7 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 				t.Fatalf("failed to parse query: %v", err)
 			}
 
-			for _, mode := range OptimizerModes {
+			for _, mode := range LegsFor(t, FusionOption) {
 				t.Run(mode.Name(), func(t *testing.T) {
 					executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 					inputRel := NewMaterializedRelation([]query.Symbol{eSym}, []Tuple{{e1}})
@@ -2234,11 +2234,11 @@ func TestMissingOnASliceSourceAnswersAlikeBareAndAnnotated(t *testing.T) {
 		{"annotated", func(annotations.Event) {}},
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		for _, tc := range handlers {
 			t.Run(mode.Name()+"/"+tc.name, func(t *testing.T) {
 				opts := mode.PlannerOptions()
-				opts.Handler = tc.handler
+				opts.Handler = mode.Recording(tc.handler)
 				executor := NewExecutorWithOptions(matcher, nil, opts)
 				inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
 
@@ -2290,11 +2290,11 @@ func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
 		{"annotated", func(annotations.Event) {}},
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		for _, tc := range handlers {
 			t.Run(mode.Name()+"/"+tc.name, func(t *testing.T) {
 				opts := mode.PlannerOptions()
-				opts.Handler = tc.handler
+				opts.Handler = mode.Recording(tc.handler)
 				executor := NewExecutorWithOptions(matcher, nil, opts)
 				inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
 

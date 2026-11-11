@@ -14,7 +14,7 @@ import (
 // value passes through index keys and the value portion). The encoding must
 // round-trip them exactly.
 func TestNegativeAndPre1970ValuesRoundTripThroughStorage(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{ReplicaID: 1})
 

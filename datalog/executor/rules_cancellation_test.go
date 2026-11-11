@@ -16,18 +16,18 @@ func TestEvaluateRules_CancelledAtIteration(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(5))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			iterations := 0
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				if e.Name == annotations.RulesIteration {
 					iterations++
 					cancel()
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs).WithCancellation(ctx), q, nil)
 			if !errors.Is(err, context.Canceled) {

@@ -14,7 +14,7 @@ import (
 
 // TestVectorBasicAdd verifies basic vector append via Add()
 func TestVectorBasicAdd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create schema with vector attribute
 			s, err := schema.NewBuilder().
@@ -56,7 +56,7 @@ func TestVectorBasicAdd(t *testing.T) {
 
 // TestVectorMultipleTransactions verifies ordering across transactions
 func TestVectorMultipleTransactions(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -104,7 +104,7 @@ func TestVectorMultipleTransactions(t *testing.T) {
 
 // TestVectorEmpty verifies empty vector handling
 func TestVectorEmpty(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -129,7 +129,7 @@ func TestVectorEmpty(t *testing.T) {
 
 // TestVectorWithDifferentTypes verifies vectors can hold different value types
 func TestVectorWithDifferentTypes(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":event/scores").Type(schema.TypeLong).Vector().Add().
@@ -297,7 +297,7 @@ func TestRGAReconstructionWithTombstones(t *testing.T) {
 
 // TestVectorSchemaValidation verifies that Add() validates vector values
 func TestVectorSchemaValidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -324,7 +324,7 @@ func TestVectorSchemaValidation(t *testing.T) {
 
 // TestVectorSetReplacesEntireVector verifies Set() replaces the entire vector
 func TestVectorSetReplacesEntireVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -373,7 +373,7 @@ func TestVectorSetReplacesEntireVector(t *testing.T) {
 
 // TestVectorSetToEmpty verifies Set() with empty slice clears vector
 func TestVectorSetToEmpty(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -410,7 +410,7 @@ func TestVectorSetToEmpty(t *testing.T) {
 
 // TestVectorAddNoReadDatabase verifies Add() does NOT read from database
 func TestVectorAddNoReadDatabase(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -459,7 +459,7 @@ func TestVectorAddNoReadDatabase(t *testing.T) {
 
 // TestVectorQueryIntegration verifies vectors work through Datalog queries
 func TestVectorQueryIntegration(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
@@ -502,7 +502,7 @@ func TestVectorQueryIntegration(t *testing.T) {
 
 // TestVectorQueryWithBoundEntity verifies querying vector with E bound
 func TestVectorQueryWithBoundEntity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
@@ -562,7 +562,7 @@ func TestVectorQueryWithBoundEntity(t *testing.T) {
 
 // TestVectorQueryProjectSkills verifies querying vector values directly
 func TestVectorQueryProjectSkills(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
@@ -605,7 +605,7 @@ func TestVectorQueryProjectSkills(t *testing.T) {
 
 // TestVectorQueryNameAndSkills verifies joining vectors with other attributes
 func TestVectorQueryNameAndSkills(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
@@ -651,7 +651,7 @@ func TestVectorQueryNameAndSkills(t *testing.T) {
 
 // TestVectorPullIntegration verifies Pull API resolves vector attributes
 func TestVectorPullIntegration(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
@@ -709,7 +709,7 @@ func TestVectorPullIntegration(t *testing.T) {
 // Users wanting to remove the FIRST occurrence (in order) must use
 // read-modify-write via Set().
 func TestVectorRemoveMostRecent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -764,7 +764,7 @@ func TestVectorRemoveMostRecent(t *testing.T) {
 
 // TestVectorRemoveNonExistent verifies Remove() is a no-op for values not in vector
 func TestVectorRemoveNonExistent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -804,7 +804,7 @@ func TestVectorRemoveNonExistent(t *testing.T) {
 
 // TestVectorRemoveAllOccurrences verifies multiple Remove() calls remove all occurrences
 func TestVectorRemoveAllOccurrences(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -867,7 +867,7 @@ func TestVectorRemoveSeesItsOwnTransactionsInserts(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 	cells := datalog.NewKeyword(":stack/cells")
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, c := range cases {
 				t.Run(c.name, func(t *testing.T) {
@@ -904,7 +904,7 @@ func TestVectorRemoveSeesItsOwnTransactionsInserts(t *testing.T) {
 
 // TestAddSchemaAwareVector verifies Add() properly handles vector cardinality
 func TestAddSchemaAwareVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create schema with all three cardinalities
 			s, err := schema.NewBuilder().
@@ -984,7 +984,7 @@ func TestAddSchemaAwareVector(t *testing.T) {
 // TestVectorSetAppend verifies Set() efficiently handles appending elements.
 // This is the most common operation and should only insert new elements.
 func TestVectorSetAppend(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -1027,7 +1027,7 @@ func TestVectorSetAppend(t *testing.T) {
 
 // TestVectorSetAppendMultiple verifies Set() handles appending multiple elements.
 func TestVectorSetAppendMultiple(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -1067,7 +1067,7 @@ func TestVectorSetAppendMultiple(t *testing.T) {
 
 // TestVectorSetChangeEnd verifies Set() handles changing the last element.
 func TestVectorSetChangeEnd(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -1109,7 +1109,7 @@ func TestVectorSetChangeEnd(t *testing.T) {
 
 // TestVectorSetChangeMiddle verifies Set() handles changing a middle element.
 func TestVectorSetChangeMiddle(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -1151,7 +1151,7 @@ func TestVectorSetChangeMiddle(t *testing.T) {
 
 // TestVectorSetPrepend verifies Set() handles prepending (worst case for optimization).
 func TestVectorSetPrepend(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -1192,7 +1192,7 @@ func TestVectorSetPrepend(t *testing.T) {
 
 // TestVectorSetNoChange verifies Set() does nothing when vectors are identical.
 func TestVectorSetNoChange(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -1234,7 +1234,7 @@ func TestVectorSetNoChange(t *testing.T) {
 
 // TestVectorSetFromEmpty verifies Set() works when starting with empty vector.
 func TestVectorSetFromEmpty(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -1271,7 +1271,7 @@ func TestVectorSetFromEmpty(t *testing.T) {
 // TestVectorEnumerateQuery verifies that [(enumerate ?vec) [[?idx ?val]]] expands
 // a vector into multiple result tuples in a Datalog query.
 func TestVectorEnumerateQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":product/label").Type(schema.TypeString).Add().
@@ -1324,7 +1324,7 @@ func TestVectorEnumerateQuery(t *testing.T) {
 // TestVectorEnumerateMultipleEntities verifies enumerate correctly scopes to
 // each entity's own vector, preventing cross-joins between entities.
 func TestVectorEnumerateMultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			tmpDir, err := os.MkdirTemp("", "vector-enumerate-multi-test")
 			require.NoError(t, err)
@@ -1383,7 +1383,7 @@ func TestVectorEnumerateMultipleEntities(t *testing.T) {
 // each have a ref vector pointing to different child entities. Enumerate +
 // filter by child attribute should correctly scope results per parent.
 func TestVectorEnumerateRefWithFilter(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tmpDir, err := os.MkdirTemp("", "vector-enumerate-ref-filter-test")
 			require.NoError(t, err)
@@ -1458,7 +1458,7 @@ func TestVectorEnumerateRefWithFilter(t *testing.T) {
 // vectors to child entities. The query joins through the indirection, enumerates,
 // then filters by child attribute.
 func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":instance/template").Type(schema.TypeRef).Add().
@@ -1478,9 +1478,9 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 				Schema: s,
 				AnnotationHandler: func(event annotations.Event) {
 					if event.Name == annotations.JoinHash {
-						t.Logf("ANNOTATION [%s]: left.attrs=%v right.attrs=%v result.attrs=%v left.size=%v right.size=%v result.size=%v",
+						t.Logf("ANNOTATION [%s]: left.symbols=%v right.symbols=%v result.symbols=%v left.size=%v right.size=%v result.size=%v",
 							event.Name,
-							event.Data["left.attrs"], event.Data["right.attrs"], event.Data["result.attrs"],
+							event.Data["left.symbols"], event.Data["right.symbols"], event.Data["result.symbols"],
 							event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
 					}
 				},
@@ -1643,7 +1643,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 
 // TestVectorSetTruncate verifies Set() handles removing elements from the end.
 func TestVectorSetTruncate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -1696,7 +1696,7 @@ func TestVectorSetTruncate(t *testing.T) {
 // same input relation, so ?color is "available" when scoring the color pattern,
 // boosting its score above enumerate's.
 func TestPlannerReordersDataPatternBeforeEnumerate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":container/name").Type(schema.TypeString).Add().
@@ -1861,7 +1861,7 @@ func TestTypedVector_AllBranches(t *testing.T) {
 
 // TestVectorTypeDouble verifies TypeDouble vectors through LookupAttribute and query.
 func TestVectorTypeDouble(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			tmpDir, err := os.MkdirTemp("", "vector-double-test")
 			require.NoError(t, err)
@@ -1913,7 +1913,7 @@ func TestVectorTypeDouble(t *testing.T) {
 
 // TestVectorTypeBoolean verifies TypeBoolean vectors through LookupAttribute and query.
 func TestVectorTypeBoolean(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			tmpDir, err := os.MkdirTemp("", "vector-bool-test")
 			require.NoError(t, err)
@@ -1965,7 +1965,7 @@ func TestVectorTypeBoolean(t *testing.T) {
 
 // TestVectorTypeLong_QueryPath verifies TypeLong vectors through the query executor.
 func TestVectorTypeLong_QueryPath(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			tmpDir, err := os.MkdirTemp("", "vector-long-query-test")
 			require.NoError(t, err)
@@ -2005,7 +2005,7 @@ func TestVectorTypeLong_QueryPath(t *testing.T) {
 // []int64, etc.) directly, not just []interface{}. toAnySlice uses
 // reflection to convert them.
 func TestSetWithTypedSlices(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -2091,7 +2091,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 // TestTypeDefault verifies PatternMatcher.TypeDefault converts default values
 // to match schema types for vector and many attributes.
 func TestTypeDefault(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":entity/skills").Type(schema.TypeString).Vector().Add().
@@ -2159,7 +2159,7 @@ func TestTypeDefault(t *testing.T) {
 // was explicitly cleared (Set to []) and one that was never written at all.
 // Cleared vectors return ([]string{}, true); never-set return (nil, false).
 func TestVectorClearedVsNeverSet(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
@@ -2212,7 +2212,7 @@ func TestVectorClearedVsNeverSet(t *testing.T) {
 // TestVectorLiteralMatch verifies that vector literals in data patterns match
 // by exact equality, not as wildcards.
 func TestVectorLiteralMatch(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tmpDir, err := os.MkdirTemp("", "vector-literal-match-test")
 			require.NoError(t, err)
@@ -2458,7 +2458,7 @@ func TestVectorLiteralMatch(t *testing.T) {
 // (or-default [(missing? $ ?e :attr)] [?e :attr []]) should return entities where the
 // attribute is missing OR empty, but NOT entities with non-empty vectors.
 func TestVectorLiteralWithOr(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			tmpDir, err := os.MkdirTemp("", "vector-literal-or-test")
 			require.NoError(t, err)

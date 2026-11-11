@@ -734,6 +734,7 @@ func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 		key,
 		i.encoder,
 		i.blobs,
+		runDecode{},
 	)
 	if err != nil {
 		return nil, err

@@ -48,19 +48,15 @@ func generateRefuteCallSourceHistories(seed int64, n int) []refuteCallSourceHist
 	return out
 }
 
-// refuteCallSourceDatabase is a database holding h under the algebra
-// optimizer or not, with the transactions its writes landed in.
-func refuteCallSourceDatabase(t *testing.T, h refuteCallSourceHistory, algebra bool) (*Database, []datalog.ElementID) {
+// refuteCallSourceDatabase is a database on the leg given holding h, with
+// the transactions its writes landed in.
+func refuteCallSourceDatabase(t *testing.T, h refuteCallSourceHistory, mode optimizerMode) (*Database, []datalog.ElementID) {
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{Ident: datalog.NewKeyword(":t/name"), ValueType: schema.TypeString, Cardinality: schema.CardinalityOne})
 	if h.card != nil {
 		s.Add(&schema.AttributeDefinition{Ident: datalog.NewKeyword(":t/a"), ValueType: schema.TypeString, Cardinality: h.card})
 	}
-	opts := DefaultPlannerOptions()
-	opts.EnableAlgebraOptimizer = algebra
-	d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", Schema: s, PlannerOptions: &opts})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, d.Close()) })
+	d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 	name := datalog.NewKeyword(":t/name")
 	a := datalog.NewKeyword(":t/a")
 	var entities []datalog.Identity
@@ -138,12 +134,12 @@ var refuteCallSourceShapes = []struct {
 }
 
 // Over generated histories, a bound invocation whose body holds a subquery
-// passing $src at its inner source answers with the algebra optimizer on
-// what it answers with it off, for $src each handle of the history and a
-// second database holding the same facts under another declaration of :t/a.
-// Each answer is read through Query and Analyze on a fresh database and
-// through Query on a database that first ran the text with $src the latest
-// view, so one plan cache serves the second run.
+// passing $src at its inner source answers on every leg what the reference
+// leg answers, for $src each handle of the history and a second database
+// holding the same facts under another declaration of :t/a. Each answer is
+// read through Query and Analyze on a fresh database on the leg and through
+// Query on one that first ran the text with $src the latest view, so one
+// plan cache serves the second run.
 func TestRefutePlanCache_ARuleBodySubqueryReadsTheSourceItsCallPassesOnBothOptimizerPaths(t *testing.T) {
 	type view struct {
 		name string
@@ -153,15 +149,21 @@ func TestRefutePlanCache_ARuleBodySubqueryReadsTheSourceItsCallPassesOnBothOptim
 		return func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database {
 			other := h
 			other.card = card
-			db, dbTx := refuteCallSourceDatabase(t, other, false)
+			db, dbTx := refuteCallSourceDatabase(t, other, referenceMode)
 			require.Len(t, dbTx, len(txIDs))
 			return db
 		}
 	}
 	views := []view{
-		{"latest", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database { return d }},
-		{"history", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database { return d.History() }},
-		{"as-of first", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database { return d.AsOf(txIDs[0]) }},
+		{"latest", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database {
+			return d
+		}},
+		{"history", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database {
+			return d.History()
+		}},
+		{"as-of first", func(t *testing.T, h refuteCallSourceHistory, d *Database, txIDs []datalog.ElementID) *Database {
+			return d.AsOf(txIDs[0])
+		}},
 		{"cardinality-many database", twin(schema.CardinalityMany)},
 		{"cardinality-one database", twin(schema.CardinalityOne)},
 	}
@@ -192,39 +194,45 @@ func TestRefutePlanCache_ARuleBodySubqueryReadsTheSourceItsCallPassesOnBothOptim
 	for i, h := range generateRefuteCallSourceHistories(4112026, 30) {
 		for _, shape := range refuteCallSourceShapes {
 			for _, v := range views {
-				total++
-				off, offTx := refuteCallSourceDatabase(t, h, false)
-				want, wantErr := run(off, v.of(t, h, off, offTx), shape.rules)
-				on, onTx := refuteCallSourceDatabase(t, h, true)
-				got, gotErr := run(on, v.of(t, h, on, onTx), shape.rules)
-				analyzed, analyzedTx := refuteCallSourceDatabase(t, h, true)
-				gotAnalyzed, gotAnalyzedErr := analyze(analyzed, v.of(t, h, analyzed, analyzedTx), shape.rules)
-				cached, cachedTx := refuteCallSourceDatabase(t, h, true)
-				gotCached, gotCachedErr := want, wantErr
-				if latest, latestErr := run(cached, cached, shape.rules); latestErr != nil || latest == nil {
-					key := shape.name + " / latest run refused"
-					diverged[key]++
-					first[key] = fmt.Sprint(latestErr)
-				} else {
-					gotCached, gotCachedErr = run(cached, v.of(t, h, cached, cachedTx), shape.rules)
-				}
-				for _, path := range []struct {
-					name string
-					got  [][]interface{}
-					err  error
-				}{{"Query", got, gotErr}, {"Analyze", gotAnalyzed, gotAnalyzedErr}, {"Query after a latest run", gotCached, gotCachedErr}} {
-					if (wantErr == nil) != (path.err == nil) || !reflect.DeepEqual(want, path.got) {
-						key := shape.name + " / " + v.name + " / " + path.name
-						diverged[key]++
-						if _, seen := first[key]; !seen {
-							first[key] = fmt.Sprintf("history %d card=%v writes=%v: off %v %v, on %v %v", i, h.card, h.writes, want, wantErr, path.got, path.err)
+				// Each triple runs as a subtest so that its databases, opened on
+				// the subtest's t, are closed when the triple ends.
+				t.Run(fmt.Sprintf("history %d/%s/%s", i, shape.name, v.name), func(t *testing.T) {
+					reference, referenceTx := refuteCallSourceDatabase(t, h, referenceMode)
+					want, wantErr := run(reference, v.of(t, h, reference, referenceTx), shape.rules)
+					for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
+						total++
+						leg, legTx := refuteCallSourceDatabase(t, h, mode)
+						got, gotErr := run(leg, v.of(t, h, leg, legTx), shape.rules)
+						analyzed, analyzedTx := refuteCallSourceDatabase(t, h, mode)
+						gotAnalyzed, gotAnalyzedErr := analyze(analyzed, v.of(t, h, analyzed, analyzedTx), shape.rules)
+						cached, cachedTx := refuteCallSourceDatabase(t, h, mode)
+						gotCached, gotCachedErr := want, wantErr
+						if latest, latestErr := run(cached, cached, shape.rules); latestErr != nil || latest == nil {
+							key := mode.name + " / " + shape.name + " / latest run refused"
+							diverged[key]++
+							first[key] = fmt.Sprint(latestErr)
+						} else {
+							gotCached, gotCachedErr = run(cached, v.of(t, h, cached, cachedTx), shape.rules)
+						}
+						for _, path := range []struct {
+							name string
+							got  [][]interface{}
+							err  error
+						}{{"Query", got, gotErr}, {"Analyze", gotAnalyzed, gotAnalyzedErr}, {"Query after a latest run", gotCached, gotCachedErr}} {
+							if (wantErr == nil) != (path.err == nil) || !reflect.DeepEqual(want, path.got) {
+								key := mode.name + " / " + shape.name + " / " + v.name + " / " + path.name
+								diverged[key]++
+								if _, seen := first[key]; !seen {
+									first[key] = fmt.Sprintf("history %d card=%v writes=%v: reference %v %v, leg %v %v", i, h.card, h.writes, want, wantErr, path.got, path.err)
+								}
+							}
 						}
 					}
-				}
+				})
 			}
 		}
 	}
-	t.Logf("compared %d (history, shape, view) triples", total)
+	t.Logf("compared %d (history, shape, view, leg) quadruples", total)
 	keys := make([]string, 0, len(diverged))
 	for key := range diverged {
 		keys = append(keys, key)
@@ -233,7 +241,7 @@ func TestRefutePlanCache_ARuleBodySubqueryReadsTheSourceItsCallPassesOnBothOptim
 	for _, key := range keys {
 		t.Logf("%s: %d, first: %s", key, diverged[key], first[key])
 	}
-	require.Empty(t, diverged, "shape / view / path where the optimizer-on answer differs from the optimizer-off answer")
+	require.Empty(t, diverged, "leg / shape / view / path where the leg's answer differs from the reference leg's")
 }
 
 // refuteCallSourceAnswerInto is the struct QueryInto and QueryOneInto fill.
@@ -245,27 +253,23 @@ type refuteCallSourceAnswerInto struct {
 // :t/a, declared cardinality-one, holds "old" and then "new" at the entity
 // named "one". A bound invocation's body holds a subquery over a constant
 // that invokes a rule and reads a get-else of :t/a on its inner $, which the
-// call binds to $src, the history handle. Every entry answers with the
-// algebra optimizer on what it answers with it off.
+// call binds to $src, the history handle. Every entry answers on every leg
+// what it answers on the reference leg.
 func TestRefutePlanCache_EveryEntryAnswersARuleBodySubqueryOverAHistoryHandleAlikeOnBothOptimizerPaths(t *testing.T) {
 	name := datalog.NewKeyword(":t/name")
 	a := datalog.NewKeyword(":t/a")
 	one := datalog.NewIdentity("refute-call-source:one")
 	text := `[:find ?e ?v :in $ $src % :where [?e :t/name _] (r ?e ?v)]`
 	rules := `[[(r ?e ?v) [?e :t/name _] [(q [:find ?w :in $ % ?n :where [?x :t/name ?n] (s ?x) [(get-else $ ?x :t/a "none") ?w]] $src % "one") [[?v]]]] [(s ?y) [?y :t/name _]]]`
-	open := func(algebra bool) *Database {
+	open := func(mode optimizerMode) *Database {
 		s := schema.NewSchema()
 		s.Add(&schema.AttributeDefinition{Ident: name, ValueType: schema.TypeString, Cardinality: schema.CardinalityOne})
 		s.Add(&schema.AttributeDefinition{Ident: a, ValueType: schema.TypeString, Cardinality: schema.CardinalityOne})
-		opts := DefaultPlannerOptions()
-		opts.EnableAlgebraOptimizer = algebra
-		d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", Schema: s, PlannerOptions: &opts})
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, d.Close()) })
+		d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 		tx := d.NewTransaction()
 		require.NoError(t, tx.Add(one, name, "one"))
 		require.NoError(t, tx.Add(one, a, "old"))
-		_, err = tx.Commit()
+		_, err := tx.Commit()
 		require.NoError(t, err)
 		tx = d.NewTransaction()
 		require.NoError(t, tx.Add(one, a, "new"))
@@ -273,12 +277,13 @@ func TestRefutePlanCache_EveryEntryAnswersARuleBodySubqueryOverAHistoryHandleAli
 		require.NoError(t, err)
 		return d
 	}
-	answers := map[bool]map[string]string{}
-	for _, algebra := range []bool{false, true} {
+	// entries answers each entry point on a database on the leg, rendered
+	// with its error.
+	entries := func(mode optimizerMode) map[string]string {
 		byEntry := map[string]string{}
 		rs, err := parser.ParseRules(rules)
 		require.NoError(t, err)
-		d := open(algebra)
+		d := open(mode)
 		src := WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): d.History()})
 		queried, err := refuteCallSourceAnswer(d.Query(text, rs, src))
 		byEntry["Query"] = fmt.Sprint(queried, err)
@@ -297,19 +302,23 @@ func TestRefutePlanCache_EveryEntryAnswersARuleBodySubqueryOverAHistoryHandleAli
 		var single refuteCallSourceAnswerInto
 		found, err := d.QueryOneInto(&single, text, rs, src)
 		byEntry["QueryOneInto"] = fmt.Sprint(found, single.V, err)
-		cached := open(algebra)
+		cached := open(mode)
 		latest, err := refuteCallSourceAnswer(cached.Query(text, rs, WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): cached})))
 		require.NoError(t, err)
 		require.NotEmpty(t, latest)
 		served, err := refuteCallSourceAnswer(cached.Query(text, rs, WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$src"): cached.History()})))
 		byEntry["Query after a latest run"] = fmt.Sprint(served, err)
-		answers[algebra] = byEntry
+		return byEntry
 	}
+	want := entries(referenceMode)
 	differ := map[string]string{}
-	for entry, off := range answers[false] {
-		if on := answers[true][entry]; on != off {
-			differ[entry] = fmt.Sprintf("off %s, on %s", off, on)
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
+		got := entries(mode)
+		for entry, reference := range want {
+			if leg := got[entry]; leg != reference {
+				differ[mode.name+" / "+entry] = fmt.Sprintf("reference %s, leg %s", reference, leg)
+			}
 		}
 	}
-	require.Empty(t, differ, "entries where the optimizer-on answer differs from the optimizer-off answer")
+	require.Empty(t, differ, "legs and entries answering otherwise than the reference leg")
 }

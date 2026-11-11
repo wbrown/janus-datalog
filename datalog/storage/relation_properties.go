@@ -89,17 +89,32 @@ func unboundScanProperties(
 	}
 }
 
+// validatedVBoundProperties reports the guarantees of the validating route's
+// relation. Under a constant attribute, a run narrowed to a constant V on
+// AVET ([A][V][E][Tx↓]) or to a constant T on ATEV ([A][Tx↓][E][V]) runs its
+// candidates in E order, and validation emits at most one resolved datom per
+// entity, so the relation is ordered by E and keyed on it. Any other shape
+// reports no properties.
 func validatedVBoundProperties(
 	pattern *query.DataPattern,
 	strategy ReuseStrategy,
 ) executor.RelationProperties {
-	if !strategy.NeedsValidation || strategy.Index != AVET {
+	if !strategy.NeedsValidation {
+		return executor.RelationProperties{}
+	}
+	switch strategy.Index {
+	case AVET:
+		if _, ok := pattern.GetV().(query.Constant); !ok {
+			return executor.RelationProperties{}
+		}
+	case ATEV:
+		if _, ok := pattern.GetT().(query.Constant); !ok {
+			return executor.RelationProperties{}
+		}
+	default:
 		return executor.RelationProperties{}
 	}
 	if _, ok := pattern.GetA().(query.Constant); !ok {
-		return executor.RelationProperties{}
-	}
-	if _, ok := pattern.GetV().(query.Constant); !ok {
 		return executor.RelationProperties{}
 	}
 	entity, ok := pattern.GetE().(query.Variable)
@@ -107,8 +122,6 @@ func validatedVBoundProperties(
 		return executor.RelationProperties{}
 	}
 
-	// AVET is [A][V][E][Tx↓]. With A and V constant, candidate validation
-	// preserves E order and emits at most one current winner per E.
 	return executor.RelationProperties{
 		Ordering: []query.OrderByClause{{
 			Variable: entity.Name,

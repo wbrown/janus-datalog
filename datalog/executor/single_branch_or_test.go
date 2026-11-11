@@ -49,7 +49,7 @@ func TestSingleBranchOrJoinExecutesAsItsBranch(t *testing.T) {
 				Find:  []query.FindElement{query.FindVariable{Symbol: v}},
 				Where: []query.Clause{clause},
 			}
-			for _, mode := range OptimizerModes {
+			for _, mode := range LegsFor(t) {
 				t.Run(mode.Name(), func(t *testing.T) {
 					exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 					rel, err := exec.Execute(q)

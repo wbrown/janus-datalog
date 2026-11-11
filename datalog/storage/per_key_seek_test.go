@@ -151,7 +151,7 @@ func (f *seekFixture) tagTuples(keys int) [][]interface{} {
 // planner is not on this path, and the backend is what each store implements
 // differently.
 func TestPerKeySeekAtOrBelowTheBoundary(t *testing.T) {
-	for _, mode := range pinned(backendModes, false) {
+	for _, mode := range legsWhere(legsFor(backendModes, algebraOption), func(m optimizerMode) bool { return !m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testPerKeySeekAtOrBelowTheBoundary(t, mode)
 		})
@@ -249,17 +249,15 @@ func testPerKeySeekAtOrBelowTheBoundary(t *testing.T, mode optimizerMode) {
 // seek is reached from a query on both planner paths: a collection input of
 // entities at or below the boundary drives [?e :seek/n ?v] through one
 // scan sought per key, and one above the boundary through the hash-join
-// scan, each answering the reference. Attribute-fetch fusion is off, since a
-// fused fetch reads the EA cache per tuple and never reaches the matcher's
-// binding-driven paths.
+// scan, each answering the reference, on the legs without attribute-fetch
+// fusion, since a fused fetch reads the EA cache per tuple and never reaches
+// the matcher's binding-driven paths.
 func TestQueryBindingIsSoughtPerKeyAtOrBelowTheBoundary(t *testing.T) {
 	const boundary = executor.SmallBindingBoundary
-	for _, mode := range backendModes {
+	for _, mode := range legsWhere(legsFor(backendModes, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
-			opts := mode.plannerOptions()
-			opts.EnableAttributeFetchFusion = false
-			f := newSeekFixture(t, mode, opts,
+			f := newSeekFixture(t, mode, mode.plannerOptions(),
 				func(e annotations.Event) { events = append(events, e) })
 
 			for _, tc := range []struct {

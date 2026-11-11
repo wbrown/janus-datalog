@@ -71,7 +71,7 @@ func TestResolveAddWinsSet_HoldsASpanObservedMemberUnderItsMemberKey(t *testing.
 		{blob, []interface{}{longBytes, letters, noise}},
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: declared, CompressionThreshold: 512})
 			tx := db.NewTransaction()
@@ -85,13 +85,9 @@ func TestResolveAddWinsSet_HoldsASpanObservedMemberUnderItsMemberKey(t *testing.
 
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(db.Schema())
-			var eBytes [20]byte
-			copy(eBytes[:], quire.Bytes())
 			for _, a := range attributes {
 				t.Run(a.attr.String(), func(t *testing.T) {
-					var aBytes [32]byte
-					copy(aBytes[:], a.attr.String())
-					result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
+					result, err := matcher.resolveAddWinsSet(quire, a.attr, DiscardIntake)
 					require.NoError(t, err)
 					require.Len(t, result.Members, len(a.members), "one member per value written, each under one key")
 					for _, member := range a.members {

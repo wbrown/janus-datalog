@@ -14,7 +14,7 @@ import (
 // inputs, and expression outputs. ±Inf remains a value.
 
 func TestWritesRejectNaN(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -49,7 +49,7 @@ func TestWritesRejectNaN(t *testing.T) {
 }
 
 func TestInputsRejectNaN(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -76,7 +76,7 @@ func TestInputsRejectNaN(t *testing.T) {
 }
 
 func TestExpressionProducingNaNIsError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -126,7 +126,7 @@ func TestExpressionProducingNaNIsError(t *testing.T) {
 // (where the comparator treats NaN as an unreachable domain violation and
 // panics).
 func TestConstantExpressionProducingNaNIsError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

@@ -150,7 +150,7 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Test 1: Sequential decorrelation
 			t.Run("Sequential", func(t *testing.T) {

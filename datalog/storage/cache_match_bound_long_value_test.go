@@ -31,7 +31,7 @@ func TestABindingOfALongValueJoinsTheManyDatomHoldingIt(t *testing.T) {
 
 	short := "a short note"
 	long := strings.Repeat("the quire is sewn and folded. ", 40) // compressed into the key
-	var huge strings.Builder                                    // compressed past the key, into a blob
+	var huge strings.Builder                                     // compressed past the key, into a blob
 	for i := 0; huge.Len() < 400000; i++ {
 		fmt.Fprintf(&huge, "%d:%d;", i, (i*2654435761)%1000003)
 	}
@@ -98,7 +98,7 @@ func TestABindingOfALongValueJoinsTheManyDatomHoldingIt(t *testing.T) {
 			[]interface{}{long}, []datalog.Identity{quire}},
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: declared, CompressionThreshold: 512, DisableCache: false})
 			tx := db.NewTransaction()
@@ -147,7 +147,7 @@ func TestABindingOfALongValueJoinsTheManyDatomHoldingItUnderEveryView(t *testing
 		{"the history", func(db *Database, _ datalog.ElementID) *Database { return db.History() }, []datalog.Identity{quire, sheet}},
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: declared, CompressionThreshold: 512})
 			tx := db.NewTransaction()

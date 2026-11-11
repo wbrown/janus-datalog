@@ -33,7 +33,7 @@ func TestGroundExpressionProducingNaNIsError(t *testing.T) {
 	}
 
 	var matcher PatternMatcher
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			result, err := exec.Execute(q)

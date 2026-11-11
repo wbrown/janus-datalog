@@ -22,20 +22,22 @@ func TestNewExecutor_OverARefusingMatcherRefusesAndAnswers(t *testing.T) {
 	require.NoError(t, err)
 	declared, err := parser.ParseQuery(`[:find ?v :where [?e :t/name ?v]]`)
 	require.NoError(t, err)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, RefuseUnknownAttributes: true})
 			tx := d.NewTransaction()
 			require.NoError(t, tx.Add(datalog.NewIdentity("e"), kw(":t/name"), "n"))
 			_, err := tx.Commit()
 			require.NoError(t, err)
+			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
 			executors := []struct {
 				name string
 				exec *executor.Executor
 			}{
 				{"the database's own", d.NewExecutor()},
 				{"built by the caller", executor.NewExecutor(d.Matcher(), d)},
-				{"built by the caller with the database's options", executor.NewExecutorWithOptions(d.Matcher(), d, mode.plannerOptions())},
+				{"built by the caller with the database's options", executor.NewExecutorWithOptions(d.Matcher(), d, popts)},
 			}
 			for _, e := range executors {
 				t.Run(e.name, func(t *testing.T) {

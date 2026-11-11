@@ -45,7 +45,7 @@ func TestInputEntries_SharingASymbolAreJoinedOnIt(t *testing.T) {
 		{"a scalar selecting a relation's tuple", `[:find ?e :in $ ?x [[?x ?y] ...] :where [?e :p/n ?x] [?e :p/m ?y]]`, []interface{}{int64(2), []interface{}{[]interface{}{int64(1), int64(1)}, []interface{}{int64(2), int64(3)}}}, []string{"e2"}},
 		{"a collection selecting a relation's tuples", `[:find ?e :in $ [?x ...] [[?x ?y] ...] :where [?e :p/n ?x] [?e :p/m ?y]]`, []interface{}{[]interface{}{int64(2)}, []interface{}{[]interface{}{int64(1), int64(1)}, []interface{}{int64(2), int64(3)}}}, []string{"e2"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, pairedFacts())
@@ -77,7 +77,7 @@ func TestInnerQuery_ARepeatedNameUnifiesInItsInAndRepeatsInItsFind(t *testing.T)
 		{"a find naming a collection's member twice", `[:find ?a ?b :in $ ?vs :where [(q [:find ?x ?x :in $ [?x ...] :where [?e :p/n ?x]] $ ?vs) [[?a ?b]]]]`, []interface{}{[]interface{}{int64(1), int64(2)}}, []string{"1 1", "2 2"}},
 		{"a binding naming one symbol twice over a collection's members", `[:find ?a :in $ ?vs :where [(q [:find ?x ?y :in $ [?x ...] :where [?e :p/n ?x] [?e :p/m ?y]] $ ?vs) [[?a ?a]]]]`, []interface{}{[]interface{}{int64(1), int64(2), int64(3)}}, []string{"1", "3"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, pairedFacts())
@@ -126,7 +126,7 @@ func TestUnifiedBinding_FeedsEveryConsumerAsARelation(t *testing.T) {
 		{"an expression's binding counted", `[:find (count ?a) :where ` + agreeingTuples + `]`, []string{"2"}},
 		{"an expression's binding passed to a subquery", `[:find ?a ?c :where [(ground [[1 1] [2 9]]) [[?a ?a]]] [(q [:find (count ?y) :in $ ?v :where [?y :p/n ?v]] $ ?a) [[?c]]]]`, []string{"1 1"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, symmetricOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, pairedFacts())
@@ -156,7 +156,7 @@ func TestPerTupleFunction_ARepeatedBindingNameUnifies(t *testing.T) {
 		{"a scalar input's tuple under the tuple form beside a group", `[:find ?e ?a :in $ ?v :where [?e :p/n 1] [(identity ?v) [?a ?a]]]`, []interface{}{[]interface{}{int64(1), int64(2)}}, nil},
 		{"a scalar input's agreeing tuple under the tuple form beside a group", `[:find ?e ?a :in $ ?v :where [?e :p/n 1] [(identity ?v) [?a ?a]]]`, []interface{}{[]interface{}{int64(1), int64(1)}}, []string{"e1 1"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, pairedFacts())
@@ -179,7 +179,7 @@ func TestPerTupleFunction_ARepeatedBindingNameUnifies(t *testing.T) {
 // scalar reaching the tuple form at run time, from an input the text cannot
 // see the shape of, is the query's error.
 func TestGround_AValueBindsAsItsShapeHasIt(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, pairedFacts())

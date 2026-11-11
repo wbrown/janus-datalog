@@ -9,7 +9,7 @@ import (
 )
 
 // A hand-built query holding a shape the parser refuses is refused by Query
-// with the parser's message, in both optimizer modes: a data pattern of five
+// with the parser's message, in both optimizer modes: a data pattern of six
 // elements, an or with a branch of no clause, an or-default with one branch,
 // and a negative limit.
 func TestQuery_RefusesTheShapesTheParserRefuses(t *testing.T) {
@@ -24,9 +24,9 @@ func TestQuery_RefusesTheShapesTheParserRefuses(t *testing.T) {
 		q     *query.Query
 		names string
 	}{
-		{"a data pattern of five elements",
-			&query.Query{Find: find, Where: []query.Clause{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: e}, query.Constant{Value: n}, query.Variable{Name: v}, query.Variable{Name: w}, query.Variable{Name: w}}}}},
-			"data pattern must have 1 to 4 elements, got 5"},
+		{"a data pattern of six elements",
+			&query.Query{Find: find, Where: []query.Clause{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: e}, query.Constant{Value: n}, query.Variable{Name: v}, query.Variable{Name: w}, query.Variable{Name: w}, query.Variable{Name: w}}}}},
+			"data pattern must have 1 to 5 elements, got 6"},
 		{"an or with a branch of no clause",
 			&query.Query{Find: find, Where: []query.Clause{&query.OrClause{Branches: [][]query.Clause{{}, {first}}}}},
 			"or branch 1 must have at least one clause"},
@@ -37,7 +37,7 @@ func TestQuery_RefusesTheShapesTheParserRefuses(t *testing.T) {
 			&query.Query{Find: find, Where: []query.Clause{first}, Limit: &limit},
 			":limit must be non-negative, got -1"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, []fact{{named("e1"), ":t/n", int64(1)}, {named("e1"), ":t/m", int64(2)}})

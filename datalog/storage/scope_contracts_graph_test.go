@@ -181,11 +181,11 @@ var recordedGraphCaps = []int{0, 1, 32}
 // runScopeChecks runs every check on each backend and mode at each cap,
 // asserting the reference's tuples, the recorded count where the record
 // states one, and the stratum count where a check reads it.
-func runScopeChecks(t *testing.T, g scopeGraph, caps []int, checks []scopeCheck) {
+func runScopeChecks(t *testing.T, g scopeGraph, caps []int, checks []scopeCheck, reach ...option) {
 	t.Helper()
 	facts := g.facts()
 	rules := mustRuleSet(t, scopeReach)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, reach...) {
 		for _, windowCap := range caps {
 			t.Run(fmt.Sprintf("%s/cap_%d", mode.name, windowCap), func(t *testing.T) {
 				var strata atomic.Int32
@@ -469,7 +469,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 		{"a bound pattern with an input-bound value under a predicate", `[:find ?e :in $ ?w :where [?e :r 1] (not-join [?e] [?e :q ?e]) [?e :p ?t] [(= ?t ?w)]]`, false, []interface{}{targetID}, pointing, -1, -1},
 		{"the zero-default count idiom with a rule inside its subquery", `[:find ?g ?n :in $ % :where [?g :r 1] (or-default [(q [:find (count ?x) :in $ % ?g :where (reach ?g ?x)] $ % ?g) [[?n]]] [(ground 0) ?n])]`, true, nil, zeroDefault, -1, 2},
 	}
-	runScopeChecks(t, g, recordedGraphCaps, checks)
+	runScopeChecks(t, g, recordedGraphCaps, checks, algebraOption, sharingOption, symmetricOption, fusionOption, aggregationOption)
 }
 
 // Over the three-thousand-entity graph, a not-join's streaming result
@@ -505,7 +505,7 @@ func TestScopeForms_OverThreeThousandEntitiesAnswerTheReference(t *testing.T) {
 		{"a not-join, a pattern and a bound pattern on its value", `[:find ?x ?w :where [?x :k :x] (not-join [?x] [?x :q ?x]) [?x :p ?y] [?y :q ?w]]`, false, nil, through, -1, -1},
 		{"a not-join and a counting subquery", `[:find ?x ?n :where [?x :k :x] (not-join [?x] [?x :q ?x]) [(q [:find (count ?z) :in $ ?x :where [?z :p ?x]] $ ?x) [[?n]]]]`, false, nil, counted, -1, -1},
 	}
-	runScopeChecks(t, g, []int{0, 7}, checks)
+	runScopeChecks(t, g, []int{0, 7}, checks, algebraOption, prefetchOption, fusionOption, aggregationOption)
 }
 
 // A header symbol nothing binds, over a streaming subject, is refused on both
@@ -517,7 +517,7 @@ func TestScopeForms_AHeaderSymbolNothingBindsOverAStreamingSubjectIsRefused(t *t
 		`[:find ?e :where [?e :r 1] (not-join [?e] [?e :q ?e]) (not-join [?e ?zz] [?zz :p ?e])]`,
 		`[:find ?e ?n :where [?e :r 1] (not-join [?e] [?e :q ?e]) [(q [:find (count ?z) :in $ ?k :where [?z :p ?k]] $ ?zz) [[?n]]]]`,
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			commitFacts(t, d, g.facts())
@@ -558,35 +558,33 @@ func TestFallbackPrefetch_AnswersAsTheScanPathAndFires(t *testing.T) {
 		{"a union whose required value never agrees", `[:find ?e ?n :where [?e :r ?n] [(+ ?n 10) ?m] (or-join [[?e ?m]] [?e :r ?m])]`, false, nil, nil, -1, -1},
 		{"a fallback whose output the subject carries", `[:find ?e ?v :where [?e :q ?v] (or-default-join [[?e] ?v] [?e :p ?v] [(ground :none) ?v])]`, false, nil, carried, 0, -1},
 	}
-	for _, mode := range optimizerModes {
-		for _, prefetch := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/prefetch_%v", mode.name, prefetch), func(t *testing.T) {
-				var triggers atomic.Int32
-				opts := mode.plannerOptions()
-				opts.EnableEntityPrefetch = prefetch
-				d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: scopeGraphSchema(t), PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
-					if e.Name == annotations.PrefetchTrigger {
-						triggers.Add(1)
+	legs := legsFor(optimizerModes, prefetchOption, fusionOption)
+	for _, mode := range append(legsWhere(legs, func(m optimizerMode) bool { return m.prefetch }), legsWhere(legs, func(m optimizerMode) bool { return !m.prefetch })...) {
+		t.Run(mode.name, func(t *testing.T) {
+			var triggers atomic.Int32
+			opts := mode.plannerOptions()
+			d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: scopeGraphSchema(t), PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
+				if e.Name == annotations.PrefetchTrigger {
+					triggers.Add(1)
+				}
+			}})
+			names := commitFacts(t, d, g.facts())
+			for _, c := range checks {
+				t.Run(c.name, func(t *testing.T) {
+					rel, err := d.Query(c.text)
+					require.NoError(t, err)
+					got := renderedTuples(t, rel, names)
+					require.ElementsMatch(t, c.want, got)
+					if c.tuples >= 0 {
+						require.Len(t, got, c.tuples, "the record's count")
 					}
-				}})
-				names := commitFacts(t, d, g.facts())
-				for _, c := range checks {
-					t.Run(c.name, func(t *testing.T) {
-						rel, err := d.Query(c.text)
-						require.NoError(t, err)
-						got := renderedTuples(t, rel, names)
-						require.ElementsMatch(t, c.want, got)
-						if c.tuples >= 0 {
-							require.Len(t, got, c.tuples, "the record's count")
-						}
-					})
-				}
-				if prefetch {
-					require.GreaterOrEqual(t, triggers.Load(), int32(1), "the trigger fires with the option on")
-				} else {
-					require.Equal(t, int32(0), triggers.Load(), "no prefetch runs with the option off")
-				}
-			})
-		}
+				})
+			}
+			if mode.prefetch {
+				require.GreaterOrEqual(t, triggers.Load(), int32(1), "the trigger fires with the option on")
+			} else {
+				require.Equal(t, int32(0), triggers.Load(), "no prefetch runs with the option off")
+			}
+		})
 	}
 }

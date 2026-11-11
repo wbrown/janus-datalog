@@ -206,7 +206,7 @@ func TestConstantPatternCacheParity(t *testing.T) {
 		{"vector/cleared to empty, V bound non-empty", clearedSkills, skillEqual},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					assertCacheModesAgree(t, omode,
 						func(t *testing.T, db *Database) {
@@ -262,7 +262,7 @@ func TestConstantPatternCacheParitySchemaless(t *testing.T) {
 		}, `[:find ?tx :where [#id "cache-parity:subject" :loose/value 7 ?tx]]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, omode := range optimizerModes {
+			for _, omode := range legsFor(optimizerModes) {
 				t.Run(omode.name, func(t *testing.T) {
 					assertCacheModesAgree(t, omode,
 						func(t *testing.T, db *Database) { tc.write(t, db) },

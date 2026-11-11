@@ -23,21 +23,20 @@ const (
 // at the same call sites remain the streaming observability view.
 type RewriteRecord struct {
 	// Pass names the pass or transform ("decorrelation",
-	// "get-else-scan-rewrite", "join-project-insertion").
+	// "get-else-scan-rewrite").
 	Pass   string
 	Action RewriteAction
 	// Reason states the failed precondition for declined records; empty
 	// otherwise.
 	Reason string
 	// Subject is the context the decision was made on — the inner query of a
-	// lateral join, the expression being rewritten, the terminal symbols of an
-	// insertion. It is carried, not rendered: ExplainAlgebra is the renderer,
-	// and rendering here would walk the node on every visit to build a string
-	// that the normal query path never reads.
+	// lateral join, the expression being rewritten. It is carried, not
+	// rendered: ExplainAlgebra is the renderer, and rendering here would walk
+	// the node on every visit to build a string that the normal query path
+	// never reads.
 	//
-	// `any` because the three subjects are three types (*query.Query, an
-	// expression, []query.Symbol) with no interface between them beyond being
-	// printable.
+	// `any` because the two subjects are two types (*query.Query, an
+	// expression) with no interface between them beyond being printable.
 	Subject any
 }
 

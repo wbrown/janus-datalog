@@ -26,7 +26,7 @@ func TestPullWithDisjointFindGroups(t *testing.T) {
 
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			executor := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 

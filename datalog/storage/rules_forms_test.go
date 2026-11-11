@@ -72,7 +72,7 @@ func TestRules_BodyForms(t *testing.T) {
 			`[:find ?a :in $ % ?x ?e :where [?a :type :node] (r ?x ?e)]`, []interface{}{nodeID("a"), nodeID("e")},
 			[]string{"a", "b", "c", "d", "e"}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: graphSchema()})
 			spec := diamond()
@@ -120,7 +120,7 @@ func TestRules_RequiredBindingBoundThroughEachBinder(t *testing.T) {
 		{"an input", `[:find ?m :in $ % ?n :where (succ ?n ?m)]`, []interface{}{int64(7)}, []string{"8"}},
 		{"a variable repeated at both positions", `[:find ?v :in $ % :where [?e :val ?v] (succ ?v ?v)]`, nil, nil},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeValues(t, d, 3)
@@ -142,7 +142,7 @@ func TestRules_PlanCacheServesEachRuleSetItsOwnPlan(t *testing.T) {
 	free := `[[(succ ?n ?m) [?e :val ?n] [(+ ?n 1) ?m]]]`
 	required := `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`
 	want := []string{"1>2", "2>3", "3>4"}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeValues(t, d, 3)
@@ -152,40 +152,6 @@ func TestRules_PlanCacheServesEachRuleSetItsOwnPlan(t *testing.T) {
 				require.ElementsMatch(t, want, graph{}.tuples(t, rel), "run %d", i)
 			}
 		})
-	}
-}
-
-// Join-project insertion changes no result of a query over rules: the
-// closure whole, a group bound before the invocation with a pattern after
-// it, an aggregate over the invocation joined with a rule that computes a
-// value, and a negated invocation with a blank.
-func TestRules_JoinProjectInsertionKeepsResults(t *testing.T) {
-	const rules = `[[(reach ?a ?b) [?a :edge ?b]] [(reach ?a ?c) [?a :edge ?b] (reach ?b ?c)]
-	                [(lbl ?x ?l) [?x :type ?t] [(str ?t) ?l]]]`
-	cases := []struct {
-		name, text string
-		want       []string
-	}{
-		{"whole", `[:find ?x ?y :in $ % :where (reach ?x ?y)]`, chainClosure(4)},
-		{"bound before, pattern after", `[:find ?y :in $ % :where [?x :type :node] (reach ?x ?y) [?y :type ?t]]`, []string{"n2", "n3", "n4"}},
-		{"aggregate over the invocation and a computing rule", `[:find (count ?y) :in $ % :where (reach ?x ?y) (lbl ?y ?l) [?x :type :node]]`, []string{"6"}},
-		{"negated with a blank", `[:find ?x :in $ % :where [?x :type :node] (not (reach ?x _))]`, []string{"n4"}},
-	}
-	for _, mode := range optimizerModes {
-		for _, insertion := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/insertion=%v", mode.name, insertion), func(t *testing.T) {
-				opts := mode.plannerOptions()
-				opts.EnableJoinProjectInsertion = insertion
-				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})
-				g := writeGraph(t, d, chain(4))
-				rs := mustRuleSet(t, rules)
-				for _, c := range cases {
-					rel, err := d.Query(c.text, rs)
-					require.NoError(t, err, c.name)
-					require.ElementsMatch(t, c.want, g.tuples(t, rel), c.name)
-				}
-			})
-		}
 	}
 }
 
@@ -239,7 +205,7 @@ func TestRules_BoundsAtTheirBoundaries(t *testing.T) {
 		{"whole", closureQuery, nil, 0},
 		{"bound to the head", `[:find ?x ?y :in $ % ?x :where (reach ?x ?y)]`, []interface{}{nodeID("n1")}, 1},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		for _, q := range queries {
 			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
 				totals := &stratumTotals{}
@@ -336,7 +302,7 @@ func TestRules_GroundInsideAnOrBranchBesideTheRecursion(t *testing.T) {
 	}
 	g := markedCycle()
 	pair := func(a, b int64) string { return fmt.Sprintf("%d>%d", a, b) }
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeIntGraph(t, d, g)
@@ -402,7 +368,7 @@ func TestRules_RuleOrderDoesNotChangeWhatIsDerived(t *testing.T) {
 		{"one forwarding rule", `[[(mr ?a) [(ground 1) ?a]] [(mr ?b) (mr ?a) (ae ?a ?b)] [(me ?a) (mr ?a)] [(ae ?a ?b) (me ?a) [?x :edge/from ?a] [?x :edge/to ?b]]]`},
 	}
 	g := markedCycle()
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			writeIntGraph(t, d, g)

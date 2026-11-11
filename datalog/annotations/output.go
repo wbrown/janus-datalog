@@ -9,6 +9,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/mattn/go-isatty"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // OutputFormatter formats events for human-readable display.
@@ -115,22 +116,27 @@ func (f *OutputFormatter) Format(event Event) string {
 		right := event.Data["right.size"].(int)
 		result := event.Data["result.size"].(int)
 
-		// Get relation attributes if available
-		var leftAttrs, rightAttrs, resultAttrs []string
-		if attrs, ok := event.Data["left.attrs"].([]string); ok {
-			leftAttrs = attrs
-		}
-		if attrs, ok := event.Data["right.attrs"].([]string); ok {
-			rightAttrs = attrs
-		}
-		if attrs, ok := event.Data["result.attrs"].([]string); ok {
-			resultAttrs = attrs
-		}
+		// The sides' and the result's symbols, as the relations hold them;
+		// their names are rendered here.
+		leftSymbols, _ := event.Data["left.symbols"].([]query.Symbol)
+		rightSymbols, _ := event.Data["right.symbols"].([]query.Symbol)
+		resultSymbols, _ := event.Data["result.symbols"].([]query.Symbol)
 
-		// Use relation renderer if we have attributes
 		var joinStr string
-		if len(leftAttrs) > 0 && len(rightAttrs) > 0 && len(resultAttrs) > 0 {
-			joinStr = f.renderer.RenderJoin(leftAttrs, left, rightAttrs, right, resultAttrs, result)
+		if len(leftSymbols) > 0 && len(rightSymbols) > 0 && len(resultSymbols) > 0 {
+			leftNames := make([]string, len(leftSymbols))
+			for i, sym := range leftSymbols {
+				leftNames[i] = sym.String()
+			}
+			rightNames := make([]string, len(rightSymbols))
+			for i, sym := range rightSymbols {
+				rightNames[i] = sym.String()
+			}
+			resultNames := make([]string, len(resultSymbols))
+			for i, sym := range resultSymbols {
+				resultNames[i] = sym.String()
+			}
+			joinStr = f.renderer.RenderJoin(leftNames, left, rightNames, right, resultNames, result)
 		} else {
 			// Fallback to simple format
 			joinStr = fmt.Sprintf("%d × %d → %d tuples", left, right, result)
@@ -150,24 +156,7 @@ func (f *OutputFormatter) Format(event Event) string {
 	case MatchesToRelations:
 		pattern := renderPayloadValue(event.Data[KeyPattern])
 		matchCount := event.Data["match.count"].(int)
-
-		// Extract bound symbols from the pattern to determine output symbols
-		var outputSymbols []string
-
-		// Check if we have symbol order information
-		if symbolOrder, ok := event.Data["symbol.order"].([]string); ok {
-			outputSymbols = symbolOrder
-		} else if outputBinds, ok := event.Data["output.binds"].(map[string]int); ok && len(outputBinds) > 0 {
-			// Fallback - get symbols but without guaranteed order
-			for sym := range outputBinds {
-				outputSymbols = append(outputSymbols, sym)
-			}
-		} else if binds, ok := event.Data["binds"].(map[string]int); ok && len(binds) > 0 {
-			// Fallback for old format
-			for sym := range binds {
-				outputSymbols = append(outputSymbols, sym)
-			}
-		}
+		outputSymbols, _ := event.Data["symbol.order"].([]query.Symbol)
 
 		// Format as Pattern(...) → Relation([symbols], count)
 		// Apply the same coloring style as relations
@@ -181,7 +170,7 @@ func (f *OutputFormatter) Format(event Event) string {
 			patternStr = fmt.Sprintf("Pattern(%s)", pattern)
 		}
 
-		relationStr := f.renderer.RenderRelationWithAttrs(outputSymbols, matchCount)
+		relationStr := f.renderer.RenderRelation(RelationInfo{Attrs: outputSymbols, TupleCount: matchCount})
 
 		if f.useColor {
 			arrow := color.YellowString(" → ")

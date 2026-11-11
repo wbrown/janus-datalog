@@ -602,36 +602,30 @@ type OrFallbackIterator struct {
 	unionBranchIdx int
 }
 
-// eaArmShape reports whether a branch is one the EA arm builds, one data
-// pattern on the default source whose entity position is a key symbol, whose
-// attribute is a constant keyword and whose value is a variable, naming the
-// entity symbol, the attribute and the value symbol; the fallback's prefetch
-// and its build read the one shape.
+// eaArmShape reports whether a branch is one the EA arm builds: one data
+// pattern of the shape a lookup answers (lookupShape), [?e attr ?v] on the
+// default source, whose entity is a key symbol and whose value is a variable,
+// naming the entity symbol, the attribute and the value symbol. The
+// fallback's prefetch and its build read the one shape. A branch reading its
+// fourth or fifth position is not of it and takes the planned build, where
+// the matcher decides every position.
 func eaArmShape(branch []query.Clause, key []query.Symbol) (entity query.Symbol, attr datalog.Keyword, value query.Symbol, ok bool) {
 	if len(branch) != 1 {
 		return nil, nil, nil, false
 	}
 	dp, isPattern := branch[0].(*query.DataPattern)
-	if !isPattern || dp.Source != nil {
+	if !isPattern {
 		return nil, nil, nil, false
 	}
-	eVar, eIsVar := dp.GetE().(query.Variable)
-	if !eIsVar || !query.ContainsSymbol(key, eVar.Name) {
-		return nil, nil, nil, false
-	}
-	aConst, aIsConst := dp.GetA().(query.Constant)
-	if !aIsConst {
-		return nil, nil, nil, false
-	}
-	aKw, aIsKeyword := aConst.Value.(datalog.Keyword)
-	if !aIsKeyword {
+	entity, attr, isShape := lookupShape(dp)
+	if !isShape || !query.ContainsSymbol(key, entity) {
 		return nil, nil, nil, false
 	}
 	vVar, vIsVar := dp.GetV().(query.Variable)
 	if !vIsVar {
 		return nil, nil, nil, false
 	}
-	return eVar.Name, aKw, vVar.Name, true
+	return entity, attr, vVar.Name, true
 }
 
 // prefetchWindow is the fallback's trigger of Rule 6
@@ -685,14 +679,15 @@ func (it *OrFallbackIterator) prefetchWindow(window []Tuple) error {
 // buildBranchFromEACache builds a window's tuples for a branch of the EA
 // arm's shape, one data pattern on the default source whose entity position
 // is a key symbol and whose attribute the matcher can serve by lookup, over
-// run, the window's keys, through LookupAttribute (EA cache): the relation
-// the branch's plan builds over the run. Each distinct entity is looked up
-// once. A run tuple whose entity carries a value is extended with it, over
-// the run's symbols and the value symbol, and when the run binds the value
-// symbol a run tuple is kept when its value is its entity's. Returns the
-// tuples and their symbols, nil symbols when the prerequisites are not met
-// (another branch shape, no LookupAttribute, an attribute the matcher cannot
-// serve by lookup), and sets it.err on a failed lookup.
+// run, the window's keys, through the matcher's lookup of the attribute (EA
+// cache): the relation the branch's plan builds over the run. Each distinct
+// entity is looked up once. A run tuple whose entity carries a value is
+// extended with it, over the run's symbols and the value symbol, and when the
+// run binds the value symbol a run tuple is kept when its value is its
+// entity's. Returns the tuples and their symbols, nil symbols when the
+// prerequisites are not met (another branch shape, a matcher that cannot look
+// up, an attribute the matcher cannot serve by lookup), and sets it.err on a
+// failed lookup.
 func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run *MaterializedRelation) ([]Tuple, []query.Symbol) {
 	if run == nil {
 		return nil, nil
@@ -710,6 +705,11 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run 
 	}
 	fusable, ok := it.executor.matcher.(AttributeFetchFusable)
 	if !ok || !fusable.CanFuseAttributeFetch(datalog.SymDollar, aKw) {
+		return nil, nil
+	}
+	lookup, err := lookupMatcher.AttributeLookup(aKw)
+	if err != nil {
+		it.err = err
 		return nil, nil
 	}
 
@@ -745,7 +745,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run 
 		}
 		looked, seen := values[entity]
 		if !seen {
-			value, found, err := lookupMatcher.LookupAttribute(entity, aKw)
+			value, found, err := lookup(entity)
 			if err != nil {
 				it.err = errjoin.Join(err, runIt.Close())
 				return nil, nil

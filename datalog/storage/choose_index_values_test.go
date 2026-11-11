@@ -13,7 +13,7 @@ import (
 // This was a bug where the AVET case was missing from scanBoundForValues(),
 // causing full index scans instead of targeted lookups.
 func TestChooseIndexForValuesAVET(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -174,7 +174,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 // TestChooseIndexForValuesVAET verifies that VAET index scan ranges
 // are correctly narrowed when value is bound.
 func TestChooseIndexForValuesVAET(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -262,7 +262,7 @@ func TestChooseIndexForValuesVAET(t *testing.T) {
 // TestChooseIndexForValuesIdentity verifies that datalog.Identity
 // values are handled correctly (Identity is now always a pointer type).
 func TestChooseIndexForValuesIdentity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -300,7 +300,7 @@ func TestChooseIndexForValuesIdentity(t *testing.T) {
 
 // TestChooseIndexForValuesEAVT verifies EAVT index handling still works correctly.
 func TestChooseIndexForValuesEAVT(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -351,7 +351,7 @@ func TestChooseIndexForValuesEAVT(t *testing.T) {
 
 // TestChooseIndexForValuesAEVT verifies AEVT index handling still works correctly.
 func TestChooseIndexForValuesAEVT(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -407,7 +407,7 @@ func TestChooseIndexForValuesAEVT(t *testing.T) {
 // AETV is the A-primary CRDT-aware index (A → E → Tx↓ → V).
 // This test ensures scanBoundForValues handles AETV properly.
 func TestChooseIndexForValuesAETV(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

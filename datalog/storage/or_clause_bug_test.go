@@ -19,7 +19,7 @@ import (
 // Actual behavior: The `or` clause appears to be ignored entirely, returning
 // all tuples regardless of whether they match either branch.
 func TestOrClauseBug(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -89,7 +89,7 @@ func TestOrClauseBug(t *testing.T) {
 
 // TestOrClauseBugTraced runs the same test with annotation tracing to understand the execution
 func TestOrClauseBugTraced(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -116,14 +116,15 @@ func TestOrClauseBugTraced(t *testing.T) {
 			assert.NoError(t, err)
 
 			var events []annotations.Event
-			handler := func(event annotations.Event) {
+			handler := recordingReach(t, func(event annotations.Event) {
 				events = append(events, event)
-			}
+			})
 
 			// Create executor with tracing - use same options as the mode's database
 			baseMatcher := NewPatternMatcher(db.Store())
 			wrappedMatcher := executor.WrapMatcher(baseMatcher, handler)
 			opts := mode.plannerOptions()
+			opts.Handler = recordingReach(t, nil)
 			exec := executor.NewExecutorWithOptions(wrappedMatcher, db, opts)
 
 			// First, test what the OR branches return individually

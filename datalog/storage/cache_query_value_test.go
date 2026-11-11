@@ -121,7 +121,7 @@ func TestAQueryAnswersTheValueItsSessionOpenedOn(t *testing.T) {
 		return answer(t, rel, queryErr)
 	}
 
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		for _, kind := range kinds {
 			for _, route := range routes {
 				for _, asOf := range []bool{false, true} {

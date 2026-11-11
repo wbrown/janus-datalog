@@ -67,7 +67,7 @@ func createTestJDZLDump(t *testing.T) string {
 // via db.NewExecutor(), which inherits them.
 
 func TestOpenDatabaseOrEDN_BadgerPath(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			dbPath := createTestDatabase(t)
 
@@ -94,7 +94,7 @@ func TestOpenDatabaseOrEDN_BadgerPath(t *testing.T) {
 }
 
 func TestOpenDatabaseOrEDN_EDNDump(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			ednPath := createTestEDNDump(t)
 
@@ -121,7 +121,7 @@ func TestOpenDatabaseOrEDN_EDNDump(t *testing.T) {
 }
 
 func TestOpenDatabaseOrEDN_JDZLDump(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			jdzlPath := createTestJDZLDump(t)
 
@@ -168,7 +168,7 @@ func TestCLI_QueryFromEDNDump(t *testing.T) {
 	binPath := buildCLI(t)
 	ednPath := createTestEDNDump(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, "-db", ednPath, mode.cliFlag(),
 				"-query", `[:find ?name :where [_ :person/name ?name]]`)
@@ -228,7 +228,7 @@ func TestCLI_QueryFromJDZLDump(t *testing.T) {
 	binPath := buildCLI(t)
 	jdzlPath := createTestJDZLDump(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, "-db", jdzlPath, mode.cliFlag(),
 				"-query", `[:find ?name :where [_ :person/name ?name]]`)
@@ -276,7 +276,7 @@ func TestCLI_ExportBinFromJDZLDump(t *testing.T) {
 		t.Fatalf("Export-bin from JDZL dump failed: %v\n%s", err, out)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			opts := mode.plannerOptions()
 			db, cleanup, err := openDatabaseOrEDN(exportPath, &opts)
@@ -372,7 +372,7 @@ func TestCLI_QueryFromJDZLDumpResolvesSets(t *testing.T) {
 	binPath := buildCLI(t)
 	jdzlPath := createDeclaredJDZLDump(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, "-db", jdzlPath, mode.cliFlag(),
 				"-query", `[:find ?t :where [_ :person/tags ?t]]`)
@@ -397,7 +397,7 @@ func TestCLI_ImportBinCarriesSchema(t *testing.T) {
 		t.Fatalf("Import-bin into directory failed: %v\n%s", err, out)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, "-db", target, mode.cliFlag(),
 				"-query", `[:find ?t :where [_ :person/tags ?t]]`)

@@ -220,17 +220,16 @@ func requireSmokeAnswers(t *testing.T, want, got smokeAnswers, when string) {
 // engine axis runs on the tree store; this test pins that Badger, reading the
 // same fixture, answers every shape as the tree store does, and that the
 // store it persisted answers the same after a close and a reopen of its path.
-// The cache is off so each shape reads the store, and attribute-fetch fusion
-// is off so a collection input reaches the binding-driven paths, whose
-// completion events are required.
+// The cache is off so each shape reads the store, and the legs are those
+// without attribute-fetch fusion, so a collection input reaches the
+// binding-driven paths, whose completion events are required.
 func TestBadgerAnswersWhatTheTreeStoreAnswersAndAgainAfterReopen(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsWhere(legsFor(backendModes, fusionOption), func(m optimizerMode) bool { return !m.fusion }) {
 		if mode.backend.Name != "badger" {
 			continue
 		}
 		t.Run(mode.name, func(t *testing.T) {
 			plannerOpts := mode.plannerOptions()
-			plannerOpts.EnableAttributeFetchFusion = false
 			options := func(handler annotations.Handler) DatabaseOptions {
 				return DatabaseOptions{
 					Schema:               smokeSchema(t),

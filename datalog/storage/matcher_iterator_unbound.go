@@ -15,6 +15,7 @@ type unboundIterator struct {
 	pattern     *query.DataPattern
 	symbols     []query.Symbol
 	e, a, v, tx interface{}
+	added       interface{} // the fifth position's constant, whether the datom asserts; nil when unbound
 	constraints []executor.StorageConstraint
 
 	storageIter  Iterator
@@ -49,7 +50,7 @@ func (it *unboundIterator) Next() bool {
 		}
 
 		// Check if datom matches pattern
-		if it.matcher.matchesDatom(datom, it.e, it.a, it.v, it.tx) {
+		if it.matcher.matchesDatom(datom, it.e, it.a, it.v, it.tx, it.added) {
 			// Apply transaction and constraint validation
 			if validateDatomWithConstraints(datom, it.matcher, it.constraints) {
 				it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)

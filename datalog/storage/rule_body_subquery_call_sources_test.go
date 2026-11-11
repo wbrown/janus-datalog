@@ -46,7 +46,7 @@ func TestARuleBodySubqueryReadsEachSourceItsCallPassesOnBothOptimizerPaths(t *te
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{Ident: name, ValueType: schema.TypeString, Cardinality: schema.CardinalityOne})
 	s.Add(&schema.AttributeDefinition{Ident: a, ValueType: schema.TypeString, Cardinality: schema.CardinalityOne})
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 			tx := d.NewTransaction()

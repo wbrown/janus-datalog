@@ -38,7 +38,7 @@ func TestReviewAlgebra_PublicGetElseOnANamedSourceAnswersAlikeUnderBothOptimizer
 		{"memory source", databaseOfLog(t, facts), [][]interface{}{{one, "new"}}, ""},
 		{"slice source", slice, [][]interface{}{{datalog.NewIdentity("slice:0"), "a-one"}}, ""},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, algebraOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d, err := db.OpenMemory(db.WithPlannerOptions(mode.plannerOptions()))

@@ -34,6 +34,34 @@ func TestTupleSeqPropagatesIteratorAndCloseErrors(t *testing.T) {
 	})
 }
 
+// A tuple sequence reports whether its source has been closed: false while
+// the source is open, true once a reader's Close or the chain's end closed
+// it, from every cell of the chain. A sequence over no source answers false.
+func TestASequenceReportsWhetherItsSourceIsClosed(t *testing.T) {
+	t.Run("closed by a reader", func(t *testing.T) {
+		it := newLazySeqTestIterator([]Tuple{{1}, {2}})
+		seq := NewTupleSeq(it, false)
+		require.False(t, seq.sourceClosed(), "the source is open until something closes it")
+		require.NoError(t, seq.Close())
+		require.True(t, seq.sourceClosed(), "a reader's Close closed the source")
+		require.True(t, it.IsClosed())
+	})
+	t.Run("closed at the chain's end", func(t *testing.T) {
+		it := newLazySeqTestIterator([]Tuple{{1}})
+		seq := NewTupleSeq(it, false)
+		require.False(t, seq.sourceClosed())
+		_, err := LazySeqToSlice(seq)
+		require.NoError(t, err)
+		require.True(t, seq.sourceClosed(), "the chain's end closed the source")
+		rest, err := seq.Rest()
+		require.NoError(t, err)
+		require.True(t, rest.(*LazySeq).sourceClosed(), "every cell of the chain reports the one source")
+	})
+	t.Run("no source", func(t *testing.T) {
+		require.False(t, (&LazySeq{}).sourceClosed())
+	})
+}
+
 // TestLazySeq_ThunkCalledOnce verifies that the thunk executes exactly once
 // regardless of how many times First()/Rest()/Empty() are called.
 func TestLazySeq_ThunkCalledOnce(t *testing.T) {

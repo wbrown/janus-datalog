@@ -36,7 +36,7 @@ func TestRelationInput_PropagatesDeferredInputIteratorError(t *testing.T) {
 
 	// Input relation for [[?n ?y] ...]: yields one tuple, then defers
 	// errInjectedIterator via Iterator().Error().
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// failingRelation wraps a single-use relation, so it must be
 			// rebuilt fresh per mode rather than shared across modes.
@@ -72,7 +72,7 @@ func TestRelationInput_PropagatesInputCloseError(t *testing.T) {
 		{"Bob", int64(2020)},
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// failingRelation wraps a single-use relation, so it must be
 			// rebuilt fresh per mode rather than shared across modes.

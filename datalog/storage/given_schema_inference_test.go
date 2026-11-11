@@ -195,7 +195,7 @@ func TestARefusingDatabaseRefusesAnAttributeWhoseDefinitionIsInferred(t *testing
 			return err
 		}})
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		for _, install := range installs {
 			t.Run(mode.name+"/"+install.name+"/the attributes the database runs with", func(t *testing.T) {
 				d, _ := install.open(t, mode)

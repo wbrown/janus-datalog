@@ -49,7 +49,7 @@ func TestRefuteParse_UndeclaredSourceIsAskedAboutItsAttributes(t *testing.T) {
 		{"undeclared", ":in $ ?e"},
 		{"declared", ":in $ $other ?e"},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption) {
 		for _, header := range headers {
 			for _, tc := range cases {
 				t.Run(mode.name+"/"+header.name+"/"+tc.name, func(t *testing.T) {

@@ -49,9 +49,7 @@ func newCacheFixture(t *testing.T, mode optimizerMode) *cacheFixture {
 
 // key is the cache key of the fixture's entity under attr.
 func (f *cacheFixture) key(attr datalog.Keyword) CacheKey {
-	var a Attribute
-	copy(a[:], attr.String())
-	return CacheKey{E: Entity(f.entity.Hash()), A: a}
+	return CacheKey{E: f.entity, A: attr}
 }
 
 // set writes value as the current value of attr on the entity.
@@ -86,7 +84,7 @@ func (f *cacheFixture) remove(t *testing.T, attr datalog.Keyword, value string) 
 // resolve resolves attr on the entity through the fixture's matcher into
 // cache, accruing the intake into report.
 func (f *cacheFixture) resolve(cache *Cache, attr datalog.Keyword, report *scanReport) (*CacheEntry, error) {
-	return cache.GetOrResolve(f.key(attr), f.matcher.GetCardinality(attr), f.matcher, cache.ReadPoint(), nil, report)
+	return cache.GetOrResolve(f.key(attr), f.matcher.schema.GetAttribute(attr), f.matcher, cache.ReadPoint(), nil, report)
 }
 
 // version is the ElementID of the datom the matcher resolves attr on the
@@ -95,10 +93,10 @@ func (f *cacheFixture) resolve(cache *Cache, attr datalog.Keyword, report *scanR
 func (f *cacheFixture) version(t *testing.T, attr datalog.Keyword) datalog.ElementID {
 	t.Helper()
 	key := f.key(attr)
-	_, maxID, present, err := f.matcher.ResolveLWW(key.E, key.A, DiscardIntake)
+	_, _, version, present, err := f.matcher.ResolveLWW(key.E, key.A, f.matcher.schema.GetAttribute(attr), DiscardIntake)
 	require.NoError(t, err)
 	require.True(t, present, "the entity carries %s", attr)
-	return maxID
+	return version
 }
 
 // TestCacheEntryCarriesResolutionIntake pins that the index intake a resolution
@@ -112,7 +110,7 @@ func (f *cacheFixture) version(t *testing.T, attr datalog.Keyword) datalog.Eleme
 // hit reads no index. Reporting entry.scanned on a hit would make a trace of a
 // thousand hits claim a thousand index reads that never happened.
 func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		// want is the keys the resolution takes from the index: under
 		// cardinality one the group's first key, the current value, and under
 		// many and vector the whole group, one key per datom written.
@@ -167,7 +165,7 @@ func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 // reader under cardinality one is served the latest member, never the set's
 // view, whatever reader resolved the pair before.
 func TestCacheEntryUnderAnotherCardinalityIsNotAHit(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "x")
@@ -182,12 +180,12 @@ func TestCacheEntryUnderAnotherCardinalityIsNotAHit(t *testing.T) {
 			key := f.key(f.tags)
 
 			cache := NewCache(f.db.clock)
-			set, err := cache.GetOrResolve(key, asSet.GetCardinality(f.tags), asSet, cache.ReadPoint(), nil, DiscardIntake)
+			set, err := cache.GetOrResolve(key, asSet.schema.GetAttribute(f.tags), asSet, cache.ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.Same(t, schema.CardinalityMany, set.Cardinality())
 			require.Len(t, set.ManySet(), 2)
 
-			one, err := cache.GetOrResolve(key, asOne.GetCardinality(f.tags), asOne, cache.ReadPoint(), nil, DiscardIntake)
+			one, err := cache.GetOrResolve(key, asOne.schema.GetAttribute(f.tags), asOne, cache.ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.Same(t, schema.CardinalityOne, one.Cardinality(), "a reader under cardinality one is served no set's view")
 			require.Equal(t, "y", one.OneValue(), "the reader resolved the pair under its own cardinality")
@@ -251,7 +249,7 @@ func TestCacheNewCache(t *testing.T) {
 // A second resolve of a fresh entry is a hit: the same entry, with no index
 // read.
 func TestCacheFreshness(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -274,7 +272,7 @@ func TestCacheFreshness(t *testing.T) {
 // An invalidated entry is rebuilt from the store once the key's version moves
 // past it.
 func TestCacheInvalidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -301,7 +299,7 @@ func TestCacheInvalidation(t *testing.T) {
 // An entry behind the key's version is rebuilt from the store, and the rebuilt
 // entry carries the version of the datom it resolved.
 func TestCacheRebuildWhenStale(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -326,7 +324,7 @@ func TestCacheRebuildWhenStale(t *testing.T) {
 }
 
 func TestUpdateMaxVersion(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "test")
@@ -354,11 +352,7 @@ func TestUpdateMaxVersion(t *testing.T) {
 func TestUpdateMaxVersionConcurrency(t *testing.T) {
 	cache := NewCache(NewLamportClock(1))
 
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
+	key := CacheKey{E: datalog.NewIdentity("entity1"), A: datalog.NewKeyword(":person/name")}
 
 	// Run concurrent UpdateMaxVersion calls
 	var wg sync.WaitGroup
@@ -378,7 +372,7 @@ func TestUpdateMaxVersionConcurrency(t *testing.T) {
 }
 
 func TestCacheRebuildCardinalityOne(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -396,7 +390,7 @@ func TestCacheRebuildCardinalityOne(t *testing.T) {
 }
 
 func TestCacheRebuildCardinalityMany(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "warrior", "veteran")
@@ -417,7 +411,7 @@ func TestCacheRebuildCardinalityMany(t *testing.T) {
 }
 
 func TestCacheRebuildCardinalityVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.skills, "stealth", "archery", "lockpicking")
@@ -436,7 +430,7 @@ func TestCacheRebuildCardinalityVector(t *testing.T) {
 }
 
 func TestCacheManySetMembership(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "a", "b", "c")
@@ -461,7 +455,7 @@ func TestCacheManySetMembership(t *testing.T) {
 }
 
 func TestCacheManyEmptyAfterRemoves(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.add(t, f.tags, "a")
@@ -477,7 +471,7 @@ func TestCacheManyEmptyAfterRemoves(t *testing.T) {
 }
 
 func TestCacheClear(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -503,7 +497,7 @@ func TestCacheClear(t *testing.T) {
 // A cache with nothing in it, as after a restart, resolves the first access
 // from the store and serves the second from the entry.
 func TestCacheAfterRestart(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newCacheFixture(t, mode)
 			f.set(t, f.name, "Alice")
@@ -525,7 +519,7 @@ func TestCacheAfterRestart(t *testing.T) {
 // entry, for all three cardinalities, and the failing miss opens one scan:
 // the resolver is invoked once and a failed rebuild is not retried.
 func TestCacheRebuildStoreError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, tc := range []struct {
 			name  string
 			write func(t *testing.T, f *cacheFixture) datalog.Keyword
@@ -552,7 +546,7 @@ func TestCacheRebuildStoreError(t *testing.T) {
 				faulting.SetSchema(f.db.Schema())
 				cache := NewCache(f.db.clock)
 
-				entry, err := cache.GetOrResolve(f.key(attr), faulting.GetCardinality(attr), faulting, cache.ReadPoint(), nil, DiscardIntake)
+				entry, err := cache.GetOrResolve(f.key(attr), faulting.schema.GetAttribute(attr), faulting, cache.ReadPoint(), nil, DiscardIntake)
 				require.ErrorIs(t, err, errInjectedScanFault)
 				assert.Nil(t, entry)
 				assert.Equal(t, 1, store.scans, "the failing miss opens one scan and is not retried")

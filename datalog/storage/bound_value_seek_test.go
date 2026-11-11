@@ -51,7 +51,7 @@ func TestReuseStrategy_ASingleBoundValueIsValidatedWhenTheAttributeResolvesAsOne
 	pattern := q.Where[0].(*query.DataPattern)
 	d1, d2 := datalog.NewIdentity("d1"), datalog.NewIdentity("d2")
 	for _, sc := range refSchemas(t) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			t.Run(sc.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sc.s, DisableCache: true})
 				keys := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?d")}, []executor.Tuple{{d1}, {d2}})
@@ -71,7 +71,7 @@ func TestReuseStrategy_SeveralBoundPositionsSeekOnTheValueForADeclaredManyAlone(
 	pattern := q.Where[0].(*query.DataPattern)
 	a, d1, d2 := datalog.NewIdentity("a"), datalog.NewIdentity("d1"), datalog.NewIdentity("d2")
 	for _, sc := range refSchemas(t) {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes) {
 			t.Run(sc.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sc.s, DisableCache: true})
 				keys := executor.NewMaterializedRelation(
@@ -90,6 +90,58 @@ func TestReuseStrategy_SeveralBoundPositionsSeekOnTheValueForADeclaredManyAlone(
 	}
 }
 
+// A binding over the transaction alone narrows the run to one operation's
+// datoms, which holds no pair's group whole, so outside History the strategy
+// requests validation, under ATEV with a constant attribute and TAEV with an
+// open one (docs/proposals/BOUND_TRANSACTION_POSITION_PROOF.md, T3, T6). Under
+// History every datom is read as written and the TAEV run is the answer. A
+// binding over the value and the transaction, on an attribute resolving as
+// cardinality one, seeks on the transaction with validation.
+func TestReuseStrategy_ABoundTransactionIsValidatedOutsideHistory(t *testing.T) {
+	constant, err := parser.ParseQuery(`[:find ?e :in $ ?t :where [?e :t/ref ?v ?t]]`)
+	require.NoError(t, err)
+	open, err := parser.ParseQuery(`[:find ?e :in $ ?t :where [?e ?a ?v ?t]]`)
+	require.NoError(t, err)
+	both, err := parser.ParseQuery(`[:find ?e :in $ [[?v ?t]] :where [?e :t/ref ?v ?t]]`)
+	require.NoError(t, err)
+	t1, t2 := datalog.ElementID{Lamport: 1, ReplicaID: 1}, datalog.ElementID{Lamport: 2, ReplicaID: 1}
+	for _, mode := range legsFor(optimizerModes) {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
+			matcher := d.Matcher().(*PatternMatcher)
+			transactions := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?t")}, []executor.Tuple{{t1}, {t2}})
+
+			strategy, _, err := matcher.analyzeReuseStrategy(constant.Where[0].(*query.DataPattern), transactions)
+			require.NoError(t, err)
+			require.Equal(t, SinglePositionReuse, strategy.Type)
+			require.Equal(t, 3, strategy.Position, "the transaction is the seek dimension")
+			require.True(t, strategy.NeedsValidation, "a run narrowed to T holds no pair's group whole")
+			require.Equal(t, ATEV, strategy.Index, "a constant attribute narrows ATEV")
+			require.Equal(t, kw(":t/ref"), strategy.BoundA)
+
+			strategy, _, err = matcher.analyzeReuseStrategy(open.Where[0].(*query.DataPattern), transactions)
+			require.NoError(t, err)
+			require.Equal(t, 3, strategy.Position)
+			require.True(t, strategy.NeedsValidation)
+			require.Equal(t, TAEV, strategy.Index, "an open attribute narrows TAEV")
+
+			pairs := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?v"), datalog.NewSymbol("?t")}, []executor.Tuple{{"x", t1}, {"y", t2}})
+			strategy, _, err = matcher.analyzeReuseStrategy(both.Where[0].(*query.DataPattern), pairs)
+			require.NoError(t, err)
+			require.Equal(t, 3, strategy.Position, "the transaction is the seek dimension beside the value")
+			require.True(t, strategy.NeedsValidation)
+			require.Equal(t, ATEV, strategy.Index)
+
+			history := d.History().Matcher().(*PatternMatcher)
+			strategy, _, err = history.analyzeReuseStrategy(constant.Where[0].(*query.DataPattern), transactions)
+			require.NoError(t, err)
+			require.Equal(t, 3, strategy.Position)
+			require.False(t, strategy.NeedsValidation, "under History the run is the answer")
+			require.Equal(t, TAEV, strategy.Index)
+		})
+	}
+}
+
 // A declared many under a binding over the entity and the value answers its
 // members, sought on the value: a's two referents, and nothing for the pair
 // b does not carry.
@@ -99,7 +151,7 @@ func TestDeclaredManyAttribute_TheMatcherAnswersItsMembersSeekingOnTheValue(t *t
 	q, err := parser.ParseQuery(`[:find ?a :in $ ?d :where [?a :t/ref ?d]]`)
 	require.NoError(t, err)
 	pattern := q.Where[0].(*query.DataPattern)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: many, DisableCache: true})
 			a, b := datalog.NewIdentity("a"), datalog.NewIdentity("b")
@@ -129,7 +181,7 @@ func TestDeclaredManyAttribute_TheMatcherAnswersItsMembersSeekingOnTheValue(t *t
 func TestDeclaredVectorAttribute_ABoundValueAnswersTheEntitiesCarryingIt(t *testing.T) {
 	vec, err := schema.NewBuilder().Attribute(":t/vec").Type(schema.TypeString).Vector().Add().Build()
 	require.NoError(t, err)
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		for _, disableCache := range []bool{false, true} {
 			name := mode.name
 			if disableCache {

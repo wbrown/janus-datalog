@@ -21,7 +21,7 @@ func TestLazyMaterializationBasic(t *testing.T) {
 
 	iter := &sliceIterator{tuples: tuples, pos: -1}
 
-	opts := ExecutorOptions{EnableTrueStreaming: true}
+	opts := ExecutorOptions{}
 	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
 
 	// Test 1: Size() before materialization returns -1
@@ -95,7 +95,7 @@ func TestConcurrentAccess(t *testing.T) {
 		return &sliceIterator{tuples: tuples, pos: -1}
 	}
 
-	opts := ExecutorOptions{EnableTrueStreaming: true}
+	opts := ExecutorOptions{}
 	rel := &StreamingRelation{
 		symbols:  symbols,
 		iterator: source(),
@@ -169,7 +169,7 @@ func TestMaterializeAfterIterationPanics(t *testing.T) {
 	tuples := []Tuple{{int64(1)}, {int64(2)}}
 	iter := &sliceIterator{tuples: tuples, pos: -1}
 
-	opts := ExecutorOptions{EnableTrueStreaming: true}
+	opts := ExecutorOptions{}
 	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
 
 	// Iterate FIRST
@@ -194,7 +194,7 @@ func TestDoubleIterationWithoutMaterializePanics(t *testing.T) {
 	tuples := []Tuple{{int64(1)}, {int64(2)}}
 	iter := &sliceIterator{tuples: tuples, pos: -1}
 
-	opts := ExecutorOptions{EnableTrueStreaming: true}
+	opts := ExecutorOptions{}
 	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
 
 	// First Iterator() - OK
@@ -253,7 +253,7 @@ func TestSizeBlocksWhileCaching(t *testing.T) {
 		gate:    make(chan struct{}),
 	}
 
-	opts := ExecutorOptions{EnableTrueStreaming: true}
+	opts := ExecutorOptions{}
 	rel := NewStreamingRelationWithOptions(symbols, src, opts).Materialize().(*StreamingRelation)
 
 	// Build the cache in a goroutine; it parks inside the gated source.

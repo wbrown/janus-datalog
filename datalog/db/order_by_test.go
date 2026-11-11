@@ -13,7 +13,7 @@ import (
 // PatternMatcher path, executor sort-strip finalization). See
 // BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
 func TestOrderByNonProjectedThroughStorage(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 

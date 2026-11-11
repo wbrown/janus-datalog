@@ -35,7 +35,7 @@ func TestAnAggregatingSubqueryWhoseAggregateFailsOnAValueFailsTheQueryThroughEve
 		{"an or-join branch over a group the find does not read",
 			`[:find ?p :where [?p :item/name _] [?g :grp/name _] (or-join [[?g]] (and ` + subquery + ` [(> ?s -1)]))]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -108,7 +108,7 @@ func TestAFormOverAnotherFormsOutputDecidesAFailedTupleAtItsKey(t *testing.T) {
 		{"a not-join holding at the failing tuple", `(not-join [?q] [?q :item/banned true])`},
 		{"a pattern holding at the failing tuple", `[?q :item/kind ?k3]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -157,7 +157,7 @@ func TestACorrelatedAggregateFailingAtOneGroupAnswersByTheFailureContractOnBothO
 	memberOf := datalog.NewKeyword(":mem/grp")
 	value := datalog.NewKeyword(":mem/v")
 	subquery := `[(q [:find (%s ?v) :in $ ?g :where [?m :mem/grp ?g] [?m :mem/v ?v]] $ ?g) [[?s]]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()
@@ -202,7 +202,7 @@ func TestACorrelatedAggregateFailingAtOneGroupAnswersByTheFailureContractOnBothO
 func TestACorrelatedSubqueryWhoseBodyFailsAtOneKeyAnswersByTheFailureContractOnBothOptimizerPaths(t *testing.T) {
 	v := datalog.NewKeyword(":item/v")
 	subquery := `[(q [:find ?b :in $ ?q :where [?q :item/v ?a] [(+ ?a 1) ?b]] $ ?q) [[?b]]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()

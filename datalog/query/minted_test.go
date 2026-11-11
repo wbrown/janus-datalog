@@ -36,6 +36,31 @@ func TestMintedPredicateSymbols(t *testing.T) {
 	}
 }
 
+// UnifiedOrigin reads a unified variable back to the variable it was written
+// for, whatever that variable's namespace or the dots its name carries, and
+// answers false for a variable in no unify namespace.
+func TestUnifiedOrigin(t *testing.T) {
+	for _, c := range []struct {
+		unified string
+		origin  string
+	}{
+		{"?unify/x.2", "?x"},
+		{"?unify.mine/x.1", "?mine/x"},
+		{UnifiedVariable(sym("?a.b"), 3).String(), "?a.b"},
+		{UnifiedVariable(sym("?mine.deep/y"), 1).String(), "?mine.deep/y"},
+	} {
+		origin, ok := UnifiedOrigin(sym(c.unified))
+		if !ok || origin != sym(c.origin) {
+			t.Errorf("UnifiedOrigin(%s) = %v, %v, want %s, true", c.unified, origin, ok, c.origin)
+		}
+	}
+	for _, name := range []string{"?x", "?mine/x", "?scope/input.1", "?magic.bf/reach.0", "?unify", "?unify-me", "?x.unify/y", "?mine/unify"} {
+		if origin, ok := UnifiedOrigin(sym(name)); ok {
+			t.Errorf("UnifiedOrigin(%s) = %s, true, want false: the variable is in no unify namespace", name, origin)
+		}
+	}
+}
+
 func TestAdornment(t *testing.T) {
 	if got := adornment([]bool{true, false, false}); got != "bff" {
 		t.Errorf("adornment(b f f) = %q, want bff", got)

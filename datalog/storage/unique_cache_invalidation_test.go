@@ -26,7 +26,7 @@ import (
 // reflect the fallback semantics — alice's cached value is stale and
 // must be invalidated.
 func TestCacheInvalidation_UniqueTakeover(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -76,7 +76,7 @@ func TestCacheInvalidation_UniqueTakeover(t *testing.T) {
 // have been rebuilt — verified by a second read producing a correct
 // result under the walk rule.
 func TestCacheInvalidation_UniqueAttrInvalidatesAllE(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -126,7 +126,7 @@ func TestCacheInvalidation_UniqueAttrInvalidatesAllE(t *testing.T) {
 // trivially true; the test's purpose is to document that we do not
 // accidentally broaden the invalidation to non-unique attributes.)
 func TestCacheInvalidation_NonUniqueAttrOnlyTouchedEntries(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 
@@ -180,7 +180,7 @@ func TestCacheInvalidation_NonUniqueAttrOnlyTouchedEntries(t *testing.T) {
 // write invalidates only entries for that attribute, not cached entries
 // for OTHER attributes on the same entities.
 func TestCacheInvalidation_UniqueDoesNotAffectOtherAttrs(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
 

@@ -24,26 +24,14 @@ func NewRelationRenderer(useColor bool) *RelationRenderer {
 	return &RelationRenderer{useColor: useColor}
 }
 
-// RenderRelation renders a single relation as a string
+// RenderRelation renders a single relation over its symbols' names, through
+// RenderRelationWithAttrs.
 func (r *RelationRenderer) RenderRelation(rel RelationInfo) string {
-	// Build attribute list
 	attrStrs := make([]string, len(rel.Attrs))
 	for i, attr := range rel.Attrs {
 		attrStrs[i] = attr.String()
 	}
-	attrList := strings.Join(attrStrs, " ")
-
-	if r.useColor {
-		return fmt.Sprintf("%s%s%s%s%s%s",
-			color.BlueString("Relation(["),
-			color.CyanString(attrList),
-			color.BlueString("]"),
-			color.BlueString(", "),
-			r.colorizeCount("Tuples", rel.TupleCount),
-			color.BlueString(")"))
-	}
-
-	return fmt.Sprintf("Relation([%s], %d Tuples)", attrList, rel.TupleCount)
+	return r.RenderRelationWithAttrs(attrStrs, rel.TupleCount)
 }
 
 // RenderRelations renders multiple relations as a string
@@ -55,7 +43,9 @@ func (r *RelationRenderer) RenderRelations(rels []RelationInfo) string {
 	return "[" + strings.Join(parts, " ") + "]"
 }
 
-// RenderRelationWithAttrs renders with just attrs and tuple count
+// RenderRelationWithAttrs renders a relation over its attributes' names, with
+// its tuple count when the relation is sized and no count when it declines to
+// size itself, a count below zero.
 func (r *RelationRenderer) RenderRelationWithAttrs(attrs []string, tupleCount int) string {
 	attrList := strings.Join(attrs, " ")
 

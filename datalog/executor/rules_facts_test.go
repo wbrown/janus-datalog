@@ -110,7 +110,7 @@ func TestRules_ExecutingAPlannedQueryPlansNoBody(t *testing.T) {
 		{"bound by the environment", MustParse(t, `[:find ?y :in $ % ?x :where (follows ?x ?y)]`), []interface{}{datalog.SymDollar, datalog.NewSymbol("%"), Page(1)}, 0},
 		{"bound by a streaming group", MustParse(t, `[:find ?y :in $ % :where [?x :page/kind "leaf"] (follows ?x ?y)]`), []interface{}{datalog.SymDollar, datalog.NewSymbol("%")}, 1},
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		for _, tc := range queries {
 			t.Run(mode.Name()+"/"+tc.name, func(t *testing.T) {
 				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
@@ -133,7 +133,7 @@ func TestRules_TransitiveClosureOnChain(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(6))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
@@ -149,15 +149,15 @@ func TestEvaluateRules_SemiNaiveStopsWhenDeltaEmpty(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(5))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var iterations []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				if e.Name == annotations.RulesIteration {
 					iterations = append(iterations, e)
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
 			if err != nil {
@@ -179,7 +179,7 @@ func TestEvaluateRules_TwoRecursiveOccurrences(t *testing.T) {
 	rs := MustRules(t, `[[(path ?a ?b) [?a :page/next ?b]]
 	                     [(path ?a ?c) (path ?a ?b) (path ?b ?c)]]`)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (path ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
@@ -212,11 +212,11 @@ func TestRunStratum_RunsTheCopiesOfThePredicatesThatGainedTuples(t *testing.T) {
 			oddPairs[[2]datalog.Identity{Page(i), Page(j)}] = true
 		}
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			opts.Handler = mode.Recording(func(e annotations.Event) { events = append(events, e) })
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
 			require.NoError(t, err)
@@ -271,7 +271,7 @@ func TestEvaluateRules_StratifiedNegation(t *testing.T) {
 	                     [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
 	                     [(first ?p) [?p :page/kind _] (not (follows _ ?p))]]`)
 	q := MustParse(t, `[:find ?p :in $ % :where (first ?p)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil))
@@ -289,7 +289,7 @@ func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(6))
 	rs := MustRules(t, FollowsRulesText)
 	follows := datalog.NewSymbol("follows")
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			ctx := NewContext().WithRules(rs)
@@ -325,7 +325,7 @@ func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
 					if err != nil {
 						t.Fatalf("naive pass: %v", err)
 					}
-					if len(added) > 0 {
+					if added > 0 {
 						grew = true
 					}
 				}
@@ -339,7 +339,7 @@ func TestEvaluateRules_IterationLimit(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(6))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			opts.MaxRuleIterations = 2
@@ -360,7 +360,7 @@ func TestEvaluateRules_DerivedTupleLimit(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(6))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			opts.MaxDerivedTuples = 7
@@ -385,7 +385,7 @@ func TestExecuteWithRelations_BoundInvocationDerivesOnlyWhatItReaches(t *testing
 	matcher := factsDatabase(t, chainsDatoms(100))
 	rs := MustRules(t, FollowsRulesText)
 	q := MustParse(t, `[:find ?y :in $ % ?x :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			opts.MaxDerivedTuples = 100
@@ -413,7 +413,7 @@ func TestRules_SubqueryPassesRulesThrough(t *testing.T) {
 	                    :in $ %
 	                    :where [?x :page/kind _]
 	                           [(q [:find ?w :in $ % ?x :where (follows ?x ?w)] $ % ?x) [[?w] ...]]]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
@@ -434,7 +434,7 @@ func TestDeriveInvocation_ABodyWrittenBeforeItsBinderDerivesWhatTheBindingReache
 	rs := MustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
 	                     [(follows ?a ?c) (follows ?b ?c) [?a :page/next ?b]]]`)
 	q := MustParse(t, `[:find ?y :in $ % ?x :where (follows ?x ?y)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			opts.MaxDerivedTuples = 100
@@ -510,7 +510,7 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 			head += vars[i]
 		}
 		whole := MustParse(t, fmt.Sprintf(`[:find %s :in $ %% :where (%s %s)]`, head, f.predicate, head))
-		for _, mode := range OptimizerModes {
+		for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 			t.Run(f.name+"/"+mode.Name(), func(t *testing.T) {
 				exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 				all, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), whole, nil))
@@ -575,15 +575,15 @@ func TestExecuteWithRelations_NegationAfterARecursiveInvocationRewrites(t *testi
 	                     [(q ?x ?z) [?x :page/a ?y] (q ?y ?w) (not (s ?w)) [?w :page/b ?z]]
 	                     [(s ?w) [?w :page/c _]]]`)
 	q := MustParse(t, `[:find ?z :in $ % ?x :where (q ?x ?z)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var rewrites []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				if e.Name == annotations.RulesMagicSets {
 					rewrites = append(rewrites, e)
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			// q(1, 9) holds through q(2, 3), since s(3) does not hold and
 			// b(3, 9); q(1, 8) does not, since s(7) holds.
@@ -616,15 +616,15 @@ func TestExecuteWithRelations_ANegatedSiteLeftUnadornedAnswers(t *testing.T) {
 	                     [(q ?x ?z) [?x :page/a ?w] (not (s ?w)) [?w :page/b ?z]]
 	                     [(s ?w) [?w :page/c _]]]`)
 	q := MustParse(t, `[:find ?z :in $ % ?x :where (q ?x ?z)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var rewrites []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				if e.Name == annotations.RulesMagicSets {
 					rewrites = append(rewrites, e)
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			// q(1, 8) holds through q(2, 7), since s(7) holds and b(7, 8);
 			// q(2, 9) holds by the third rule, since s(3) does not hold and
@@ -654,7 +654,7 @@ func TestExecuteWithRelations_ARequiredPredicateWithANegatedSiteLeftUnadornedAns
 	                     [(path [?x] ?z) [?x :page/a ?w] (not (s ?w)) [?w :page/b ?z]]
 	                     [(s ?w) [?w :page/c _]]]`)
 	q := MustParse(t, `[:find ?z :in $ % ?x :where (path ?x ?z)]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			requireSamePages(t, "path bound to page1", tuplesBoundTo(t, exec, rs, q, Page(1)), Page(2), Page(8))
@@ -671,18 +671,18 @@ func TestExecuteWithRelations_InvocationUnderAFormEvaluatesOnce(t *testing.T) {
 	rs := MustRules(t, FollowsRulesText)
 	top := MustParse(t, `[:find ?x :in $ % ?s :where [?x :page/kind "leaf"] (follows ?x ?s)]`)
 	under := MustParse(t, `[:find ?x :in $ % ?s :where [?x :page/kind "leaf"] (not (follows ?x ?s))]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var rewrites, strata int
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				switch e.Name {
 				case annotations.RulesMagicSets:
 					rewrites++
 				case annotations.RulesStratumBegin:
 					strata++
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			run := func(q *query.Query) int {
 				inputs, err := CreateInputRelationsFromValuesWithOptions(q,
@@ -726,7 +726,7 @@ func TestExecuteWithRelations_TwoInvocationsUnderAFormKeepTheirOwnSeeds(t *testi
 	q := MustParse(t, `[:find ?x ?z :in $ % ?x ?z
 	                     :where [?x :page/kind "leaf"] [?z :page/kind "leaf"]
 	                            (not (follows ?x ?w) (follows ?z ?w))]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SharingOption, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			inputs, err := CreateInputRelationsFromValuesWithOptions(q,
@@ -755,15 +755,15 @@ func TestExecuteWithRelations_TwoInvocationsUnderAFormKeepTheirOwnSeeds(t *testi
 func TestEvaluateRules_SeedAbsorbedAtIterationZero(t *testing.T) {
 	matcher := factsDatabase(t, ChainDatoms(6))
 	rs := MustRules(t, FollowsRulesText)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var iterations []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				if e.Name == annotations.RulesIteration {
 					iterations = append(iterations, e)
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			planned, err := planner.PlanEvaluation(exec.GetPlanner(), rs, datalog.NewSymbol("follows"), []bool{true, false}, nil)
 			if err != nil {
@@ -813,15 +813,15 @@ func TestExecuteWithRelations_VectorConstantArgument(t *testing.T) {
 
 	rs := MustRules(t, `[[(tagged ?p ?tags) [?p :page/tags ?tags]]]`)
 	q := MustParse(t, `[:find ?p :in $ % :where (tagged ?p [1 2])]`)
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var rewrites []annotations.Event
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				if e.Name == annotations.RulesMagicSets {
 					rewrites = append(rewrites, e)
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil))
 			if err != nil {
@@ -880,7 +880,7 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 		label string
 		plan  *planner.RealizedPlan
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			var plans []labelledPlan

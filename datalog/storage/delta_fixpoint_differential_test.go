@@ -197,7 +197,7 @@ func deltaFixpointCases() []fixpointCase {
 func TestDeltaFixpoint_EveryShapeAnswersTheNaiveFixpoint(t *testing.T) {
 	fx := newFixpointFixture()
 	for _, tc := range deltaFixpointCases() {
-		for _, mode := range optimizerModes {
+		for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: fixpointSchema()})
 				tx := d.NewTransaction()

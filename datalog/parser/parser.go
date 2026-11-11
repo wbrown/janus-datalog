@@ -336,9 +336,10 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 		}
 	}
 
-	// Data pattern elements (after source marker): one to four, entity,
-	// attribute, value and transaction in that order, a position the text
-	// omits being unbound. Any other count is ValidateQuery's refusal.
+	// Data pattern elements (after source marker): one to five, entity,
+	// attribute, value, transaction, and whether the datom asserts, in that
+	// order, a position the text omits being unbound. Any other count is
+	// ValidateQuery's refusal.
 	elemCount := len(node.Nodes) - sourceOffset
 
 	pattern := &query.DataPattern{

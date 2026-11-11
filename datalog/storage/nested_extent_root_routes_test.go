@@ -19,7 +19,7 @@ func TestRules_TheNestedExtentRootRuleSetPlansOnEveryRoute(t *testing.T) {
 		{"a subquery inside an or-join branch", `[(p ?x ?q) [?x :page/n _] [?r :page/kind "root"] (or-join [[?r ?x] ?q] [(q [:find ?w :in $ % ?s ?y :where [?y :page/next ?m] [?s :page/link ?m] (pairs ?s ?m ?w)] $ % ?r ?x) [[?q] ...]] [?r :page/other ?q])]`},
 		{"an or-join branch three scopes deep", `[(p ?x ?q) [?x :page/n _] [?r :page/kind "root"] (or-join [[?r ?x] ?q] (or-join [[?r ?x] ?q] (or-join [[?r ?x] ?q] (and [?x :page/next ?m] [?r :page/link ?m] (pairs ?r ?m ?q)) [?r :page/other ?q]) [?r :page/other ?q]) [?r :page/other ?q])]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, symmetricOption, fusionOption) {
 		d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 		for _, r := range rules {
 			rs := mustRuleSet(t, "["+pairs+" "+r.rule+"]")

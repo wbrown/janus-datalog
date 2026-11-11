@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -22,13 +23,13 @@ func TestNotJoinBodyScanFailureIsTheQuerysError(t *testing.T) {
 			query.Variable{Name: entity}, query.Constant{Value: failing}, query.Variable{Name: value},
 		}}},
 	}}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			matcher := &failingScanMatcher{
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{entity, value}, nil),
 			}
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(nil)
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(&planner.RealizedPlan{})
 			outer := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{datalog.NewIdentity("body-error")}})
 			groups, err := exec.Execute(NewContext(), q, []Relation{outer})
 			require.NoError(t, err, "the anti-join carries the body's failure on its result")
@@ -65,16 +66,16 @@ func TestFormFailureCompletesWithSuccessFalse(t *testing.T) {
 			query.Variable{Name: entity}, query.Constant{Value: failing}, query.Variable{Name: value},
 		}}}},
 	}}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.plannerOptions()
-			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			opts.Handler = mode.recording(func(e annotations.Event) { events = append(events, e) })
 			matcher := &failingScanMatcher{
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{entity, value}, nil),
 			}
-			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(nil)
+			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(&planner.RealizedPlan{})
 			_, err := exec.Execute(NewContext(), q, nil)
 			require.ErrorIs(t, err, errInjectedIterator, "the union route reads the branch whole, so its failure is Execute's")
 			reported := orClauseEvents(events)
@@ -103,16 +104,16 @@ func TestInvocationOfAHeldPredicateOverAStreamingGroupJoinsAtTheCollapse(t *test
 	require.True(t, ok, "the rule set declares follows")
 	held := NewMaterializedRelation(head, []Tuple{{page(1), page(5)}, {page(2), page(5)}, {page(3), page(5)}, {page(4), page(5)}})
 	clauses := mustParse(t, `[:find ?a ?c :in $ % :where (follows ?a ?c)]`).Where
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			windows := 0
 			opts := mode.plannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.recording(func(e annotations.Event) {
 				if e.Name == annotations.ScopeWindow {
 					windows++
 				}
-			}
-			exec := NewExecutorWithOptions(nil, nil, opts).queryExecutor(nil)
+			})
+			exec := NewExecutorWithOptions(nil, nil, opts).queryExecutor(&planner.RealizedPlan{})
 			pulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{a}, []Tuple{{page(1)}, {page(2)}, {page(6)}}).Iterator())
 			subject := NewStreamingRelationWithProperties([]query.Symbol{a}, pulls, exec.options, deduplicatedProperties([]query.Symbol{a}))
 			ctx := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{follows: held})
@@ -152,13 +153,13 @@ func TestSubqueryBodyScanFailureSurfacesWhenTheResultIsDriven(t *testing.T) {
 		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Variable{Name: entity}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{value}},
 	}}}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			matcher := &failingScanMatcher{
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{item, value}, nil),
 			}
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(nil)
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(&planner.RealizedPlan{})
 			outer := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{datalog.NewIdentity("body-error")}})
 			groups, err := exec.Execute(NewContext(), q, []Relation{outer})
 			require.NoError(t, err, "the form's result carries the body's failure")

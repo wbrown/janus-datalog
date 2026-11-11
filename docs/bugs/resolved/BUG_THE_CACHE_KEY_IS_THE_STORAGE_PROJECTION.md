@@ -1,6 +1,6 @@
 # The EA cache keys on the storage projection and re-interns on every hit
 
-**Status**: Open.
+**Status**: Resolved. The body states the defect as filed; the Resolution at the end states the fix.
 
 ## Summary
 
@@ -60,8 +60,60 @@ so `==` compares them and a map keys on them. The byte arrays encode the same
 pair a second time, and each crossing between the two encodings pays a copy
 or an intern lookup.
 
-## The fix, if taken
+## The fix, as filed
 
 Key the cache by the interned `Identity` and `Keyword` the readers already
 hold, and hand the resolvers the same values. A hit then compares pointers,
 and the uniqueness rule is read from the keyword in hand.
+
+## Resolution
+
+- `CacheKey` is `{E datalog.Identity, A datalog.Keyword}`. Every site that
+  built a key from bytes builds it from the values it holds.
+- `CacheKey.routing` (`hashtriemap.go`) folds E's first hash word with
+  `A.Hash64()`. `keyword.hash`, the FNV-1a hash of the keyword's text, is
+  computed once where the keyword is interned.
+- The resolvers under the cache take the interned values:
+  - `CacheResolver`'s methods
+  - `resolveAddWinsSet`
+  - `walkUniqueEntityValue`, `walkApplyEntry` and `resolveMaxOtherTxForValue`
+  - `loadRGAElements` and `resolveVector`
+- The reader passes the cache the attribute's `*schema.AttributeDefinition`,
+  nil for an undeclared attribute. `GetOrResolve`, `ResolveEntry` and the
+  rebuilds take it, and `ResolveLWW` walks the unique rule when the
+  definition declares one and the matcher is not in History. A hit compares
+  the entry's cardinality and uniqueness with the definition's and looks
+  nothing up. `ResolvesUnique` is gone.
+- A History handle shares its database's cache. `WarmCache`, `GetVectorNth`
+  and `GetVectorLength` build their keys through `PatternMatcher.cacheKey`,
+  which refuses History, so a History handle stores nothing in the cache.
+- The tests:
+  - `TestAKeywordsHash64IsTheFNV1aHashOfItsText`
+  - `TestAHistoryHandleStoresNothingInTheCacheItShares`, every backend,
+    with the cache enabled and disabled
+  - `TestAUniqueSetScannedOverEveryEntityIsServedFromTheCache`, every
+    backend, with the cache enabled and disabled
+  - the existing cache suites, with the cache on against off
+
+The measurements, Apple M5, `-count 5`, run back to back. Before is the
+janus checkout at `cd029af`. After is the branch with this fix and its four
+companions. Each range spans one backend's five runs; the badger-emulator
+leg the benchmark also runs is not a measurement target and is left out.
+
+`BenchmarkGetOrResolve_FreshHit`:
+
+| backend | before (ns/op) | after (ns/op) |
+|---|---|---|
+| memory-trees | 20.05–21.45 | 5.56–5.92 |
+| badger | 19.98–22.59 | 5.44–5.79 |
+
+A fresh hit allocates nothing before and after.
+
+`BenchmarkComplexQueryCheckpoint` and its `Prefetch` variant, badger:
+
+| benchmark | before (ms/op) | after (ms/op) |
+|---|---|---|
+| checkpoint | 15.2–17.7 | 11.9–12.3 |
+| checkpoint, prefetch | 15.2–17.2 | 12.0–13.2 |
+
+Both checkpoint benchmarks allocate 13.71 MB/op before and after.

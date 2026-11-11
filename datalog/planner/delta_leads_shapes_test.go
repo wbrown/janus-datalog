@@ -12,7 +12,7 @@ import (
 // the scope its occurrence stands in, on both planner paths
 // (docs/proposals/DELTA_LEADS_ITS_COPY_PROOF.md, T2): the body for an
 // occurrence at the top level, a union's branch for one inside it, planned
-// under the form's header as planFormScopes frames it, and a subquery's
+// under the form's header as planClauses frames it, and a subquery's
 // inner query for one inside it, planned under its bound :in symbols. At the
 // body, the form or the call holding the occurrence stands where the rank
 // and the score place it.
@@ -27,7 +27,7 @@ func TestPlanStratum_EveryCopyOpensWithItsDeltaWhereverTheOccurrenceStands(t *te
 		return false
 	}
 	// scopeOf is the scope of the form or the call holding the delta among
-	// the copy's clauses, framed as planFormScopes frames it, and nil when the
+	// the copy's clauses, framed as planClauses frames it, and nil when the
 	// occurrence stands at the top level.
 	scopeOf := func(copy []query.Clause) *Scope {
 		for _, clause := range copy {

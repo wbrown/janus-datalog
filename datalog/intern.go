@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"sync"
 	"unicode"
@@ -58,7 +59,11 @@ func InternKeyword(s string) Keyword {
 	}
 
 	// Slow path: create and store
-	kw := &keyword{value: s}
+	h := fnv.New64a()
+	if _, err := h.Write([]byte(s)); err != nil {
+		panic(fmt.Errorf("hash keyword %q: %w", s, err))
+	}
+	kw := &keyword{value: s, hash: h.Sum64()}
 	actual, _ := keywordIntern.cache.LoadOrStore(s, kw)
 	return actual.(Keyword)
 }

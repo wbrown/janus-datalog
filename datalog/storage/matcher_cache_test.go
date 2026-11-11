@@ -21,7 +21,7 @@ func createMatcherCacheTestDatabase(t *testing.T, mode optimizerMode) *Database 
 }
 
 func TestMatcherCacheCardinalityOne(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -49,12 +49,9 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 			matcher.SetSchema(s)
 
 			// Verify cache returns correct LWW value
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], name.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: name}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
@@ -64,7 +61,7 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 }
 
 func TestMatcherCacheCardinalityMany(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -94,12 +91,9 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 			matcher.SetSchema(s)
 
 			// Verify cache returns correct set
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], tags.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: tags}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, s.GetAttribute(tags), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
@@ -112,7 +106,7 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 }
 
 func TestMatcherCacheCardinalityVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -142,12 +136,9 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 			matcher.SetSchema(s)
 
 			// Verify cache returns correct vector
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], skills.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: skills}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(skills), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, s.GetAttribute(skills), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityVector, entry.Cardinality())
@@ -157,7 +148,7 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 }
 
 func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -180,12 +171,9 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 			// Get value via cache
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], name.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: name}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			cachedValue := entry.OneValue()
 
@@ -200,7 +188,7 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 }
 
 func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -223,12 +211,9 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 			// Verify initial value via cache
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], name.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: name}
 
-			entry1, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry1, err := db.Cache().GetOrResolve(key, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			assert.Equal(t, "Alice", entry1.OneValue())
 
@@ -240,7 +225,7 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 			require.NoError(t, err)
 
 			// Cache should be invalidated, next resolve should see new value
-			entry2, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry2, err := db.Cache().GetOrResolve(key, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			assert.Equal(t, "Bob", entry2.OneValue())
 		})
@@ -248,7 +233,7 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 }
 
 func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -267,12 +252,9 @@ func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
 			// Use matcher without schema
 			matcher := NewPatternMatcher(db.Store())
 
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], unknown.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: unknown}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(unknown), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, nil, matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			// Should default to cardinality-one
@@ -283,7 +265,7 @@ func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
 }
 
 func TestMatcherCacheLWWResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -318,12 +300,9 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 			// Cache should resolve to "Third" (highest ElementID)
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], name.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: name}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Third", entry.OneValue())
@@ -332,7 +311,7 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 }
 
 func TestMatcherCacheAddWinsResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createMatcherCacheTestDatabase(t, mode)
 
@@ -370,12 +349,9 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 			// Cache should resolve to "warrior" being in set (add-wins with latest add)
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
-			eBytes := Entity(e.Hash())
-			var aBytes Attribute
-			copy(aBytes[:], tags.String())
-			key := CacheKey{E: eBytes, A: aBytes}
+			key := CacheKey{E: e, A: tags}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, s.GetAttribute(tags), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			_, hasWarrior2 := entry.ManySet()[memberKey("warrior")]
@@ -454,15 +430,12 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
-	eBytes := Entity(e.Hash())
-	var aBytes Attribute
-	copy(aBytes[:], name.String())
-	key := CacheKey{E: eBytes, A: aBytes}
+	key := CacheKey{E: e, A: name}
 
 	b.Run("CacheGetOrResolve", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, s.GetAttribute(name), matcher, db.Cache().ReadPoint(), nil, DiscardIntake)
 			if err != nil {
 				b.Fatal(err)
 			}

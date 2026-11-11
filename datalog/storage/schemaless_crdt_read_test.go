@@ -101,7 +101,7 @@ func vectorSchema() schema.SchemaProvider {
 func TestSchemalessRead_VectorMatchesSchemaAware(t *testing.T) {
 	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, allOptions...) {
 				t.Run(mode.name, func(t *testing.T) {
 					// Fresh backend case per mode: each case's stored state
 					// lives in its closure, and the writes must not leak
@@ -187,7 +187,7 @@ func TestSchemalessLookupAttribute_VectorMatchesSchemaAware(t *testing.T) {
 func TestSchemalessRead_ManyMatchesSchemaAware(t *testing.T) {
 	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, allOptions...) {
 				t.Run(mode.name, func(t *testing.T) {
 					// Fresh backend case per mode: each case's stored state
 					// lives in its closure, and the writes must not leak
@@ -256,7 +256,7 @@ func TestSchemalessRead_ManyMatchesSchemaAware(t *testing.T) {
 func TestSchemalessReopen_WriteUsesInferredCardinality(t *testing.T) {
 	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes, allOptions...) {
 				t.Run(mode.name, func(t *testing.T) {
 					// Fresh backend case per mode: each case's stored state
 					// lives in its closure, and the writes must not leak
@@ -318,14 +318,9 @@ func testSchemalessPrefetchVectorNotCollapsed(t *testing.T, c reopenBackendCase)
 	// the entry's version to the group's max ElementID, so GetOrResolve returns
 	// the prefetched entry without rebuilding — i.e. this asserts what prefetch
 	// itself cached.
-	var eEnt Entity
-	copy(eEnt[:], e.Bytes())
-	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
-	var aAttr Attribute
-	copy(aAttr[:], aStorage[:])
-	key, ok := m.cacheKey(eEnt, aAttr)
+	key, ok := m.cacheKey(e, attr)
 	require.True(t, ok)
-	entry, err := db.cache.GetOrResolve(key, m.GetCardinality(attr), m, db.cache.ReadPoint(), nil, DiscardIntake)
+	entry, err := db.cache.GetOrResolve(key, m.schema.GetAttribute(attr), m, db.cache.ReadPoint(), nil, DiscardIntake)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	require.Equal(t, schema.CardinalityVector, entry.Cardinality(),

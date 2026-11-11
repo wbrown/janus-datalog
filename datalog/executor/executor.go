@@ -6,6 +6,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -28,9 +29,7 @@ type Executor struct {
 // optimizer mode axis so the two can never drift.
 func defaultPlannerOptions() planner.PlannerOptions {
 	return planner.PlannerOptions{
-		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
-		EnableStreamingJoins:       false,
 		EnableStreamingAggregation: true,
 		EnableAttributeFetchFusion: true,
 	}
@@ -96,9 +95,7 @@ func anySourceRefusesUnknownAttributes(matcher PatternMatcher) bool {
 func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
 		Handler:                    opts.Handler,
-		EnableTrueStreaming:        opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:    opts.EnableSymmetricHashJoin,
-		EnableStreamingJoins:       opts.EnableStreamingJoins,
 		EnableStreamingAggregation: opts.EnableStreamingAggregation,
 		EnableScanSharing:          opts.EnableScanSharing,
 		EnableEntityPrefetch:       opts.EnableEntityPrefetch,
@@ -169,7 +166,15 @@ func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan 
 // input), in the :in's order, and none for a source or the rule set. Any
 // other count is refused before planning, naming the count given and the
 // count the :in binds. A query whose :in binds nothing takes an empty slice.
+//
+// The query runs on a context derived from ctx with a scan registry of its
+// own, so ctx is read and never written, and queries given one context, at
+// once or in turn, share no scan.
 func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelations []Relation) (Relation, error) {
+	// The registry is this query's: the sites it lists, the scans it shares
+	// and the scopes it ends are kept where no other query reads them.
+	ctx = forkContext(ctx)
+
 	// Apply decorator pattern: wrap matcher with annotations if one is registered
 	matcher := e.matcher
 
@@ -312,11 +317,26 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 			return failed(err)
 		}
 	}
+	// The registry lists the sites at which the plan reads each shared scan
+	// before any phase runs; the sharing matcher serves those sites alone.
+	// The result closes the registry's open scans when its iterator is
+	// exhausted or closed, and a failure after the sites are listed closes
+	// them here, so a shared scan no reader read to its end closes at the
+	// query's end.
+	if !e.options.EnableScanSharing {
+		result, err := executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
+		if err != nil {
+			return failed(err)
+		}
+		return result, nil
+	}
+	scans := ctx.ScanRegistry()
+	scans.expect(sharedScanSites(realizedPlan))
 	result, err := executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
 	if err != nil {
-		return failed(err)
+		return failed(errjoin.Join(err, scans.Close()))
 	}
-	return result, nil
+	return newRegistryBoundRelation(result, scans), nil
 }
 
 // ExecuteRealized executes a RealizedPlan (Stage B: Query-based execution)

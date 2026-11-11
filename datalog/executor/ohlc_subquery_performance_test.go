@@ -89,7 +89,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 	// A database holding the test data
 	matcher := factsDatabase(t, datoms)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, AlgebraOption, SharingOption, SymmetricOption, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 

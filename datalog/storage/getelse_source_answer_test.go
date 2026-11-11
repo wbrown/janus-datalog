@@ -17,7 +17,7 @@ import (
 // mints answers: true at an attribute it declares cardinality-one, false at
 // one it declares cardinality-many, and false on its history handle.
 func TestADatabasePassedAsANamedSourceAnswersWhetherAMatchAnswersItsLookup(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			outer := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			one := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: getElseFixtureSchema(schema.CardinalityOne)})
@@ -47,7 +47,7 @@ func TestADatabasePassedAsANamedSourceAnswersWhetherAMatchAnswersItsLookup(t *te
 // match answers every datom at the attribute, and its lookup answers the
 // latest value.
 func TestExplainAlgebraDeclinesTheGetElseRewriteOnAHistoryHandle(t *testing.T) {
-	for _, mode := range pinned(optimizerModes, true) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption), func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: getElseFixtureSchema(schema.CardinalityOne)})
 
@@ -73,7 +73,7 @@ func TestExplainAlgebraDeclinesTheGetElseRewriteOnAHistoryHandle(t *testing.T) {
 // get-else as a per-tuple lookup, as the plan the query runs does.
 func TestExplainAndAnalyzePlanWithTheQuerysSources(t *testing.T) {
 	text := `[:find ?e ?v :in $ $h :where [?e :t/name _] [(get-else $h ?e :t/a "none") ?v]]`
-	for _, mode := range pinned(optimizerModes, true) {
+	for _, mode := range legsWhere(legsFor(optimizerModes, algebraOption), func(m optimizerMode) bool { return m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: getElseFixtureSchema(schema.CardinalityOne)})
 			sources := WithSources(map[query.Symbol]executor.PatternMatcher{datalog.NewSymbol("$h"): db.History()})

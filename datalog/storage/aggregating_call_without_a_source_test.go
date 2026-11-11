@@ -56,7 +56,7 @@ func TestAnAggregatingCallWhoseInnerDeclaresNoSourceAnswers(t *testing.T) {
 			return executor.CollectTuples(d.Query(text))
 		}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := commitFacts(t, d, facts)

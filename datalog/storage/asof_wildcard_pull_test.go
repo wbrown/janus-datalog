@@ -9,7 +9,7 @@ import (
 )
 
 func TestAsOfWildcardPullUsesSnapshot(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -43,7 +43,7 @@ func TestAsOfWildcardPullUsesSnapshot(t *testing.T) {
 }
 
 func TestAsOfWildcardPullUsesSnapshotForCardinalityMany(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().

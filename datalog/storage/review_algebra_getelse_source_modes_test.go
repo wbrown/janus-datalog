@@ -69,7 +69,7 @@ func TestReviewAlgebra_GetElseOnASourceAnswersAlikeUnderBothOptimizerPaths(t *te
 			want:    [][]interface{}{{one, "new"}},
 		},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})

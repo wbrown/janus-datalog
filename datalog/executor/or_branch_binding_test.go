@@ -51,7 +51,7 @@ func TestOrBranchReadsAVariableTheEnclosingScopeBinds(t *testing.T) {
 			[]datalog.Identity{tagged},
 		},
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, SymmetricOption, FusionOption) {
 		for _, c := range cases {
 			t.Run(mode.Name()+"/"+c.name, func(t *testing.T) {
 				exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, mode.PlannerOptions())

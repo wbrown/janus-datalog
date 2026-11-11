@@ -224,7 +224,7 @@ func TestReadSessionConcurrentScans(t *testing.T) {
 // a write landing between two storage scans of one query must not produce a
 // torn result — a tuple pairing values from two different database states.
 func TestQuerySnapshotConsistency(t *testing.T) {
-	for _, mode := range backendModes {
+	for _, mode := range legsFor(backendModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("torn:e1")
 			attrA := datalog.NewKeyword(":snap/a")

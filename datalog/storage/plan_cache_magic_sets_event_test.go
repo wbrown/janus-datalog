@@ -75,7 +75,7 @@ func TestPlanCache_ARuleSetEqualToThePlanningOneReportsItsOwnRewrites(t *testing
 		{"a free invocation reaching a required predicate", reachingRules, `[:find ?x ?y :in $ % :where (hop ?x ?y)]`,
 			func() []interface{} { return nil }, [][]bool{{false, false}}},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			events := &magicSetsEvents{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: events.handle})

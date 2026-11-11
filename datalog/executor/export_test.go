@@ -74,9 +74,9 @@ var DefaultPlannerOptions = defaultPlannerOptions
 var NewQueryExecutor = newQueryExecutor
 
 // ExecuteBoundPattern runs the pattern as one body over the window of its
-// subject.
-func (e *DefaultQueryExecutor) ExecuteBoundPattern(ctx *Context, pattern *query.DataPattern, groups Relations) (Relations, error) {
-	return e.executeBoundPattern(ctx, pattern, groups)
+// subject, reading whether it has a match through exists.
+func (e *DefaultQueryExecutor) ExecuteBoundPattern(ctx *Context, pattern, exists *query.DataPattern, groups Relations) (Relations, error) {
+	return e.executeBoundPattern(ctx, pattern, exists, groups)
 }
 
 // SetPlanner replaces the planner the executor plans every scope through.
@@ -159,14 +159,15 @@ type DerivedSet = derivedSet
 // NewDerivedSet answers an empty set over symbols.
 var NewDerivedSet = newDerivedSet
 
-// Absorb adds the tuples of rel the set does not hold and answers them.
-func (s *derivedSet) Absorb(rel Relation) ([]Tuple, error) { return s.absorb(rel) }
+// Absorb adds the tuples of rel the set does not hold and answers how many it
+// added.
+func (s *derivedSet) Absorb(rel Relation) (int, error) { return s.absorb(rel) }
 
 // Relation answers the set as a relation over the tuples added so far.
 func (s *derivedSet) Relation(opts ExecutorOptions) *MaterializedRelation { return s.relation(opts) }
 
 // Len answers the number of tuples the set holds.
-func (s *derivedSet) Len() int { return len(s.tuples) }
+func (s *derivedSet) Len() int { return s.keys.Len() }
 
 // NewRuleEvaluation answers the evaluation planned for an invocation.
 var NewRuleEvaluation = newRuleEvaluation
@@ -187,21 +188,64 @@ func (ev *ruleEvaluation) Derived() map[query.Symbol]Relation { return ev.derive
 // Total answers the tuples the evaluation derived, every window's together.
 func (ev *ruleEvaluation) Total() int { return ev.total }
 
+// OptimizerMode is one leg of the package's optimizer mode axis.
+type OptimizerMode = optimizerMode
+
 // OptimizerModes is the package's optimizer mode axis.
 var OptimizerModes = optimizerModes
+
+// OptimizerModesWhere is the modes a predicate admits, in the table's order.
+var OptimizerModesWhere = optimizerModesWhere
+
+// LegsFor is the legs a test runs on for the reach it names.
+var LegsFor = legsFor
+
+// Option is one of the six options a reach names.
+type Option = option
+
+// AllOptions is the six options.
+var AllOptions = allOptions
+
+// The six options a reach names.
+const (
+	AlgebraOption     = algebraOption
+	SharingOption     = sharingOption
+	PrefetchOption    = prefetchOption
+	SymmetricOption   = symmetricOption
+	FusionOption      = fusionOption
+	AggregationOption = aggregationOption
+)
 
 // Name answers the mode's name.
 func (m optimizerMode) Name() string { return m.name }
 
 func (m optimizerMode) Algebra() bool { return m.algebra }
 
-// PlannerOptions is NewExecutor's default profile with the mode's algebra
-// setting.
+// Sharing answers whether the mode turns scan sharing on.
+func (m optimizerMode) Sharing() bool { return m.sharing }
+
+// Prefetch answers whether the mode turns entity prefetch on.
+func (m optimizerMode) Prefetch() bool { return m.prefetch }
+
+// Fusion answers whether the mode turns attribute-fetch fusion on.
+func (m optimizerMode) Fusion() bool { return m.fusion }
+
+// Symmetric answers whether the mode turns the symmetric hash join on.
+func (m optimizerMode) Symmetric() bool { return m.symmetric }
+
+// PlannerOptions is NewExecutor's default profile with the mode's setting of
+// every option.
 func (m optimizerMode) PlannerOptions() planner.PlannerOptions { return m.plannerOptions() }
 
-// ZeroPlannerOptions is the zero-value profile with the mode's algebra
-// setting.
+// ZeroPlannerOptions is the zero-value profile with the mode's setting of
+// every option.
 func (m optimizerMode) ZeroPlannerOptions() planner.PlannerOptions { return m.zeroPlannerOptions() }
+
+// Recording wraps handler so the mode's reach recorder receives every event
+// the handler does.
+func (m optimizerMode) Recording(handler annotations.Handler) annotations.Handler {
+	return m.recording(handler)
+}
 
 // ApplyFindPulls renders each pull find element of a result.
 var ApplyFindPulls = applyFindPulls

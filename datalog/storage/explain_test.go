@@ -10,7 +10,7 @@ import (
 
 // TestExplain tests the Explain method for query plan introspection
 func TestExplain(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -126,7 +126,7 @@ func TestExplain(t *testing.T) {
 
 // TestAnalyze tests the Analyze method for query execution tracing
 func TestAnalyze(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -262,7 +262,7 @@ func TestAnalyze(t *testing.T) {
 // execution; against the unfixed code the storage scan fires during lazy
 // iteration after Analyze has returned, so its events are absent here.
 func TestAnalyze_ConsumesStreamingResults(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

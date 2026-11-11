@@ -49,7 +49,6 @@ func BenchmarkHashJoinBuildSize(b *testing.B) {
 						iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{
-							EnableStreamingJoins: true,
 							DefaultHashTableSize: buildSize,
 						},
 					}
@@ -59,7 +58,6 @@ func BenchmarkHashJoinBuildSize(b *testing.B) {
 						iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{
-							EnableStreamingJoins: true,
 							DefaultHashTableSize: buildSize,
 						},
 					}
@@ -109,7 +107,6 @@ func BenchmarkHashJoinBuildSizeOptimal(b *testing.B) {
 						iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{
-							EnableStreamingJoins: true,
 							DefaultHashTableSize: buildSize,
 						},
 					}
@@ -119,7 +116,6 @@ func BenchmarkHashJoinBuildSizeOptimal(b *testing.B) {
 						iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{
-							EnableStreamingJoins: true,
 							DefaultHashTableSize: buildSize,
 						},
 					}
@@ -189,7 +185,6 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
-					options:  ExecutorOptions{EnableStreamingJoins: true},
 				}
 				right := NewMaterializedRelation(rightSymbols, rightTuples)
 
@@ -214,7 +209,6 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
-					options:  ExecutorOptions{EnableStreamingJoins: true},
 				}
 
 				result := left.Join(right)
@@ -238,7 +232,6 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins: true,
 						DefaultHashTableSize: 256,
 					},
 				}
@@ -247,7 +240,6 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
-						EnableStreamingJoins: true,
 						DefaultHashTableSize: 256,
 					},
 				}
@@ -315,7 +307,6 @@ func BenchmarkHashJoinMaterializedVsStreaming(b *testing.B) {
 				symbols:  leftSymbols,
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
-				options:  ExecutorOptions{EnableStreamingJoins: true},
 			}
 			right := NewMaterializedRelation(rightSymbols, rightTuples)
 
@@ -441,7 +432,6 @@ func BenchmarkHashJoinStreamingInput(b *testing.B) {
 					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
-					options:  ExecutorOptions{EnableStreamingJoins: true},
 				}
 
 				// Right side materialized (has known size)

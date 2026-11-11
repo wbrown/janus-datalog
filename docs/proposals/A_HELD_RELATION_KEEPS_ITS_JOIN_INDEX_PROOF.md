@@ -12,8 +12,8 @@
 
 Every name below is the code's, given a symbol for the proof.
 
-- A **set** S is a `derivedSet`: a predicate's tuples over its canonical symbols, each held once, appended in the order `absorb` admits them. The **ordinal** of a tuple is its position in `S.tuples`. The **count** of S at a moment is the tuples it holds then.
-- A **view** of S at n is the relation `derivedSet.relation` answers when S's count is n: a `MaterializedRelation` over `S.tuples[:n]`.
+- A **set** S is a `derivedSet`: a predicate's tuples over its canonical symbols, each held once, the members of its table in the order `absorb` admits them. The **ordinal** of a tuple is its position among those members, `S.keys.members`. The **count** of S at a moment is the tuples it holds then.
+- A **view** of S at n is the relation `derivedSet.relation` answers when S's count is n: a `MaterializedRelation` over `S.keys.members[:n:n]`.
 - A **held relation** is a relation the scope holds under a predicate symbol (`Context.Derived`): a view, a delta relation, or the required run under `scope/required`.
 - A **key** K of S is a list of positions of its tuples. The **key of a tuple** t at K is t's values at K, in K's order.
 - The **index** of S at K is the structure this proof licenses: the one table (`TupleSet`) over the first tuple of each distinct key at K, with, per member, the ordinals of S's tuples holding that key, ascending. The index **holds** m tuples when the first m tuples of S have entered it.
@@ -25,7 +25,7 @@ Every name below is the code's, given a symbol for the proof.
 ## 2. Preconditions
 
 - **P1 (the join as it stands).** `HashJoinWithOptions` takes as the build side a materialized side against a stream, the smaller of two materialized sides, and the right side when neither rule decides. It drains the build side into a fresh `JoinIndex` and streams the probe side through it. So a join into a view costs the view's tuples: drained when the view is the build side, streamed when it is the probe side.
-- **P2 (the view).** `derivedSet.relation` answers `newMaterializedRelationFromSet` over `S.tuples[:n:n]` under the set's symbols and keeps no index. `runStratum`'s `view` takes one view per set for each run it makes, `extend` holds the stratum's final views in `ev.derived`, and the delta relations, the same-stratum deltas and the lower deltas alike, are fresh materialized relations per run.
+- **P2 (the view).** `derivedSet.relation` answers `newMaterializedRelationFromSet` over `S.keys.members[:n:n]` under the set's symbols and keeps no index. `runStratum`'s `view` takes one view per set for each run it makes, `extend` holds the stratum's final views in `ev.derived`, and the delta relations, the same-stratum deltas and the lower deltas alike, are fresh materialized relations per run.
 - **P3 (the invocation's read).** For a held predicate, `executeRuleInvocation` answers `Rename` of the view when every argument is a distinct variable the environment does not bind: a materialized relation over the view's tuples, shared, under the arguments' names, at the view's positions. It answers that rename with the set, which the context the body runs under carries (`Context.sets`). Otherwise it answers a streaming selection over the view through `invocationIterator`, with no set.
 - **P4 (the collapse).** `Execute` appends the invocation's relation to the groups and `Collapse` joins it with each group sharing a symbol, through `Join`, which is `HashJoinWithOptions` on the common symbols with the group so far as the left side.
 - **P5 (the delta leads).** In a copy the delta invocation is selected first in the plan of the scope its occurrence stands in, the body for an occurrence at the top level and the branch or the inner query for one inside a form, and the clauses after it in that scope read what the delta reaches (`DELTA_LEADS_ITS_COPY_PROOF.md` T2, T3). So at a held invocation after the delta in that scope, the group is the delta's tuples and what they reached.
@@ -81,7 +81,7 @@ A join whose sides carry no set's index builds and probes as `HashJoinWithOption
 
 ### L8. The boundary (T6)
 
-A view is a materialized relation over `S.tuples[:n:n]`, and no field of it names S (§6). By P7 the first n tuples of S never change, and a slice capped at n reaches no tuple appended after it. A join reaches an index of S only through `hashJoinWithSet` with S named. The one caller that names a set is `Execute`'s invocation case, with the set the context of a body carries (P3), and only `runStratum` sets a context's sets, for the bodies it runs. So a relation outside those bodies, the derived route's relation (`deriveInvocation`) or a query's result, reaches no index of S, and a join of it writes nothing of S. ∎
+A view is a materialized relation over `S.keys.members[:n:n]`, and no field of it names S (§6). By P7 the first n tuples of S never change, and a slice capped at n reaches no tuple appended after it. A join reaches an index of S only through `hashJoinWithSet` with S named. The one caller that names a set is `Execute`'s invocation case, with the set the context of a body carries (P3), and only `runStratum` sets a context's sets, for the bodies it runs. So a relation outside those bodies, the derived route's relation (`deriveInvocation`) or a query's result, reaches no index of S, and a join of it writes nothing of S. ∎
 
 ## 5. Tests
 

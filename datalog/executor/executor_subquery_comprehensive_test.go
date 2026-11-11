@@ -37,7 +37,7 @@ func TestSubqueryWithNoResults(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, algebraOption, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
@@ -102,7 +102,7 @@ func TestSubqueryWithRelationBinding(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, sharingOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
@@ -178,7 +178,7 @@ func TestSubqueryWithMultipleOuterTuples(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, algebraOption, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
@@ -278,7 +278,7 @@ func TestSubqueryWithTwoInputs(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
@@ -352,7 +352,7 @@ func TestSubqueryWithNoInput(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
@@ -416,7 +416,7 @@ func TestSubqueryInFilter(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, sharingOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
@@ -493,7 +493,7 @@ func TestSubqueryErrorHandling(t *testing.T) {
 
 			// Dynamically invalid queries (data-dependent cardinality)
 			// parse fine and must fail identically under both modes.
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(t, allOptions...) {
 				t.Run(mode.name, func(t *testing.T) {
 					exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
@@ -536,7 +536,7 @@ func TestSubqueryWithEmptyOuterQuery(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t, algebraOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 

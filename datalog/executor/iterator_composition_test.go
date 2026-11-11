@@ -122,11 +122,6 @@ func TestComposedIterators(t *testing.T) {
 }
 
 func TestStreamingRelationWithComposition(t *testing.T) {
-	// Test the StreamingRelation with true streaming enabled
-	opts := ExecutorOptions{
-		EnableTrueStreaming: true,
-	}
-
 	tuples := []Tuple{
 		{1, "alice", 25},
 		{2, "bob", 30},
@@ -137,9 +132,9 @@ func TestStreamingRelationWithComposition(t *testing.T) {
 
 	// Create a StreamingRelation
 	source := &sliceIterator{tuples: tuples, pos: -1}
-	rel := NewStreamingRelationWithOptions(symbols, source, opts)
+	rel := NewStreamingRelation(symbols, source)
 
-	// Test that Size() doesn't materialize when TrueStreaming is enabled
+	// Size() answers -1 without reading the iterator
 	size := rel.Size()
 	assert.Equal(t, -1, size) // Unknown size
 

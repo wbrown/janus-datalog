@@ -3,10 +3,11 @@ package query
 // TupleIndexer computes and stores the mapping from pattern variables to tuple positions.
 type TupleIndexer struct {
 	// Pre-computed indexes for each position (-1 means not captured)
-	EIndex int
-	AIndex int
-	VIndex int
-	TIndex int
+	EIndex     int
+	AIndex     int
+	VIndex     int
+	TIndex     int
+	AddedIndex int
 
 	// Number of variables actually captured
 	NumVars int
@@ -18,12 +19,13 @@ type TupleIndexer struct {
 // NewTupleIndexer computes the index mapping for a pattern and symbols.
 func NewTupleIndexer(pattern *DataPattern, symbols []Symbol) *TupleIndexer {
 	indexer := &TupleIndexer{
-		EIndex:   -1,
-		AIndex:   -1,
-		VIndex:   -1,
-		TIndex:   -1,
-		NumVars:  0,
-		SymIndex: make(map[Symbol]int, len(symbols)),
+		EIndex:     -1,
+		AIndex:     -1,
+		VIndex:     -1,
+		TIndex:     -1,
+		AddedIndex: -1,
+		NumVars:    0,
+		SymIndex:   make(map[Symbol]int, len(symbols)),
 	}
 
 	// Build symbol index map for quick lookups
@@ -62,6 +64,13 @@ func NewTupleIndexer(pattern *DataPattern, symbols []Symbol) *TupleIndexer {
 				indexer.TIndex = idx
 				indexer.NumVars++
 			}
+		}
+	}
+
+	if v, ok := pattern.GetAdded().(Variable); ok {
+		if idx, found := indexer.SymIndex[v.Name]; found {
+			indexer.AddedIndex = idx
+			indexer.NumVars++
 		}
 	}
 

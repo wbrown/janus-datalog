@@ -8,8 +8,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// TestStreamingRelationSingleUse verifies that StreamingRelation with EnableTrueStreaming
-// panics on second Iterator() call as expected
+// TestStreamingRelationSingleUse verifies that a StreamingRelation panics on
+// a second Iterator() call
 func TestStreamingRelationSingleUse(t *testing.T) {
 	symbols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := []Tuple{
@@ -21,8 +21,7 @@ func TestStreamingRelationSingleUse(t *testing.T) {
 	// Create a materialized relation then convert to streaming
 	matRel := NewMaterializedRelation(symbols, tuples)
 	iter := matRel.Iterator()
-	opts := ExecutorOptions{EnableTrueStreaming: true}
-	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
+	rel := NewStreamingRelation(symbols, iter)
 
 	// First iteration should work
 	it1 := rel.Iterator()
@@ -56,8 +55,7 @@ func TestStreamingRelationSingleUseInJoin(t *testing.T) {
 	}
 	matRel1 := NewMaterializedRelation(cols1, tuples1)
 	iter1 := matRel1.Iterator()
-	opts := ExecutorOptions{EnableTrueStreaming: true}
-	rel1 := NewStreamingRelationWithOptions(cols1, iter1, opts)
+	rel1 := NewStreamingRelation(cols1, iter1)
 
 	cols2 := []query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	tuples2 := []Tuple{
@@ -66,7 +64,7 @@ func TestStreamingRelationSingleUseInJoin(t *testing.T) {
 	}
 	matRel2 := NewMaterializedRelation(cols2, tuples2)
 	iter2 := matRel2.Iterator()
-	rel2 := NewStreamingRelationWithOptions(cols2, iter2, opts)
+	rel2 := NewStreamingRelation(cols2, iter2)
 
 	// Join should work without panicking (single Iterator() call per relation)
 	joinSymbols := []query.Symbol{datalog.NewSymbol("?y")}

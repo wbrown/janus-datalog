@@ -16,7 +16,7 @@ var (
 // key, built through the returned resolver over a store on backend holding the
 // key's one datom, so a rebuild over that store reads the index where a hit
 // reads none.
-func cacheWithOneFreshEntry(tb testing.TB, backend Backend) (*Cache, CacheKey, datalog.Keyword, *PatternMatcher) {
+func cacheWithOneFreshEntry(tb testing.TB, backend Backend) (*Cache, CacheKey, *schema.AttributeDefinition, *PatternMatcher) {
 	tb.Helper()
 	s, err := schema.NewBuilder().
 		Attribute(":bench/attr").Type(schema.TypeLong).One().Add().
@@ -35,22 +35,20 @@ func cacheWithOneFreshEntry(tb testing.TB, backend Backend) (*Cache, CacheKey, d
 		tb.Fatal(err)
 	}
 	resolver := db.Matcher().(*PatternMatcher)
-	var a Attribute
-	copy(a[:], attr.String())
-	key := CacheKey{E: Entity(entity.Hash()), A: a}
-	card := resolver.GetCardinality(attr)
+	key := CacheKey{E: entity, A: attr}
+	def := s.GetAttribute(attr)
 
 	// The build's report shows what a rebuild over this store reads, so a pin
 	// that a hit reads none tells a hit from a fallthrough to the rebuild path.
 	c := NewCache(db.clock)
 	build := &scanReport{}
-	if _, err := c.GetOrResolve(key, card, resolver, c.ReadPoint(), nil, build); err != nil {
+	if _, err := c.GetOrResolve(key, def, resolver, c.ReadPoint(), nil, build); err != nil {
 		tb.Fatal(err)
 	}
 	if build.scanned == 0 {
 		tb.Fatal("the build read no index entry, so a rebuild could pass as a hit")
 	}
-	return c, key, card, resolver
+	return c, key, def, resolver
 }
 
 // BenchmarkGetOrResolve_FreshHit measures the cache-hit hot path, including the
@@ -61,14 +59,14 @@ func cacheWithOneFreshEntry(tb testing.TB, backend Backend) (*Cache, CacheKey, d
 func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 	for _, backend := range AvailableBackends() {
 		b.Run(backend.Name, func(b *testing.B) {
-			c, key, card, resolver := cacheWithOneFreshEntry(b, backend)
+			c, key, def, resolver := cacheWithOneFreshEntry(b, backend)
 
 			// Prove the fresh-hit path resolves cleanly before measuring it. The
 			// check is here rather than in the loop because the loop exists to
 			// measure a single branch, and a per-iteration error test would be
 			// measuring itself.
 			hit := &scanReport{}
-			if _, err := c.GetOrResolve(key, card, resolver, c.ReadPoint(), nil, hit); err != nil {
+			if _, err := c.GetOrResolve(key, def, resolver, c.ReadPoint(), nil, hit); err != nil {
 				b.Fatal(err)
 			}
 			if hit.scanned != 0 {
@@ -78,7 +76,7 @@ func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				getResolveSink, getResolveErrSink = c.GetOrResolve(key, card, resolver, c.ReadPoint(), nil, DiscardIntake)
+				getResolveSink, getResolveErrSink = c.GetOrResolve(key, def, resolver, c.ReadPoint(), nil, DiscardIntake)
 			}
 		})
 	}
@@ -90,9 +88,9 @@ func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 func TestGetOrResolveFreshHitAllocatesNothing(t *testing.T) {
 	for _, backend := range AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {
-			c, key, card, resolver := cacheWithOneFreshEntry(t, backend)
+			c, key, def, resolver := cacheWithOneFreshEntry(t, backend)
 			allocs := testing.AllocsPerRun(100, func() {
-				getResolveSink, getResolveErrSink = c.GetOrResolve(key, card, resolver, c.ReadPoint(), nil, DiscardIntake)
+				getResolveSink, getResolveErrSink = c.GetOrResolve(key, def, resolver, c.ReadPoint(), nil, DiscardIntake)
 			})
 			if getResolveErrSink != nil {
 				t.Fatal(getResolveErrSink)

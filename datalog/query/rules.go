@@ -426,6 +426,31 @@ func (rs *RuleSet) ReachesRequired(name Symbol) bool {
 	return false
 }
 
+// reach is the predicates the roots' rules invoke at any depth, the roots
+// among them, a name the set does not define left out. A predicate with
+// required positions is reached as any other, since its bodies run at its
+// invocation.
+func (rs *RuleSet) reach(roots []Symbol) map[Symbol]bool {
+	reached := map[Symbol]bool{}
+	pending := append([]Symbol(nil), roots...)
+	for len(pending) > 0 {
+		p := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if _, defined := rs.arity[p]; !defined || reached[p] {
+			continue
+		}
+		reached[p] = true
+		for _, rule := range rs.rules[p] {
+			for _, inv := range Invocations(rule.Body) {
+				if !reached[inv.Name] {
+					pending = append(pending, inv.Name)
+				}
+			}
+		}
+	}
+	return reached
+}
+
 // CheckRequired reports an invocation of name that leaves a position the
 // predicate requires bound free, bound marking the positions the invocation
 // binds. rule is the invoking rule, nil for the query's own invocation.

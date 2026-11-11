@@ -29,7 +29,7 @@ func extractElementID(t *testing.T, v interface{}) datalog.ElementID {
 // binding (:in $ ?tx) and expects the query to filter datoms to only
 // those matching that transaction.
 func TestElementIDBinding_ScalarInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -101,7 +101,7 @@ func TestElementIDBinding_ScalarInput(t *testing.T) {
 // TestElementIDBinding_CollectionInput passes a collection of ElementID values
 // as [:in $ [?tx ...]] and expects matching datoms.
 func TestElementIDBinding_CollectionInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -165,7 +165,7 @@ func TestElementIDBinding_CollectionInput(t *testing.T) {
 // TestElementIDBinding_RelationInput passes ElementID + Identity pairs as a
 // relation binding [:in $ [[?e ?tx] ...]].
 func TestElementIDBinding_RelationInput(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -232,7 +232,7 @@ func TestElementIDBinding_RelationInput(t *testing.T) {
 // return *ElementID Tx values as distinct symbols. In CRDT storage, each Set()
 // gets a unique ElementID, so ?tx1 != ?tx2 even for the same entity.
 func TestElementIDBinding_TxJoin(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -306,7 +306,7 @@ func TestElementIDBinding_TxJoin(t *testing.T) {
 // TestElementIDBinding_ComparisonPredicate uses [(= ?tx ?target-tx)] to filter
 // by a bound ElementID via predicate comparison.
 func TestElementIDBinding_ComparisonPredicate(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -366,7 +366,7 @@ func TestElementIDBinding_ComparisonPredicate(t *testing.T) {
 // Tx returns only the matching datom. Even within the same Commit(), Alice and
 // Bob get distinct Tx values.
 func TestElementIDBinding_MultipleEntitiesSameTx(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

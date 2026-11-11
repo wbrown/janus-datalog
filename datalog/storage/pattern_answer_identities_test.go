@@ -18,7 +18,7 @@ import (
 // directly, as TestBindingDrivenStrategiesReportTheirFunnel drives them,
 // since which one a query reaches depends on the binding set's size.
 func TestAPatternsAnswerCarriesItsEntityVariableAmongItsIdentities(t *testing.T) {
-	for _, mode := range pinned(backendModes, false) {
+	for _, mode := range legsWhere(legsFor(backendModes, algebraOption), func(m optimizerMode) bool { return !m.algebra }) {
 		t.Run(mode.name, func(t *testing.T) {
 			testAPatternsAnswerCarriesItsEntityVariableAmongItsIdentities(t, mode)
 		})

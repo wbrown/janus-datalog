@@ -274,6 +274,10 @@ type windowedIterator struct {
 	continued     *ruleContinuations
 	ownsContinued bool
 
+	// scopesEnded records that the iterator has told the query's scan
+	// registry its frames have ended (endScopes).
+	scopesEnded bool
+
 	policy       formPolicy
 	currentTuple Tuple
 	done         bool
@@ -418,6 +422,7 @@ func (it *windowedIterator) nextWindow() bool {
 		if it.err == nil && it.ownsContinued {
 			it.continued.complete()
 		}
+		it.endScopes()
 		it.done = true
 		return false
 	}
@@ -549,6 +554,21 @@ func (it *windowedIterator) Tuple() Tuple {
 // none of which a pull writes.
 func (it *windowedIterator) RequiresCopy() bool { return false }
 
+// endScopes tells the query's scan registry, once, that each of the form's
+// frames has ended, when scan sharing is on and the iterator owns the
+// continuations: it is the outermost form on its path, whose frames scope the
+// repeating sites under it (sharedScanSites).
+func (it *windowedIterator) endScopes() {
+	if it.scopesEnded || !it.ownsContinued || !it.options.EnableScanSharing {
+		return
+	}
+	it.scopesEnded = true
+	registry := it.ctx.ScanRegistry()
+	for _, run := range it.plans {
+		registry.ended(run.plan)
+	}
+}
+
 // Close closes the subject's iterator and completes an owned continuation.
 func (it *windowedIterator) Close() error {
 	var closeErr error
@@ -558,6 +578,7 @@ func (it *windowedIterator) Close() error {
 	if it.ownsContinued {
 		it.continued.complete()
 	}
+	it.endScopes()
 	it.done = true
 	return closeErr
 }

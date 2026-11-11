@@ -17,7 +17,7 @@ import (
 func TestResolveAllAttributesManyPreservesWildcardSemantics(t *testing.T) {
 	for _, disableCache := range []bool{false, true} {
 		t.Run(fmt.Sprintf("disable_cache=%t", disableCache), func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes) {
 				t.Run(mode.name, func(t *testing.T) {
 					s, err := schema.NewBuilder().
 						Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -76,7 +76,7 @@ func TestResolveAllAttributesManyPreservesWildcardSemantics(t *testing.T) {
 }
 
 func TestResolveAllAttributesManyHonorsAsOf(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -110,7 +110,7 @@ func TestResolveAllAttributesManyHonorsAsOf(t *testing.T) {
 }
 
 func TestResolveAllAttributesManyPreservesUniqueFallback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
@@ -143,7 +143,7 @@ func TestResolveAllAttributesManyPreservesUniqueFallback(t *testing.T) {
 }
 
 func TestResolveAllAttributesManyMatchesDeclaredSchema(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -173,7 +173,7 @@ func TestResolveAllAttributesManyMatchesDeclaredSchema(t *testing.T) {
 func TestResolveAllAttributesManyKeepsExplicitlyClearedVector(t *testing.T) {
 	for _, disableCache := range []bool{false, true} {
 		t.Run(fmt.Sprintf("disable_cache=%t", disableCache), func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes) {
 				t.Run(mode.name, func(t *testing.T) {
 					s, err := schema.NewBuilder().
 						Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
@@ -218,7 +218,7 @@ func TestResolveAllAttributesManyKeepsExplicitlyClearedVector(t *testing.T) {
 func TestResolveAllAttributesManyDifferential(t *testing.T) {
 	for _, disableCache := range []bool{false, true} {
 		t.Run(fmt.Sprintf("disable_cache=%t", disableCache), func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range legsFor(optimizerModes) {
 				t.Run(mode.name, func(t *testing.T) {
 					random := rand.New(rand.NewSource(0x381))
 					s, err := schema.NewBuilder().
@@ -297,7 +297,7 @@ func TestResolveAllAttributesManyDifferential(t *testing.T) {
 }
 
 func TestResolveAllAttributesManyHistoryMatchesPerEntity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -323,7 +323,7 @@ func TestResolveAllAttributesManyHistoryMatchesPerEntity(t *testing.T) {
 }
 
 func TestWildcardPullQueryUsesOneBatch(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			var batchBegins, batchCompletes int
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{
@@ -368,7 +368,7 @@ func TestWildcardPullQueryUsesOneBatch(t *testing.T) {
 }
 
 func TestWildcardPullQueryRendersMultiValuedAttributes(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":entity/type").Type(schema.TypeString).One().Add().

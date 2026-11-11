@@ -41,6 +41,10 @@ type EntityLookupMatcher interface {
 		entity datalog.Identity,
 		attr datalog.Keyword,
 	) (value interface{}, found bool, err error)
+	// AttributeLookup returns the lookup of attr from the default source,
+	// which answers at each entity what LookupAttribute answers for that
+	// entity and attr. A matcher that cannot look up is an error.
+	AttributeLookup(attr datalog.Keyword) (query.AttributeLookup, error)
 	// LookupSource returns the lookup of the source a query names, $ for the
 	// default source: a matcher that is one source returns itself under any
 	// name, and a router returns the lookup of the source named. A source it

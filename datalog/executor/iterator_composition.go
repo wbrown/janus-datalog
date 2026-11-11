@@ -99,39 +99,34 @@ type PredicateFilterIterator struct {
 	source    Iterator
 	predicate query.Predicate
 	symbols   []query.Symbol
-	// lookupPredicate is the predicate when it is a database-function
-	// predicate given a lookup, which it evaluates through.
-	lookupPredicate *query.DatabaseFunctionPredicate
-	lookup          query.EntityLookup
-	envSymbols      []query.Symbol
-	envTuple        Tuple
-	bindings        map[query.Symbol]interface{}
-	current         Tuple
-	err             error
+	// evaluation is a database-function predicate's evaluation through its
+	// source's lookup, nil for a predicate its own Eval decides.
+	evaluation query.PredicateEvaluation
+	envSymbols []query.Symbol
+	envTuple   Tuple
+	bindings   map[query.Symbol]interface{}
+	current    Tuple
+	err        error
 	// failed is the source tuple err arose on, nil when err is the source's.
 	failed Tuple
 }
 
 // NewPredicateFilterIterator creates an iterator filtering source, whose
-// tuples carry symbols, by predicate. lookup is the lookup a database-function
-// predicate evaluates through, and env is the scope's environment relation,
-// whose one tuple binds into every evaluation, a tuple's symbol of the same
-// name taking its place; either may be nil.
-func NewPredicateFilterIterator(source Iterator, symbols []query.Symbol, predicate query.Predicate, lookup query.EntityLookup, env Relation) *PredicateFilterIterator {
+// tuples carry symbols, by predicate. evaluation is a database-function
+// predicate's evaluation through its source's lookup, and env is the scope's
+// environment relation, whose one tuple binds into every evaluation, a
+// tuple's symbol of the same name taking its place; either may be nil.
+func NewPredicateFilterIterator(source Iterator, symbols []query.Symbol, predicate query.Predicate, evaluation query.PredicateEvaluation, env Relation) *PredicateFilterIterator {
 	envSymbols, envTuple := environmentTuple(env)
-	it := &PredicateFilterIterator{
+	return &PredicateFilterIterator{
 		source:     source,
 		predicate:  predicate,
 		symbols:    symbols,
-		lookup:     lookup,
+		evaluation: evaluation,
 		envSymbols: envSymbols,
 		envTuple:   envTuple,
 		bindings:   make(map[query.Symbol]interface{}, len(symbols)+len(envSymbols)),
 	}
-	if dbPred, ok := predicate.(*query.DatabaseFunctionPredicate); ok && lookup != nil {
-		it.lookupPredicate = dbPred
-	}
-	return it
 }
 
 // Next advances to the next tuple that matches the predicate
@@ -149,8 +144,8 @@ func (it *PredicateFilterIterator) Next() bool {
 
 		var result bool
 		var err error
-		if it.lookupPredicate != nil {
-			result, err = it.lookupPredicate.EvalWithLookup(it.bindings, it.lookup)
+		if it.evaluation != nil {
+			result, err = it.evaluation(it.bindings)
 		} else {
 			result, err = it.predicate.Eval(it.bindings)
 		}
@@ -236,12 +231,14 @@ func admitExpressionResult(fn query.Function, result interface{}) (interface{}, 
 // is pulled, so an evaluation failure surfaces from Error when the iteration
 // that reached it ends, and a tuple nothing pulls is never evaluated.
 type FunctionEvaluatorIterator struct {
-	source  Iterator
-	expr    *query.Expression
-	lookup  query.EntityLookup // the lookup a database function evaluates through
-	symbols []query.Symbol     // the source's symbols
-	align   bindingAlignment
-	bound   bool // the expression binds a symbol
+	source Iterator
+	expr   *query.Expression
+	// evaluation is a database function's evaluation through its source's
+	// lookup, nil for a function its own Eval computes.
+	evaluation query.Evaluation
+	symbols    []query.Symbol // the source's symbols
+	align      bindingAlignment
+	bound      bool // the expression binds a symbol
 	// expands is true for the collection and relation forms, which read any
 	// number of tuples from a value; the scalar and tuple forms read one.
 	expands bool
@@ -264,10 +261,10 @@ type FunctionEvaluatorIterator struct {
 }
 
 // NewFunctionEvaluatorIterator creates an iterator evaluating expr over
-// source, whose tuples carry symbols. lookup is the lookup a database function
-// evaluates through, and env is the scope's environment relation, whose one
-// tuple binds into every evaluation; either may be nil.
-func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, expr *query.Expression, lookup query.EntityLookup, env Relation) *FunctionEvaluatorIterator {
+// source, whose tuples carry symbols. evaluation is a database function's
+// evaluation through its source's lookup, and env is the scope's environment
+// relation, whose one tuple binds into every evaluation; either may be nil.
+func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, expr *query.Expression, evaluation query.Evaluation, env Relation) *FunctionEvaluatorIterator {
 	envSymbols, envTuple := environmentTuple(env)
 	bindingSymbols := expr.BoundVariables()
 	var expands bool
@@ -285,7 +282,7 @@ func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, expr 
 	return &FunctionEvaluatorIterator{
 		source:     source,
 		expr:       expr,
-		lookup:     lookup,
+		evaluation: evaluation,
 		symbols:    symbols,
 		align:      alignBinding(symbols, bindingSymbols),
 		bound:      len(bindingSymbols) > 0,
@@ -367,8 +364,8 @@ func (it *FunctionEvaluatorIterator) evaluate(tuple Tuple) (interface{}, bool, e
 	bindTuple(it.bindings, it.symbols, tuple)
 	var result interface{}
 	var err error
-	if dbFunc, ok := it.expr.Function.(query.DatabaseFunction); ok && it.lookup != nil {
-		result, err = dbFunc.EvalWithLookup(it.bindings, it.lookup)
+	if it.evaluation != nil {
+		result, err = it.evaluation(it.bindings)
 	} else {
 		result, err = it.expr.Function.Eval(it.bindings)
 	}

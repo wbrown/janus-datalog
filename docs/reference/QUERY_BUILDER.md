@@ -97,13 +97,14 @@ qb.Pat(e, PersonAge, age)  // joins on e
 
 ## Patterns
 
-`Pat` creates a data pattern of one to four elements, entity, attribute, value and transaction in that order. A position the pattern omits is unbound, so `qb.Pat(e, a)` matches every entity carrying the attribute. `Build` refuses a pattern of no element or of more than four, as the parser refuses its rendering.
+`Pat` creates a data pattern of one to five elements, entity, attribute, value, transaction, and whether the datom asserts, in that order. A position the pattern omits is unbound, so `qb.Pat(e, a)` matches every entity carrying the attribute. `Build` refuses a pattern of no element or of more than five, as the parser refuses its rendering.
 
 ```go
 qb.Pat(e)                    // [e] - every entity carrying a datom
 qb.Pat(e, a)                 // [e a] - the value unbound
 qb.Pat(e, a, v)              // [e a v] - standard pattern
 qb.Pat(e, a, v, tx)          // [e a v tx] - with transaction
+qb.Pat(e, a, v, tx, added)   // [e a v tx added] - true where the datom asserts, false where it withdraws
 
 // Wildcards
 qb.Pat(e, qb.Blank(), name)  // ignore attribute
@@ -957,6 +958,7 @@ func main() {
 | `qb.Pat(e, a)` | `[?e ?a]` | The value unbound |
 | `qb.Pat(e, a, v)` | `[?e ?a ?v]` | 3-element pattern |
 | `qb.Pat(e, a, v, tx)` | `[?e ?a ?v ?tx]` | With transaction |
+| `qb.Pat(e, a, v, tx, added)` | `[?e ?a ?v ?tx ?added]` | With whether the datom asserts |
 | `qb.PatFrom(src, e, a, v)` | `[$src ?e ?a ?v]` | Source-qualified pattern |
 | `qb.Blank()` | `_` | Wildcard |
 

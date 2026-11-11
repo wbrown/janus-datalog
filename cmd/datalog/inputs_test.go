@@ -14,7 +14,7 @@ func TestCLI_QueryDeclaringAnInputWithNoInFlagIsRefused(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createEdgeDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
 				"-query", `[:find ?name :in $ ?start :where [?s :node/name ?start] [?s :node/name ?name]]`)

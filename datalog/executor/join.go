@@ -227,13 +227,11 @@ func (it *hashJoinIterator) emitProbeAnnotation() {
 }
 
 // emitJoinStrategyAnnotation reports which join shape was chosen and what it
-// was chosen over, and whether the build side is probed through the index a
-// derived set keeps, under build_kept. Callers guard on the handler being
-// non-nil.
-//
-// left and right are rendered by type, not by value: the datum is which
-// Relation implementation each side is, and a Relation is a live stream that
-// must not be spent to describe itself.
+// was chosen over, whether the build side is probed through the index a
+// derived set keeps, under build_kept, and each side's size where the side
+// is materialized: a Relation is a live stream that must not be spent to
+// describe itself. The join symbols are the slice the join holds. Callers
+// guard on the handler being non-nil.
 func emitJoinStrategyAnnotation(
 	handler annotations.Handler,
 	left, right Relation,
@@ -248,11 +246,9 @@ func emitJoinStrategyAnnotation(
 			"build_side":       buildSide,
 			"build_key_unique": buildKeyUnique,
 			"build_kept":       buildKept,
-			"left_type":        fmt.Sprintf("%T", left),
-			"right_type":       fmt.Sprintf("%T", right),
 			"left_size":        materializedSize(left),
 			"right_size":       materializedSize(right),
-			"join_symbols":     append([]query.Symbol(nil), joinSymbols...),
+			"join_symbols":     joinSymbols,
 		},
 	})
 }
@@ -396,7 +392,7 @@ func hashJoinWithSet(
 	if rightSet != nil {
 		bound = right.Size()
 		kept = rightSet.index(buildIndices, bound)
-		keptTuples = rightSet.tuples[:bound:bound]
+		keptTuples = rightSet.keys.members[:bound:bound]
 	}
 	buildSide := "right"
 	if buildIsLeft {

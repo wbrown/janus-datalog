@@ -25,7 +25,7 @@ import (
 // either the item OR its container is flagged, excluding archived/deleted
 // containers.
 func TestOrJoinRequiredRunCarriesOuterBindings(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, symmetricOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Schema: :container/item is cardinality-many (a container has multiple items)
 			s := schema.NewBuilder().

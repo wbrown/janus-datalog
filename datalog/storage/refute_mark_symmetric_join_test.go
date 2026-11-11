@@ -10,10 +10,10 @@ import (
 )
 
 // A failure beside a clause holding at no assignment fails no query under
-// each join the executor options select: the default hash join and the
-// symmetric hash join a caller enables through PlannerOptions. Each query
-// joins a group whose expression fails on one tuple with an empty group on a
-// shared symbol, so the join holds no tuple.
+// each join the legs select: the hash join, and the symmetric hash join on
+// the legs that turn it on. Each query joins a group whose expression fails
+// on one tuple with an empty group on a shared symbol, so the join holds no
+// tuple.
 func TestReviewMark_AFailureBesideAnEmptyJoinSideFailsNoQueryUnderEveryJoin(t *testing.T) {
 	v := datalog.NewKeyword(":item/v")
 	w := datalog.NewKeyword(":item/w")
@@ -28,40 +28,30 @@ func TestReviewMark_AFailureBesideAnEmptyJoinSideFailsNoQueryUnderEveryJoin(t *t
 		{"the failing group joined with an empty group on a pattern's entity",
 			`[:find ?q :where [?q :item/v ?a] [(+ ?a 1) ?b] [?r :item/w ?c] [(+ ?c 1) ?d] [?r :item/missing ?q]]`},
 	}
-	joins := []struct {
-		name      string
-		symmetric bool
-	}{
-		{"hash join", false},
-		{"symmetric hash join", true},
-	}
-	for _, mode := range optimizerModes {
-		for _, join := range joins {
-			t.Run(mode.name+"/"+join.name, func(t *testing.T) {
-				opts := mode.plannerOptions()
-				opts.EnableSymmetricHashJoin = join.symmetric
-				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})
-				tx := d.NewTransaction()
-				for i := 0; i < 16; i++ {
-					entity := datalog.NewIdentity(fmt.Sprintf("review-mark-sym:n%d", i))
-					require.NoError(t, tx.Add(entity, v, int64(i)))
-				}
-				stringy := datalog.NewIdentity("review-mark-sym:stringy")
-				require.NoError(t, tx.Add(stringy, v, "x"))
-				for i := 0; i < 4; i++ {
-					entity := datalog.NewIdentity(fmt.Sprintf("review-mark-sym:w%d", i))
-					require.NoError(t, tx.Add(entity, w, int64(i)))
-				}
-				_, err := tx.Commit()
-				require.NoError(t, err)
-				for _, c := range cases {
-					t.Run(c.name, func(t *testing.T) {
-						got, err := executor.CollectTuples(d.Query(c.query))
-						require.NoError(t, err)
-						require.Empty(t, got)
-					})
-				}
-			})
-		}
+	for _, mode := range legsFor(optimizerModes, symmetricOption, fusionOption) {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})
+			tx := d.NewTransaction()
+			for i := 0; i < 16; i++ {
+				entity := datalog.NewIdentity(fmt.Sprintf("review-mark-sym:n%d", i))
+				require.NoError(t, tx.Add(entity, v, int64(i)))
+			}
+			stringy := datalog.NewIdentity("review-mark-sym:stringy")
+			require.NoError(t, tx.Add(stringy, v, "x"))
+			for i := 0; i < 4; i++ {
+				entity := datalog.NewIdentity(fmt.Sprintf("review-mark-sym:w%d", i))
+				require.NoError(t, tx.Add(entity, w, int64(i)))
+			}
+			_, err := tx.Commit()
+			require.NoError(t, err)
+			for _, c := range cases {
+				t.Run(c.name, func(t *testing.T) {
+					got, err := executor.CollectTuples(d.Query(c.query))
+					require.NoError(t, err)
+					require.Empty(t, got)
+				})
+			}
+		})
 	}
 }

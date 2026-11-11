@@ -74,7 +74,7 @@ func TestRules_ABoundQueryAnswersWhereTheFreeOneDoes(t *testing.T) {
 			  [(mid ?a ?b) (mid ?a ?b) (or-default-join [[?b] ?k] (and (low ?b ?z) [(ground 1) ?k]) [(ground 0) ?k]) [(= ?k 1)]]
 			  [(p ?a ?b) (mid ?a ?m) [?m :edge ?b] [(q [:find (count ?z) :in $ % ?x :where [?x :edge ?w] (low ?w ?z)] $ % ?a) [[?n]]] [(> ?n 0)]]]`},
 	}
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, sharingOption, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: graphSchema()})
 			g := writeGraph(t, d, chain(6))
@@ -108,7 +108,7 @@ func TestRules_ARequiredPredicateTwoLevelsDownIsDerivedOnce(t *testing.T) {
 	                [(walk ?a ?b) [?a :edge ?b]]
 	                [(walk ?a ?c) (walk ?a ?b) [?b :rank ?k] (succ ?k ?j) [(< ?j 100)] [?b :edge ?c]]
 	                [(top ?a ?c) (walk ?a ?c)]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			adorned := &rewriteAdornments{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})
@@ -131,7 +131,7 @@ func TestRules_AFreeRootsOwnRecursionIsRewrittenOnce(t *testing.T) {
 	const rules = `[[(succ [?n] ?m) [(+ ?n 1) ?m]]
 	                [(walk ?a ?b) [?a :edge ?b] [?b :rank ?k] (succ ?k ?j) [(< ?j 100)]]
 	                [(walk ?a ?c) (walk ?a ?b) (walk ?b ?c)]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, sharingOption, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			adorned := &rewriteAdornments{}
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})

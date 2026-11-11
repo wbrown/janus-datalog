@@ -52,7 +52,7 @@ func TestRefuteRoute_MemorySourceGetElseEveryEntityHoldsTheAttribute(t *testing.
 		text:   `[:find ?n ?v :in $ $m :where [$m ?e :item/name ?n] [(q [:find ?x :in $ ?e :where [$ ?e :item/name _] [(get-else $ ?e :item/tag "none") ?x]] $m ?e) [[?v]]]]`,
 		want:   [][]interface{}{{"one", "blue"}, {"two", "green"}},
 	})
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, algebraOption, fusionOption) {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})

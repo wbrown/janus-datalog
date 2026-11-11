@@ -152,7 +152,7 @@ func TestCLI_ImportFlag(t *testing.T) {
 	// is the only part of the test that reaches the algebra axis; the CLI's
 	// own -import path doesn't accept planner options, so re-query directly
 	// with each mode's executor instead of db.Query's fixed default.
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, err := storage.NewDatabase(dbPath)
 			if err != nil {
@@ -194,7 +194,7 @@ func TestCLI_ExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("Import failed: %v\n%s", err, out)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Query both databases and compare
 			db1, err := storage.NewDatabase(db1Path)
@@ -426,7 +426,7 @@ func TestCLI_ImportBinFlag(t *testing.T) {
 		t.Errorf("Expected import success message, got: %s", out)
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, err := storage.NewDatabase(dbPath)
 			if err != nil {
@@ -504,7 +504,7 @@ func TestCLI_QueryWithScalarInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Query with scalar input: find person with age 30
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
@@ -530,7 +530,7 @@ func TestCLI_QueryWithCollectionInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Query with collection input: find people with age 25 or 30
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
@@ -556,7 +556,7 @@ func TestCLI_QueryWithStringInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Query with string scalar input
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
@@ -579,7 +579,7 @@ func TestCLI_QueryWithMultipleInputs(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Query with two scalar inputs
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
@@ -609,7 +609,7 @@ func TestCLI_QueryWithIDLiteralInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
 				"-query", `[:find ?name :in $ ?e :where [?e :person/name ?name]]`,
@@ -639,7 +639,7 @@ func TestCLI_QueryWithRelationInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range cliOptimizeFlags {
 		t.Run(mode.name, func(t *testing.T) {
 			// Alice's tuple matches her stored age; Bob's carries a wrong
 			// age, so the relation join keeps Alice only.
@@ -789,7 +789,7 @@ func TestCLI_BareInvocationDoesNotWrite(t *testing.T) {
 	}
 
 	// The database must still be empty.
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(t) {
 		t.Run(mode.name, func(t *testing.T) {
 			db, err := storage.NewDatabase(dbPath)
 			if err != nil {

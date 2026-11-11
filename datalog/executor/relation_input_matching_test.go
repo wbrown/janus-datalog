@@ -180,7 +180,7 @@ func TestRelationInput_DuplicateInputTuplesAnswerTheExactSet(t *testing.T) {
 		"[Carol 2020 40]",
 	}
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
@@ -221,7 +221,7 @@ func TestRelationInput_PropagatesMatcherError(t *testing.T) {
 		},
 	)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Fail on the very first Match() call.
 			fm := &failingMatcher{
@@ -262,7 +262,10 @@ func TestRelationInput_PropagatesMatcherErrorAfterAnEarlierPattern(t *testing.T)
 		},
 	)
 
-	for _, mode := range OptimizerModes {
+	// On a leg with fusion on the later patterns are fetched through lookups,
+	// so the legs with fusion off are those on which a later pattern is
+	// matched through the failing matcher.
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return !m.Fusion() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// Fail on the second Match() call: the query's three patterns are
 			// matched once each over the bound group, so the second call is
@@ -278,11 +281,7 @@ func TestRelationInput_PropagatesMatcherErrorAfterAnEarlierPattern(t *testing.T)
 				},
 			}
 
-			// Attribute-fetch fusion is off, so every pattern is matched through
-			// the failing matcher.
-			opts := mode.PlannerOptions()
-			opts.EnableAttributeFetchFusion = false
-			exec := NewExecutorWithOptions(fm, nil, opts)
+			exec := NewExecutorWithOptions(fm, nil, mode.PlannerOptions())
 
 			// The later pattern runs over the join result through the window,
 			// whose scan failure surfaces when the result is driven.
@@ -302,8 +301,11 @@ func TestRelationInput_PropagatesMatcherErrorAfterAnEarlierPattern(t *testing.T)
 
 // TestRelationInput_PropagatesDeferredIteratorError pins the iterator-error
 // contract: a pattern whose result relation defers an error to
-// Iterator().Error() (the way a failed Tier-3 blob decode would) must surface
-// as a non-nil error from ExecuteWithRelations.
+// Iterator().Error() (the way a failed Tier-3 blob decode would) is the
+// query's error. It surfaces where the failing group is read: at the call,
+// where the fused fetch of the later patterns reads the group whole at its
+// clause, and at the drive, where the windowed route pulls the group as the
+// result is consumed.
 func TestRelationInput_PropagatesDeferredIteratorError(t *testing.T) {
 	// Shared read-only delegate; the stateful deferredFailMatcher wrapper
 	// (call counter) is rebuilt fresh per mode below so each mode's
@@ -321,7 +323,7 @@ func TestRelationInput_PropagatesDeferredIteratorError(t *testing.T) {
 		},
 	)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			dm := &deferredFailMatcher{
 				Database:   delegate,
@@ -330,7 +332,10 @@ func TestRelationInput_PropagatesDeferredIteratorError(t *testing.T) {
 
 			exec := NewExecutorWithOptions(dm, nil, mode.PlannerOptions())
 
-			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
+			if err == nil {
+				_, err = CollectTuples(result, nil)
+			}
 			require.Error(t, err, "deferred iterator error must propagate, not be laundered into a clean result")
 			require.True(t, errors.Is(err, ErrInjectedIterator),
 				"error must unwrap to errInjectedIterator (from failingIterator); got %v", err)
@@ -363,7 +368,7 @@ func TestRelationInput_NoGoroutineLeak(t *testing.T) {
 		},
 	)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions())
 
@@ -461,7 +466,7 @@ func TestRelationInput_AStreamingInputReusingItsWorkspaceAnswersAsAMaterializedO
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// newReusingWorkspaceStream wraps a single-use streaming iterator, so
 			// it must be rebuilt fresh per mode rather than shared like the
@@ -533,7 +538,7 @@ func TestRelationInput_ConcurrentQueriesAnswerAlike(t *testing.T) {
 		},
 	)
 
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			// The expected tuples, from one query run alone.
 			expected, err := NewExecutorWithOptions(matcher, nil, mode.PlannerOptions()).

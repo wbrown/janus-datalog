@@ -16,7 +16,7 @@ func createVectorCacheTestDatabase(t *testing.T, mode optimizerMode) *Database {
 }
 
 func TestVectorCacheHit(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -60,7 +60,7 @@ func TestVectorCacheHit(t *testing.T) {
 }
 
 func TestVectorCacheMiss(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -94,7 +94,7 @@ func TestVectorCacheMiss(t *testing.T) {
 }
 
 func TestVectorCacheInvalidation(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -137,7 +137,7 @@ func TestVectorCacheInvalidation(t *testing.T) {
 }
 
 func TestVectorNthFromCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -190,7 +190,7 @@ func TestVectorNthFromCache(t *testing.T) {
 }
 
 func TestVectorLengthFromCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -229,7 +229,7 @@ func TestVectorLengthFromCache(t *testing.T) {
 }
 
 func TestVectorCachePreservesOrder(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -268,7 +268,7 @@ func TestVectorCachePreservesOrder(t *testing.T) {
 }
 
 func TestVectorCacheAfterSet(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -318,7 +318,7 @@ func TestVectorCacheAfterSet(t *testing.T) {
 }
 
 func TestVectorNthNotVectorAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -349,7 +349,7 @@ func TestVectorNthNotVectorAttribute(t *testing.T) {
 }
 
 func TestVectorLengthNotVectorAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -386,7 +386,7 @@ func TestVectorLengthNotVectorAttribute(t *testing.T) {
 // filled it with zero values, which passed other tests but made the cache
 // useless for its intended purpose.
 func TestVectorIndexContainsRealElementIDs(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -415,13 +415,8 @@ func TestVectorIndexContainsRealElementIDs(t *testing.T) {
 			matcher := NewPatternMatcher(db.store)
 			matcher.SetSchema(s)
 
-			var eBytes Entity
-			eBytes = e.Hash()
-			var aBytes Attribute
-			copy(aBytes[:], a.String())
-
 			report := &scanReport{}
-			values, positions, maxID, present, err := matcher.ResolveRGA(eBytes, aBytes, report)
+			values, positions, maxID, present, err := matcher.ResolveRGA(e, a, report)
 			require.NoError(t, err)
 			require.True(t, present, "the (E, A) carries RGA datoms, so it is present")
 			require.Positive(t, report.scanned, "RGA reconstruction read the index and must report it")
@@ -459,7 +454,7 @@ func TestVectorIndexContainsRealElementIDs(t *testing.T) {
 // TestVectorIndexUsableForTombstone verifies that ElementIDs from vectorIndex
 // can actually be used to tombstone specific elements.
 func TestVectorIndexUsableForTombstone(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createVectorCacheTestDatabase(t, mode)
 
@@ -488,13 +483,8 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 			matcher := NewPatternMatcher(db.store)
 			matcher.SetSchema(s)
 
-			var eBytes Entity
-			eBytes = e.Hash()
-			var aBytes Attribute
-			copy(aBytes[:], a.String())
-
 			report := &scanReport{}
-			_, positions, _, present, err := matcher.ResolveRGA(eBytes, aBytes, report)
+			_, positions, _, present, err := matcher.ResolveRGA(e, a, report)
 			require.NoError(t, err)
 			require.True(t, present, "the (E, A) carries RGA datoms, so it is present")
 			require.Positive(t, report.scanned, "RGA reconstruction read the index and must report it")

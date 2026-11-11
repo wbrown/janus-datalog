@@ -49,13 +49,9 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		}
 		it.Close()
 
-		// Test with streaming (EnableTrueStreaming=true)
-		streamOpts := ExecutorOptions{
-			EnableTrueStreaming: true,
-		}
-
+		// Streaming side: the same pipeline through a StreamingRelation.
 		streamSource := &sliceIterator{tuples: tuples, pos: -1}
-		streamRel := NewStreamingRelationWithOptions(symbols, streamSource, streamOpts)
+		streamRel := NewStreamingRelation(symbols, streamSource)
 
 		// Filter to 1% (every 100th tuple)
 		streamFiltered := streamRel.FilterWithPredicate(&query.Comparison{
@@ -104,13 +100,11 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		}
 		rightSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
 
-		// Test with materialized
-		matOpts := ExecutorOptions{}
+		// Materialized side: the join of two MaterializedRelations.
+		matLeft := NewMaterializedRelation(leftSymbols, leftTuples)
+		matRight := NewMaterializedRelation(rightSymbols, rightTuples)
 
-		matLeft := NewStreamingRelationWithOptions(leftSymbols, &sliceIterator{tuples: leftTuples, pos: -1}, matOpts)
-		matRight := NewStreamingRelationWithOptions(rightSymbols, &sliceIterator{tuples: rightTuples, pos: -1}, matOpts)
-
-		matJoined := HashJoinWithOptions(matLeft, matRight, []query.Symbol{datalog.NewSymbol("?name")}, matOpts)
+		matJoined := HashJoin(matLeft, matRight, []query.Symbol{datalog.NewSymbol("?name")})
 		matProjected, err := matJoined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})
 		assert.NoError(t, err)
 
@@ -124,15 +118,11 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		}
 		it.Close()
 
-		// Test with streaming
-		streamOpts := ExecutorOptions{
-			EnableTrueStreaming: true,
-		}
+		// Streaming side: the join of two StreamingRelations.
+		streamLeft := NewStreamingRelation(leftSymbols, &sliceIterator{tuples: leftTuples, pos: -1})
+		streamRight := NewStreamingRelation(rightSymbols, &sliceIterator{tuples: rightTuples, pos: -1})
 
-		streamLeft := NewStreamingRelationWithOptions(leftSymbols, &sliceIterator{tuples: leftTuples, pos: -1}, streamOpts)
-		streamRight := NewStreamingRelationWithOptions(rightSymbols, &sliceIterator{tuples: rightTuples, pos: -1}, streamOpts)
-
-		streamJoined := HashJoinWithOptions(streamLeft, streamRight, []query.Symbol{datalog.NewSymbol("?name")}, streamOpts)
+		streamJoined := HashJoin(streamLeft, streamRight, []query.Symbol{datalog.NewSymbol("?name")})
 		streamProjected, err := streamJoined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})
 		assert.NoError(t, err)
 

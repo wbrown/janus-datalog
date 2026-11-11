@@ -12,7 +12,7 @@ import (
 
 // TestOrderedSet_UniqueElementsEnforcement verifies that UniqueElements prevents duplicates
 func TestOrderedSet_UniqueElementsEnforcement(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create schema with OrderedSet (Vector + UniqueElements)
 			s, err := schema.NewBuilder().
@@ -56,7 +56,7 @@ func TestOrderedSet_UniqueElementsEnforcement(t *testing.T) {
 
 // TestOrderedSet_UniqueAcrossTransactions verifies uniqueness across multiple transactions
 func TestOrderedSet_UniqueAcrossTransactions(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
@@ -101,7 +101,7 @@ func TestOrderedSet_UniqueAcrossTransactions(t *testing.T) {
 
 // TestOrderedSet_SetReplacement verifies Set() correctly replaces with unique enforcement
 func TestOrderedSet_SetReplacement(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
@@ -149,7 +149,7 @@ func TestOrderedSet_SetReplacement(t *testing.T) {
 
 // TestOrderedSet_QueryIntegration verifies OrderedSet works with queries
 func TestOrderedSet_QueryIntegration(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
@@ -190,7 +190,7 @@ func TestOrderedSet_QueryIntegration(t *testing.T) {
 
 // TestOrderedSet_RefType verifies OrderedSet works with Identity references
 func TestOrderedSet_RefType(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/follows").Type(schema.TypeRef).OrderedSet().Add().
@@ -228,7 +228,7 @@ func TestOrderedSet_RefType(t *testing.T) {
 
 // TestOrderedSet_VsRegularVector compares OrderedSet vs regular Vector behavior
 func TestOrderedSet_VsRegularVector(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":entity/orderedset").Type(schema.TypeString).OrderedSet().Add().

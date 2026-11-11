@@ -81,7 +81,7 @@ func (b *QueryBuilder) In(specs ...interface{}) *QueryBuilder {
 // Where adds clauses to the query.
 //
 // Accepts:
-//   - *Pattern: data patterns from Pat, one to four elements
+//   - *Pattern: data patterns from Pat, one to five elements
 //   - *Comparison: comparisons from Lt(), Gt(), Eq(), etc.
 //   - *ChainedComparison: from Chained(), Range()
 //   - *Expression: from Add().As(), Str().As(), etc.

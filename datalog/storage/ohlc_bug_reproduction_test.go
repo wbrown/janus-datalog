@@ -39,7 +39,7 @@ func TestOHLCQueryBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	require.NoError(t, err)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption, aggregationOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -73,6 +73,7 @@ func TestOHLCQueryBug(t *testing.T) {
 
 			matcher := NewPatternMatcher(db.store)
 			popts := mode.plannerOptions()
+			popts.Handler = recordingReach(t, nil)
 			exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
 			// Set a timeout channel to prevent hanging forever

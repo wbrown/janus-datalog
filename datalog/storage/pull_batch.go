@@ -225,17 +225,16 @@ func (d *Database) resolveWildcardDatoms(
 	datoms []datalog.Datom,
 	readPoint datalog.ElementID,
 ) (interface{}, bool) {
-	storageDatom := ToStorageDatom(datalog.Datom{E: entity, A: attr})
 	cardinality := matcher.GetCardinality(attr)
 	if d.cache != nil {
-		if key, ok := matcher.cacheKey(storageDatom.E, storageDatom.A); ok {
+		if key, ok := matcher.cacheKey(entity, attr); ok {
 			d.cache.PopulateFromDatoms(key, cardinality, datoms, readPoint)
 		}
 	}
 
 	switch cardinality {
 	case schema.CardinalityMany:
-		members, _ := ResolveAddWinsFromDatoms(datoms)
+		members, _, _ := ResolveAddWinsFromDatoms(datoms)
 		if len(members) == 0 {
 			return nil, false
 		}

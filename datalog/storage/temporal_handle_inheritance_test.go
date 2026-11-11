@@ -37,17 +37,23 @@ func testTemporalHandlesInheritPlannerOptions(t *testing.T, backend Backend) {
 
 	db := openBackendDB(t, backend, DatabaseOptions{PlannerOptions: &popts})
 
-	// DeepEqual rather than ==: PlannerOptions carries Handler, a func, and a
-	// struct holding one is not comparable. This database registers no handler,
-	// and DeepEqual holds two nil funcs equal, so the comparison is exact.
-	want := db.effectivePlannerOptions()
-	asOf := db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1})
-	if got := asOf.effectivePlannerOptions(); !reflect.DeepEqual(got, want) {
-		t.Errorf("AsOf handle dropped the parent's planner options:\n  parent: %+v\n  handle: %+v", want, got)
-	}
-	hist := db.History()
-	if got := hist.effectivePlannerOptions(); !reflect.DeepEqual(got, want) {
-		t.Errorf("History handle dropped the parent's planner options:\n  parent: %+v\n  handle: %+v", want, got)
+	// PlannerOptions carries Handler, a func, so a struct holding one is not
+	// comparable and DeepEqual holds two non-nil funcs unequal whatever they
+	// are. The handler compares by pointer, and the rest by DeepEqual with the
+	// handlers set aside.
+	parent := db.effectivePlannerOptions()
+	for name, handle := range map[string]*Database{
+		"AsOf":    db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1}),
+		"History": db.History(),
+	} {
+		want, got := parent, handle.effectivePlannerOptions()
+		if reflect.ValueOf(got.Handler).Pointer() != reflect.ValueOf(want.Handler).Pointer() {
+			t.Errorf("%s handle dropped the parent's handler", name)
+		}
+		got.Handler, want.Handler = nil, nil
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s handle dropped the parent's planner options:\n  parent: %+v\n  handle: %+v", name, want, got)
+		}
 	}
 }
 

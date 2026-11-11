@@ -11,7 +11,7 @@ import (
 )
 
 func TestAETVCardinalityOneRelationProperties(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testAETVCardinalityOneRelationProperties(t, mode)
 		})
@@ -107,7 +107,7 @@ func TestValidatedVBoundProperties(t *testing.T) {
 }
 
 func TestAVETValidatedRelationProperties(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			testAVETValidatedRelationProperties(t, mode)
 		})

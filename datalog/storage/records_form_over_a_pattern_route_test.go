@@ -25,7 +25,7 @@ func TestRecords_ASubqueryOverAPatternsResultDecidesAFailedTupleAtItsKey(t *test
 		[(q [:find ?k :in $ ?q :where [?q :item/kind ?k]] $ ?q) [[?k]]]
 		[?x :item/kind ?k]
 		[(q [:find ?t :in $ ?q :where [?q :item/tag ?t]] $ ?q) [[?t]]]]`
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := d.NewTransaction()

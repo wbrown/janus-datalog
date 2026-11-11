@@ -19,7 +19,7 @@ import (
 // the same way — match only the empty-string entity. If it instead returns all
 // three, the empty string is acting as a wildcard.
 func TestEmptyStringValueIsLiteralNotWildcard(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -54,7 +54,7 @@ func TestEmptyStringValueIsLiteralNotWildcard(t *testing.T) {
 // for the fix: a value constant matches by exact equality, not by prefix. With
 // "Bob" and "Bobby" both present, [?e :attr "Bob"] must return only "Bob".
 func TestNonEmptyValueIsExactNotPrefix(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -80,7 +80,7 @@ func TestNonEmptyValueIsExactNotPrefix(t *testing.T) {
 // (E supplied via :in). With ?e = e-bob (whose value is "Bob"), [?e :attr ""]
 // must NOT match (its value is not the empty string).
 func TestEmptyStringValueBoundEntity_IsLiteralNotWildcard(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -110,7 +110,7 @@ func TestEmptyStringValueBoundEntity_IsLiteralNotWildcard(t *testing.T) {
 // TestEmptyStringValueJoinBoundEntity_IsLiteralNotWildcard exercises the path
 // where E is bound by a prior clause (join), then a V-bound clause filters on "".
 func TestEmptyStringValueJoinBoundEntity_IsLiteralNotWildcard(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range legsFor(optimizerModes, fusionOption) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

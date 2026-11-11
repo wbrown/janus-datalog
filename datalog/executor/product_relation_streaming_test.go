@@ -17,7 +17,7 @@ import (
 // non-leftmost operands must be made re-iterable first. This also exercises the
 // re-iteration: the right side must replay its tuples for each left tuple.
 func TestProductRelation_StreamingRightSide_NoPanic(t *testing.T) {
-	opts := ExecutorOptions{EnableTrueStreaming: true}
+	opts := ExecutorOptions{}
 
 	leftSrc := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x")}, []Tuple{{int64(1)}, {int64(2)}})
 	rightSrc := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y")}, []Tuple{{"a"}, {"b"}})
@@ -47,7 +47,7 @@ func TestProductRelation_SurfacesInnerStreamError(t *testing.T) {
 // single-use until Materialize marks it for replay.
 func streamOf(symbol string, tuples ...Tuple) *StreamingRelation {
 	src := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol(symbol)}, tuples)
-	return NewStreamingRelationWithOptions(src.Symbols(), src.Iterator(), ExecutorOptions{EnableTrueStreaming: true})
+	return NewStreamingRelationWithOptions(src.Symbols(), src.Iterator(), ExecutorOptions{})
 }
 
 // A product over an empty leftmost relation answers no tuple and leaves a

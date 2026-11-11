@@ -10,6 +10,7 @@ import (
 	. "github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 // The contracts of docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §7 that an
@@ -39,7 +40,7 @@ func TestStreamingOuterIsReadOnce(t *testing.T) {
 		OutputVars:   []query.Symbol{value},
 		Branches:     [][]query.Clause{{pattern(itemValue)}, {pattern(itemOther)}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
@@ -79,7 +80,7 @@ func TestAFindConsumingNothingIsAVerdictOverEveryGroup(t *testing.T) {
 			}}},
 		}
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, mode.PlannerOptions())
 			plan, err := exec.GetPlanner().PlanQuery(finding(itemValue), query.Bindings{}, nil)
@@ -149,12 +150,12 @@ func TestFormReportsItsExecution(t *testing.T) {
 			inputs: subject(),
 		},
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		for _, form := range forms {
 			t.Run(mode.Name()+"/"+form.name, func(t *testing.T) {
 				var events []annotations.Event
 				opts := mode.PlannerOptions()
-				opts.Handler = func(e annotations.Event) { events = append(events, e) }
+				opts.Handler = mode.Recording(func(e annotations.Event) { events = append(events, e) })
 				exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
 				groups, err := exec.Execute(NewContext(), &query.Query{Where: []query.Clause{form.clause}}, form.inputs)
 				require.NoError(t, err)
@@ -236,18 +237,18 @@ func TestScopeRunReportsNoPhase(t *testing.T) {
 			},
 		},
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var begins, completes int
 			opts := mode.PlannerOptions()
-			opts.Handler = func(e annotations.Event) {
+			opts.Handler = mode.Recording(func(e annotations.Event) {
 				switch e.Name {
 				case annotations.PhaseBegin:
 					begins++
 				case annotations.PhaseComplete:
 					completes++
 				}
-			}
+			})
 			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts)
 			prepared, err := query.Prepare(q, nil)
 			require.NoError(t, err)
@@ -311,7 +312,7 @@ func TestSubqueryOverAFormReadsTheSubjectOnce(t *testing.T) {
 			Binding: query.RelationBinding{Variables: []query.Symbol{count}},
 		},
 	}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption, AggregationOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			opts := mode.PlannerOptions()
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
@@ -363,7 +364,7 @@ func TestNotJoinOverAStreamingSubjectReadsItOnce(t *testing.T) {
 			query.Variable{Name: entity}, query.Constant{Value: itemOther}, query.Variable{Name: value},
 		}}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
@@ -425,12 +426,12 @@ func TestNotJoinBodyIsBuiltOncePerWindowOverTheKeysNotYetRun(t *testing.T) {
 			query.Variable{Name: entity}, query.Constant{Value: itemOther}, query.Variable{Name: value},
 		}}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			opts.Handler = func(e annotations.Event) { events = append(events, e) }
+			opts.Handler = mode.Recording(func(e annotations.Event) { events = append(events, e) })
 			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
 			subject := NewStreamingRelation([]query.Symbol{entity, n}, NewMaterializedRelation([]query.Symbol{entity, n}, tuples).Iterator())
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
@@ -484,9 +485,9 @@ func TestNotJoinBodyHoldingAnInvocationIsContinuedAcrossTheWindows(t *testing.T)
 	rs := MustRules(t, `[[(other ?e) [?e :item/other _]]]`)
 	form := MustParse(t, `[:find ?entity :in $ % :where (not-join [?entity] (other ?entity))]`).Where
 	type counts struct{ begins, completes, rewrites, windows int }
-	run := func(t *testing.T, opts planner.PlannerOptions) counts {
+	run := func(t *testing.T, mode OptimizerMode, opts planner.PlannerOptions) counts {
 		var c counts
-		opts.Handler = func(e annotations.Event) {
+		opts.Handler = mode.Recording(func(e annotations.Event) {
 			switch e.Name {
 			case annotations.RulesStratumBegin:
 				c.begins++
@@ -497,7 +498,7 @@ func TestNotJoinBodyHoldingAnInvocationIsContinuedAcrossTheWindows(t *testing.T)
 			case annotations.ScopeWindow:
 				c.windows++
 			}
-		}
+		})
 		exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
 		subject := NewStreamingRelation([]query.Symbol{entity}, NewMaterializedRelation([]query.Symbol{entity}, tuples).Iterator())
 		groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: form}, []Relation{subject})
@@ -508,17 +509,17 @@ func TestNotJoinBodyHoldingAnInvocationIsContinuedAcrossTheWindows(t *testing.T)
 		require.Equal(t, want, got, "the items the predicate derives are dropped, the rest kept in the subject's order")
 		return c
 	}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			single := mode.PlannerOptions()
 			single.ScopeWindowCap = 1
-			twenty := run(t, single)
+			twenty := run(t, mode, single)
 			require.Equal(t, items, twenty.windows, "under a cap of one each subject tuple is a window")
 			require.GreaterOrEqual(t, twenty.begins, 1, "the body's invocation evaluates its predicate")
 
 			windowed := mode.PlannerOptions()
 			windowed.ScopeWindowCap = 8
-			five := run(t, windowed)
+			five := run(t, mode, windowed)
 			require.Equal(t, 5, five.windows, "twenty subject tuples under a cap of eight span five windows")
 			require.Equal(t, twenty.begins, five.begins, "each stratum begins once, whatever the windows")
 			require.Equal(t, twenty.completes, five.completes, "each stratum completes once, at the last window")
@@ -555,7 +556,7 @@ func TestSubqueryOverAStreamingSubjectReadsItOnce(t *testing.T) {
 		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Variable{Name: entity}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{value}},
 	}}}
-	for _, mode := range OptimizerModes {
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
@@ -584,40 +585,74 @@ func TestSubqueryOverAStreamingSubjectReadsItOnce(t *testing.T) {
 	}
 }
 
-// A data pattern over a streaming group is a form over the window: the
-// pattern is one body under the header of the variables it shares with the
-// group, its result stands in the group's place and reports no size, its
-// first tuple follows one pull of the group, and the group is read once, to
-// its end. Each item is answered beside its :item/value.
+// pullCountingDatabase answers every match through its facts database, and
+// reads the matches of one attribute through a counting iterator: the group
+// the clause matching that attribute produces.
+type pullCountingDatabase struct {
+	*storage.Database
+	attr  datalog.Keyword
+	pulls *CountingIterator
+}
+
+// Match answers q through the database, counting the pulls of the matches
+// of attr.
+func (d *pullCountingDatabase) Match(q *query.Query, bindings Relations) (Relation, error) {
+	rel, err := d.Database.Match(q, bindings)
+	if err != nil {
+		return nil, err
+	}
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
+	if a, ok := pattern.GetA().(query.Constant); !ok || a.Value != d.attr {
+		return rel, nil
+	}
+	d.pulls = NewCountingIterator(rel.Iterator())
+	return NewStreamingRelationWithProperties(rel.Symbols(), d.pulls, rel.Options(), rel.Properties()), nil
+}
+
+// A data pattern sharing a variable with a group the scope produces is a form
+// over the window: the plan reads the second pattern in windows of the first
+// pattern's matches, the pattern is one body under the header of the
+// variables it shares with the group, its result stands in the group's place
+// and reports no size, its first tuple follows one pull of the group, and the
+// group is read once, to its end. Each item is answered beside its
+// :item/value.
 func TestPatternOverAStreamingGroupReadsItOnce(t *testing.T) {
 	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
-	itemValue := datalog.NewKeyword(":item/value")
+	itemKind, itemValue := datalog.NewKeyword(":item/kind"), datalog.NewKeyword(":item/value")
 	const subjects = 5
 	var datoms []datalog.Datom
-	var tuples []Tuple
 	var want [][]interface{}
 	for i := 1; i <= subjects; i++ {
 		e := datalog.NewIdentity(fmt.Sprintf("bound%d", i))
-		datoms = append(datoms, datalog.Datom{E: e, A: itemValue, V: int64(i), Tx: datalog.ElementID{Lamport: uint64(i), ReplicaID: 1}})
-		tuples = append(tuples, Tuple{e})
+		datoms = append(datoms,
+			datalog.Datom{E: e, A: itemKind, V: "thing", Tx: datalog.ElementID{Lamport: uint64(i), ReplicaID: 1}},
+			datalog.Datom{E: e, A: itemValue, V: int64(i), Tx: datalog.ElementID{Lamport: uint64(subjects + i), ReplicaID: 1}})
 		want = append(want, []interface{}{e, int64(i)})
 	}
-	q := &query.Query{Where: []query.Clause{&query.DataPattern{Elements: []query.PatternElement{
-		query.Variable{Name: entity}, query.Constant{Value: itemValue}, query.Variable{Name: value},
-	}}}}
-	for _, mode := range OptimizerModes {
+	q, err := query.Prepare(MustParse(t, `[:find ?entity ?value :where [?entity :item/kind "thing"] [?entity :item/value ?value]]`), nil)
+	require.NoError(t, err)
+	// On the legs without attribute-fetch fusion the second pattern runs over
+	// the group through the window.
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return !m.Fusion() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
-			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
-			pulls := NewCountingIterator(base.Iterator())
-			subject := NewStreamingRelation([]query.Symbol{entity}, pulls)
-			// Attribute-fetch fusion is off, so the pattern runs over the group
-			// through the window.
-			opts := mode.PlannerOptions()
-			opts.EnableAttributeFetchFusion = false
-			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
-			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
+			db := &pullCountingDatabase{Database: factsDatabase(t, datoms)}
+			executor := NewExecutorWithOptions(db, nil, mode.PlannerOptions())
+			plan, err := executor.GetPlanner().PlanQuery(q, query.Bindings{}, nil)
+			require.NoError(t, err)
+			require.Len(t, plan.Phases, 1, "the two patterns join in one phase")
+			where := plan.Phases[0].Query.Where
+			require.Len(t, where, 2, "the phase holds the two patterns")
+			first, second := where[0].(*query.DataPattern), where[1]
+			require.Contains(t, plan.Windows, second, "the plan reads the second pattern in windows of the group the first produces")
+			db.attr = first.GetA().(query.Constant).Value.(datalog.Keyword)
+			groups, err := executor.QueryExecutor(plan).Execute(NewContext(), plan.Phases[0].Query, nil)
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the pattern's result stands in the group's place")
+			require.NotNil(t, db.pulls, "the first pattern's matches are read through the counting iterator")
+			pulls := db.pulls
 			result := groups[0]
 			require.Equal(t, -1, result.Size(), "the result over a streaming group reports no size")
 			syms := result.Symbols()
@@ -638,9 +673,10 @@ func TestPatternOverAStreamingGroupReadsItOnce(t *testing.T) {
 	}
 }
 
-// A pattern after a join of two groups takes the window: the join result
-// reports no size, so the pattern reads it once, in windows, under the form
-// "pattern", and answers the join of the group with the pattern's matches
+// A pattern after a join of two groups takes the window: the join result is
+// a group the scope produces, so the plan windows the pattern, which reads
+// the result once, in windows, under the form "pattern", and answers the
+// join of the group with the pattern's matches
 // (docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md, T6 and L7). The input
 // group over ?e and ?x is joined with the first pattern's matches at the
 // collapse, and the second pattern runs over that join result. Every item
@@ -663,25 +699,25 @@ func TestAPatternOverAJoinResultTakesTheWindow(t *testing.T) {
 			want = append(want, []interface{}{e, int64(100 + i), int64(i), int64(10 * i)})
 		}
 	}
-	q := &query.Query{Where: []query.Clause{
-		&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: entity}, query.Constant{Value: itemValue}, query.Variable{Name: v}}},
-		&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: entity}, query.Constant{Value: itemOther}, query.Variable{Name: w}}},
-	}}
-	for _, mode := range OptimizerModes {
+	q, err := query.Prepare(MustParse(t, `[:find ?e ?x ?v ?w :in $ [[?e ?x]] :where [?e :item/value ?v] [?e :item/other ?w]]`), nil)
+	require.NoError(t, err)
+	// On the legs without attribute-fetch fusion the second pattern runs over
+	// the join result through the window.
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return !m.Fusion() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			var forms []string
-			// Attribute-fetch fusion is off, so the second pattern runs over the
-			// join result through the window.
 			opts := mode.PlannerOptions()
-			opts.EnableAttributeFetchFusion = false
 			opts.Handler = func(e annotations.Event) {
 				if e.Name == annotations.ScopeWindow {
 					forms = append(forms, e.Data[annotations.KeyForm].(string))
 				}
 			}
-			exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
+			executor := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts)
+			plan, err := executor.GetPlanner().PlanQuery(q, query.Bindings{Symbols: map[query.Symbol]bool{entity: true, x: true}}, nil)
+			require.NoError(t, err)
+			require.Len(t, plan.Phases, 1, "the group and the two patterns join in one phase")
 			group := NewMaterializedRelation([]query.Symbol{entity, x}, tuples)
-			groups, err := exec.Execute(NewContext(), q, []Relation{group})
+			groups, err := executor.QueryExecutor(plan).Execute(NewContext(), plan.Phases[0].Query, []Relation{group})
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the second pattern's result stands in the join result's place")
 			got, err := CollectTuples(groups[0], nil)
@@ -702,26 +738,33 @@ func TestAPatternOverAJoinResultTakesTheWindow(t *testing.T) {
 	}
 }
 
-// A bound invocation at the top level is a form over the window: the
-// invocation is one body under the header of its bound variables as the
+// A bound invocation at the top level is a form over the window: the plan
+// reads the invocation in windows of the group a pattern before it produces,
+// the invocation is one body under the header of its bound variables as the
 // required run and its free variables as the outputs, its fixpoint seeded by
 // each window's keys and continued across the windows. Its result stands in
 // the group's place and reports no size, its first tuple follows one pull of
 // the group, the group is read once, to its end, and the rewrite and each
 // stratum run as many times under six windows as under three. Over a chain
 // of six pages each page is answered beside every page after it; with both
-// arguments bound the invocation is a verdict per key, keeping the subject's
-// tuples that the closure holds and the subject's keys.
+// arguments bound the invocation is a verdict per key, keeping the group's
+// tuples that the closure holds and the group's keys.
 func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 	a, c := datalog.NewSymbol("?a"), datalog.NewSymbol("?c")
 	const pages = 6
+	pageCheck := datalog.NewKeyword(":page/check")
 	datoms := ChainDatoms(pages)
+	for i, pair := range [][2]int{{1, 3}, {2, 1}, {3, 5}, {4, 6}} {
+		datoms = append(datoms, datalog.Datom{E: Page(pair[0]), A: pageCheck, V: Page(pair[1]), Tx: datalog.ElementID{Lamport: uint64(1000 + i), ReplicaID: 1}})
+	}
 	rs := MustRules(t, FollowsRulesText)
-	closure := MustParse(t, `[:find ?a ?c :in $ % :where (follows ?a ?c)]`).Where
 	type counts struct{ begins, rewrites, windows int }
-	run := func(t *testing.T, opts planner.PlannerOptions, syms []query.Symbol, tuples []Tuple) (Relation, *CountingIterator, *counts) {
+	// run plans text under the rule set, its pattern producing the group of
+	// produced's matches and its invocation read in windows of that group,
+	// and runs the plan's phase, counting the pulls of the group.
+	run := func(t *testing.T, mode OptimizerMode, opts planner.PlannerOptions, text string, produced datalog.Keyword) (Relation, *CountingIterator, *counts) {
 		c := &counts{}
-		opts.Handler = func(e annotations.Event) {
+		opts.Handler = mode.Recording(func(e annotations.Event) {
 			switch e.Name {
 			case annotations.RulesStratumBegin:
 				c.begins++
@@ -730,24 +773,33 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 			case annotations.ScopeWindow:
 				c.windows++
 			}
+		})
+		db := &pullCountingDatabase{Database: factsDatabase(t, datoms), attr: produced}
+		executor := NewExecutorWithOptions(db, nil, opts)
+		q, err := query.Prepare(MustParse(t, text), rs)
+		require.NoError(t, err)
+		plan, err := executor.GetPlanner().PlanQuery(q, query.Bindings{Rules: rs}, nil)
+		require.NoError(t, err)
+		require.Len(t, plan.Phases, 1, "the pattern and the invocation join in one phase")
+		var invocation query.Clause
+		for _, clause := range plan.Phases[0].Query.Where {
+			if _, ok := clause.(*query.RuleInvocation); ok {
+				invocation = clause
+			}
 		}
-		exec := NewExecutorWithOptions(factsDatabase(t, datoms), nil, opts).QueryExecutor(nil)
-		pulls := NewCountingIterator(NewMaterializedRelation(syms, tuples).Iterator())
-		subject := NewStreamingRelationWithProperties(syms, pulls, exec.Options(), DeduplicatedProperties(syms))
-		groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: closure}, []Relation{subject})
+		require.Contains(t, plan.Windows, invocation, "the plan reads the invocation in windows of the group the pattern produces")
+		groups, err := executor.QueryExecutor(plan).Execute(NewContext().WithRules(rs), plan.Phases[0].Query, nil)
 		require.NoError(t, err)
 		require.Len(t, groups, 1, "the invocation's result stands in the group's place")
-		return groups[0], pulls, c
+		require.NotNil(t, db.pulls, "the pattern's matches are read through the counting iterator")
+		return groups[0], db.pulls, c
 	}
-	for _, mode := range OptimizerModes {
+	const withAnOutput = `[:find ?a ?c :in $ % :where [?a :page/kind _] (follows ?a ?c)]`
+	for _, mode := range LegsFor(t, FusionOption) {
 		t.Run(mode.Name()+"/with an output", func(t *testing.T) {
-			var tuples []Tuple
-			for i := 1; i <= pages; i++ {
-				tuples = append(tuples, Tuple{Page(i)})
-			}
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			result, pulls, three := run(t, opts, []query.Symbol{a}, tuples)
+			result, pulls, three := run(t, mode, opts, withAnOutput, PageKind)
 			require.Equal(t, -1, result.Size(), "the result over a streaming group reports no size")
 			syms := result.Symbols()
 			ai, ci := query.SymbolIndex(syms, a), query.SymbolIndex(syms, c)
@@ -772,7 +824,7 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 
 			single := mode.PlannerOptions()
 			single.ScopeWindowCap = 1
-			result, _, six := run(t, single, []query.Symbol{a}, tuples)
+			result, _, six := run(t, mode, single, withAnOutput, PageKind)
 			_, err := CollectTuples(result, nil)
 			require.NoError(t, err)
 			require.Equal(t, pages, six.windows, "under a cap of one each subject tuple is a window")
@@ -781,16 +833,15 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 			require.Equal(t, three.begins, six.begins, "each stratum begins once, continued across the windows")
 		})
 		t.Run(mode.Name()+"/as a verdict per key", func(t *testing.T) {
-			tuples := []Tuple{{Page(1), Page(3)}, {Page(2), Page(1)}, {Page(3), Page(5)}, {Page(4), Page(6)}}
 			opts := mode.PlannerOptions()
 			opts.ScopeWindowCap = 8
-			result, pulls, _ := run(t, opts, []query.Symbol{a, c}, tuples)
+			result, pulls, _ := run(t, mode, opts, `[:find ?a ?c :in $ % :where [?a :page/check ?c] (follows ?a ?c)]`, pageCheck)
 			require.Equal(t, -1, result.Size(), "the result over a streaming group reports no size")
 			require.ElementsMatch(t, []query.Symbol{a, c}, result.Symbols(), "a verdict adds no symbol")
 			require.NotEmpty(t, result.Properties().Keys, "a verdict per key keeps the subject's keys")
 			got, err := CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Equal(t, len(tuples), pulls.Count(), "the group is read once, to its end")
+			require.Equal(t, 4, pulls.Count(), "the group, the four checked pairs, is read once, to its end")
 			syms := result.Symbols()
 			ai, ci := query.SymbolIndex(syms, a), query.SymbolIndex(syms, c)
 			var kept [][]interface{}
@@ -833,7 +884,10 @@ func TestFormOverTwoStreamingGroupsReadsEachOnce(t *testing.T) {
 			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: tag}, query.Constant{Value: tagValue}, query.Variable{Name: value}}}},
 		},
 	}}}
-	for _, mode := range OptimizerModes {
+	// The symmetric hash join holds neither group whole and pulls both as the
+	// result is consumed; the pulls asserted are the standard hash join's, so
+	// the legs are those without the symmetric join.
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return !m.Symmetric() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			itemPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{entity}, items).Iterator())
 			taggedPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{entity, tag}, tagged).Iterator())
@@ -902,7 +956,10 @@ func TestFormOverTwoStreamingGroupsSharingNoSymbolReadsEachOnce(t *testing.T) {
 			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: tag}, query.Constant{Value: tagValue}, query.Variable{Name: value}}}},
 		},
 	}}}
-	for _, mode := range OptimizerModes {
+	// The symmetric hash join holds neither group whole and pulls both as the
+	// result is consumed; the pulls asserted are the standard hash join's, so
+	// the legs are those without the symmetric join.
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return !m.Symmetric() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			itemPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{entity}, itemTuples).Iterator())
 			tagPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{tag}, tagTuples).Iterator())
@@ -982,7 +1039,10 @@ func TestFormOverThreeStreamingGroupsHoldsEachLaterGroup(t *testing.T) {
 			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: shelf}, query.Constant{Value: shelfValue}, query.Variable{Name: value}}}},
 		},
 	}}}
-	for _, mode := range OptimizerModes {
+	// The symmetric hash join holds neither group whole and pulls both as the
+	// result is consumed; the pulls asserted are the standard hash join's, so
+	// the legs are those without the symmetric join.
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return !m.Symmetric() }) {
 		t.Run(mode.Name(), func(t *testing.T) {
 			itemPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{entity}, itemTuples).Iterator())
 			tagPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{tag}, tagTuples).Iterator())

@@ -21,7 +21,7 @@ func TestMaterializePhaseBoundaryPreservesExactRelationContract(t *testing.T) {
 	base := NewMaterializedRelationWithProperties(
 		symbols,
 		tuples,
-		ExecutorOptions{EnableTrueStreaming: true},
+		ExecutorOptions{EnableSymmetricHashJoin: true},
 		properties,
 	)
 	stream := NewStreamingRelationWithProperties(

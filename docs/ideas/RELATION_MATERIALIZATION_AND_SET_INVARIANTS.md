@@ -299,7 +299,9 @@ iteration:
 The join is pull-based (`docs/proposals/PULL_BASED_HASH_JOIN_PROOF.md`, T1 to
 T6):
 
-- The join answers the streaming relation in every setting of the option.
+- The join answers the streaming relation whenever the build holds a tuple.
+- `EnableStreamingJoins` then selects nothing and is removed
+  (`docs/reference/PLANNER_OPTIONS.md`).
 - Its iterator fills one workspace of the result's width per pull and answers
   `RequiresCopy` true.
 - The probe tuple is read as its iterator hands it back.
@@ -307,8 +309,9 @@ T6):
 - The join holds its build index and nothing of its output.
 - `BindQueryInputs` holds its fold of several entries, since its reader reads
   the bound group twice.
-- A join result reports no size, so a later pattern or invocation sharing its
-  symbols takes the windowed route.
+- A join result reports no size. A later pattern or invocation sharing its
+  symbols takes the windowed route, since a join result is a group the scope
+  produces and the plan windows a clause over such a group.
 - A query whose final relation is a join result answers -1 for its size, as
   one ending in a scan does.
 
