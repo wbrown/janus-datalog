@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -16,6 +17,7 @@ func TestPositionSymbols(t *testing.T) {
 		attr        []string
 		transaction []string
 		neither     []string
+		refused     string
 	}{
 		{
 			name:    "direct pattern",
@@ -139,6 +141,78 @@ func TestPositionSymbols(t *testing.T) {
 			transaction: []string{"?t"},
 			neither:     []string{"?e"},
 		},
+		{
+			name:    "rule argument reaching a not-join local of the head variable's name is not position-bound",
+			query:   `[:find ?b :in $ % ?a :where (r ?a ?b)]`,
+			rules:   `[[(r ?a ?b) [?b :user/name ?a] (not-join [?b] [?a :user/next ?b])]]`,
+			entity:  []string{"?b"},
+			neither: []string{"?a"},
+		},
+		{
+			name:   "rule argument reaching a not-join header variable is position-bound",
+			query:  `[:find ?b :in $ % ?a :where (r ?a ?b)]`,
+			rules:  `[[(r ?a ?b) [?b :user/name ?a] (not-join [?a ?b] [?a :user/next ?b])]]`,
+			entity: []string{"?a", "?b"},
+		},
+		{
+			name:    "rule argument reaching an or-join local of the head variable's name is not position-bound",
+			query:   `[:find ?b :in $ % ?a :where (r ?a ?b)]`,
+			rules:   `[[(r ?a ?b) [?b :user/name ?a] (or-join [?b] [?a :user/next ?b] [?b :user/city _])]]`,
+			entity:  []string{"?b"},
+			neither: []string{"?a"},
+		},
+		{
+			name:    "rule argument reaching an or-default-join local of the head variable's name is not position-bound",
+			query:   `[:find ?b ?v :in $ % ?a :where (r ?a ?b ?v)]`,
+			rules:   `[[(r ?a ?b ?v) [?b :user/name ?a] (or-default-join [[?b] ?v] (and [?a :user/next ?b] [(ground 1) ?v]) [(ground 0) ?v])]]`,
+			entity:  []string{"?b"},
+			neither: []string{"?a", "?v"},
+		},
+		{
+			name:    "input reaching a not-join local of its name in the query is not position-bound",
+			query:   `[:find ?b :in $ ?a :where [?b :user/name ?a] (not-join [?b] [?a :user/next ?b])]`,
+			entity:  []string{"?b"},
+			neither: []string{"?a"},
+		},
+		{
+			name:    "input reaching a local of a header form nested in a header form is not position-bound",
+			query:   `[:find ?b :in $ ?a :where [?b :user/name ?a] (not-join [?b] (or-join [?b] [?a :user/next ?b] [?b :user/city _]))]`,
+			entity:  []string{"?b"},
+			neither: []string{"?a"},
+		},
+		{
+			name:        "rule argument named at the value and transaction positions of one pattern is bound at the transaction position",
+			query:       `[:find ?e :in $ % ?t :where (at ?e ?t)]`,
+			rules:       `[[(at ?e ?t) [?e :user/name ?t ?t]]]`,
+			entity:      []string{"?e"},
+			transaction: []string{"?t"},
+		},
+		{
+			name:    "rule argument named at the entity and attribute positions of one pattern is bound at both",
+			query:   `[:find ?v :in $ % ?x :where (r ?x ?v)]`,
+			rules:   `[[(r ?x ?v) [?x ?x ?v]]]`,
+			entity:  []string{"?x"},
+			attr:    []string{"?x"},
+			neither: []string{"?v"},
+		},
+		{
+			name:        "rule argument named twice in a subquery the body runs is bound at the later position",
+			query:       `[:find ?b :in $ % ?a :where (r ?a ?b)]`,
+			rules:       `[[(r ?a ?b) [?b :user/city ?a] [(q [:find ?y :in $ ?x :where [?y :user/name ?x ?x]] $ ?a) [[?y]]]]]`,
+			entity:      []string{"?b"},
+			transaction: []string{"?a"},
+		},
+		{
+			name:    "a constant of another type at a rule argument's typed position is refused",
+			query:   `[:find ?e :in $ % :where (at ?e "x")]`,
+			rules:   `[[(at ?e ?t) [?e :user/name _ ?t]]]`,
+			refused: "transaction position",
+		},
+		{
+			name:    "a constant of another type at a subquery argument's typed parameter is refused",
+			query:   `[:find ?e :where [(q [:find ?x :in $ ?tx :where [?x :user/name _ ?tx]] $ "x") [[?e]]]]`,
+			refused: "transaction position",
+		},
 	}
 
 	for _, tt := range tests {
@@ -154,7 +228,16 @@ func TestPositionSymbols(t *testing.T) {
 					t.Fatalf("ParseRules failed: %v", err)
 				}
 			}
-			entity, attr, transaction := query.PositionSymbols(q, rules)
+			entity, attr, transaction, err := query.PositionSymbols(q, rules)
+			if tt.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.refused) {
+					t.Fatalf("expected a refusal naming %q, got %v", tt.refused, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("PositionSymbols failed: %v", err)
+			}
 			for _, sym := range tt.entity {
 				if !entity[datalog.NewSymbol(sym)] {
 					t.Errorf("expected %s in entity-position set, got %v", sym, entity)

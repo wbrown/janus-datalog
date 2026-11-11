@@ -3210,7 +3210,10 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		valueIdx++
 	}
 	inputIdx := 0
-	entityBound, attrBound, txBound := query.PositionSymbols(q, rules)
+	entityBound, attrBound, txBound, err := query.PositionSymbols(q, rules)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	for _, inputSpec := range q.In {
 		if _, ok := inputSpec.(query.DatabaseInput); ok {

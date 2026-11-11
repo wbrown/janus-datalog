@@ -26,7 +26,7 @@
   - the tuple's values, its own backing array of one interface value per position;
   - its header in the `TupleSet` under `keys`, whose `members` is a slice in admission order beside an open-addressed table of one `int32` index and one `uint8` tag per slot, at most half full;
   - per key its joins read, an `ordinalIndex`: a `TupleSet` over the first tuple of each distinct key, one `int32` ordinal per tuple, and, under fanout, the key's ordinals grouped.
-- **P4 (the one slice).** `absorb` adds each admitted tuple to `keys`, and `TupleSet.Add` appends it to `members`, so every held tuple's header is held in one slice of the set, which grows by doubling. `relation`, `index`, a pass's delta view, a window's additions and a join's kept tuples read `members` capped at a count.
+- **P4 (the one slice).** `absorb` adds each admitted tuple to `keys`, and `TupleSet.Add` appends it to `members`, so every held tuple's header is held in one slice of the set, which grows by doubling. `relation`, a pass's delta view, a window's additions and a join's kept tuples read `members` capped at a count. `index` enters `members` whole, to the set's count, and a probe through it is bounded at the view's count (`ordinalIndex.probe`).
 
 ## 3. How long the sets live
 

@@ -15,9 +15,10 @@ import (
 // recursively, or of a body under a subquery's own %, is refused at the
 // query's entry when its value is of another type, as an input reaching the
 // position directly is, and an ElementID reaching the transaction position
-// that way answers the assertion it names. An input reaching a body's value
-// position alone is not refused: the pattern's typed non-match answers
-// nothing.
+// that way answers the assertion it names. A pattern naming the argument at
+// two positions binds it into each, the later one included. An input
+// reaching a body's value position alone is not refused: the pattern's typed
+// non-match answers nothing.
 func TestAnInputReachingATypedPositionThroughARuleArgumentIsRefused(t *testing.T) {
 	first := datalog.NewIdentity("item:first")
 	for _, mode := range legsFor(optimizerModes) {
@@ -37,6 +38,9 @@ func TestAnInputReachingATypedPositionThroughARuleArgumentIsRefused(t *testing.T
 				{"the transaction position of a rule the body invokes", `[:find ?e :in $ % ?t :where (at ?e ?t)]`, `[[(at ?e ?t) (atx ?e ?t)] [(atx ?e ?t) [?e :item/one "x" ?t]]]`, int64(at.Lamport), "transaction position"},
 				{"the entity position of a recursive rule", `[:find ?b :in $ % ?x :where (reach ?x ?b)]`, `[[(reach ?a ?b) [?a :item/next ?b]] [(reach ?a ?c) [?a :item/next ?b] (reach ?b ?c)]]`, "item:first", "entity position"},
 				{"the transaction position under a subquery's own %", `[:find ?e :in $ % ?t :where [(q [:find ?x :in $ % ?tx :where (at ?x ?tx)] $ % ?t) [[?e]]]]`, `[[(at ?e ?t) [?e :item/one "x" ?t]]]`, int64(at.Lamport), "transaction position"},
+				{"the transaction position, named after the value position in one pattern", `[:find ?e :in $ % ?t :where (at ?e ?t)]`, `[[(at ?e ?t) [?e :item/one ?t ?t]]]`, "x", "transaction position"},
+				{"the attribute position, named after the entity position in one pattern", `[:find ?v :in $ % ?x :where (r ?x ?v)]`, `[[(r ?x ?v) [?x ?x ?v]]]`, first, "attribute position"},
+				{"the transaction position, named after the value position in a subquery the body runs", `[:find ?b :in $ % ?a :where (r ?a ?b)]`, `[[(r ?a ?b) [?b :item/one ?a] [(q [:find ?y :in $ ?x :where [?y :item/one ?x ?x]] $ ?a) [[?y]]]]]`, "x", "transaction position"},
 			} {
 				_, err := executor.CollectTuples(db.Query(c.query, c.rules, c.arg))
 				require.Error(t, err, "%s: an input of another type reaching it through a rule argument is refused", c.name)

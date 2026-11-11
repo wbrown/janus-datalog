@@ -14,7 +14,7 @@
 Every name below is the code's, given a symbol for the proof.
 
 - A **body**, an **occurrence**, a **delta copy**, a **lower copy** and a copy's **marked predicate** are as `DELTA_COPY_RUNS_ON_ITS_DELTA_PROOF.md` §1 defines them.
-- A **set** S of a predicate is its `derivedSet`: its tuples, each held once, appended in the order `absorb` admits them. The **ordinal** of a tuple is its position in `S.tuples`, and the **count** of S at a moment is the tuples it holds then.
+- A **set** S of a predicate is its `derivedSet`: its tuples, each held once, the members of its table in the order `absorb` admits them. The **ordinal** of a tuple is its position among those members, `S.keys.members`, and the **count** of S at a moment is the tuples it holds then.
 - The **mark** of a copy c is the count of its marked predicate's set at the start of c's last run, and zero before its first run.
 - The **delta** of c at a run is the tuples of its marked predicate's set from c's mark to the set's count at the run's start.
 - A **pass** is one visit of every delta copy of the stratum, in the pass order, each copy whose delta is not empty run over its delta and its result absorbed before the next copy is visited.
@@ -32,7 +32,7 @@ Every name below is the code's, given a symbol for the proof.
 - **P5 (the windows).** `extend` runs a stratum per window: a window's seed enters the seed predicate's set as the window's first delta, a later window's first run runs the lower copies whose lower predicate gained tuples in the window over those tuples, and the sets persist across windows (`SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2).
 - **P6 (the fixpoint).** A stratum's sets at its end are the least fixpoint of its bodies over the lower strata's relations and the seed (`REWRITE_ORDER_PROOF.md` P2, `SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2).
 - **P7 (the events and the bound).** `rules/iteration` reports, per predicate, the tuples an iteration added, numbered from zero per window, and `MaxRuleIterations` bounds the iterations per window.
-- **P8 (a view is a fixed slice).** A view is `derivedSet.relation`'s relation over `S.tuples[:n:n]`, and a body's result is pulled when it is absorbed.
+- **P8 (a view is a fixed slice).** A view is `derivedSet.relation`'s relation over `S.keys.members[:n:n]`, and a body's result is pulled when it is absorbed.
 
 ## 3. Theorems
 

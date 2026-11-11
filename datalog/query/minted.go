@@ -127,6 +127,25 @@ func UnifiedVariable(sym Symbol, position int) Symbol {
 	return datalog.NewSymbol(ns + "/" + name + "." + strconv.Itoa(position))
 }
 
+// UnifiedOrigin is the variable a UnifiedVariable was written for, read off
+// its name: ?x for ?unify/x.2 and ?mine/x for ?unify.mine/x.2. The second
+// value is false for a variable in no unify namespace, which stands for
+// itself.
+func UnifiedOrigin(sym Symbol) (Symbol, bool) {
+	kind, own, _ := strings.Cut(strings.TrimPrefix(sym.Namespace(), "?"), ".")
+	if kind != unifyNamespace {
+		return nil, false
+	}
+	name := sym.Name()
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		name = name[:i]
+	}
+	if own == "" {
+		return datalog.NewSymbol("?" + name), true
+	}
+	return datalog.NewSymbol("?" + own + "/" + name), true
+}
+
 // SeedRestricted reports whether a predicate's relation holds only what a
 // seed reaches: the magic and adorned predicates the rewrite mints, their
 // deltas, and scope/required, the tuples a nested scope runs over. A body's

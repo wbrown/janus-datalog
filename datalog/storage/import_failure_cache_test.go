@@ -78,7 +78,7 @@ func TestAReadAfterAFailedImportAnswersTheStore(t *testing.T) {
 	name := datalog.NewKeyword(":item/name")
 	holder := datalog.NewIdentity("item:holder")
 	for _, entry := range importEntryPoints {
-		for _, mode := range legsFor(optimizerModes) {
+		for _, mode := range legsFor(optimizerModes, fusionOption) {
 			for _, cacheMode := range cacheTestModes {
 				t.Run(entry.name+"/"+mode.name+"/"+cacheMode.name, func(t *testing.T) {
 					var failing, landed atomic.Bool

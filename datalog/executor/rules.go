@@ -488,9 +488,11 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 // joins read, an index over its tuples by ordinal
 // (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md). The
 // table's members are the set's tuples in admission order, the one slice of
-// their headers the set holds (docs/proposals/FIXPOINT_MEMORY.md, S2); a
-// reader of the tuples through a count takes the members capped at it, so an
-// append cannot reach a member past the count.
+// their headers the set holds (docs/proposals/FIXPOINT_MEMORY.md, S2). A
+// reader of the tuples through a count, the relation, a delta view, a
+// window's additions and a join's kept tuples, takes the members capped at
+// it, so an append cannot reach a member past the count; an index enters the
+// members whole and bounds each probe at the view's count.
 type derivedSet struct {
 	symbols []query.Symbol
 	keys    *TupleSet
