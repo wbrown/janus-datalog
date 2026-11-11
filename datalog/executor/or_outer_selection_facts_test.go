@@ -63,48 +63,61 @@ func TestOrFallbackSurfacesTheSubjectsErrorsUnderTheEAArm(t *testing.T) {
 		},
 	}
 
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			var triggers, lookups int
-			handler := func(e annotations.Event) {
-				switch e.Name {
-				case annotations.PrefetchTrigger:
-					triggers++
-				case annotations.StorageResolveComplete:
-					// A lookup reports the values it served at its attribute,
-					// and names no pattern.
-					_, served := e.Data[annotations.KeyValuesServed]
-					_, ofPattern := e.Data[annotations.KeyPattern]
-					if served && !ofPattern && e.Data[annotations.KeyAttribute] == attr {
-						lookups++
+	for _, mode := range OptimizerModesWhere(func(m OptimizerMode) bool { return m.Prefetch() }) {
+		for _, testCase := range testCases {
+			t.Run(mode.Name()+"/"+testCase.name, func(t *testing.T) {
+				var triggers, lookups int
+				handler := mode.Recording(func(e annotations.Event) {
+					switch e.Name {
+					case annotations.PrefetchTrigger:
+						triggers++
+					case annotations.StorageResolveComplete:
+						// A lookup reports the values it served at its attribute,
+						// and names no pattern.
+						_, served := e.Data[annotations.KeyValuesServed]
+						_, ofPattern := e.Data[annotations.KeyPattern]
+						if served && !ofPattern && e.Data[annotations.KeyAttribute] == attr {
+							lookups++
+						}
 					}
+				})
+				plannerOpts := mode.PlannerOptions()
+				d, err := storage.OpenFacts(datoms, storage.DatabaseOptions{AnnotationHandler: handler, PlannerOptions: &plannerOpts})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, d.Close()) })
+				options := ExecutorOptionsFromPlanner(plannerOpts)
+				options.ScopeWindowCap = 128
+				options.Handler = handler
+				relation, err := NewOrFallbackRelation(
+					NewQueryExecutor(d.Matcher(), nil, options),
+					NewContext(),
+					[]query.Symbol{entitySymbol},
+					[]query.Symbol{valueSymbol},
+					[][]query.Clause{branch},
+					testCase.outer,
+					options,
+					true,
+				)
+				require.NoError(t, err)
+				iterator := relation.Iterator()
+				for iterator.Next() {
 				}
-			}
-			d, err := storage.OpenFacts(datoms, storage.DatabaseOptions{AnnotationHandler: handler})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, d.Close()) })
-			options := ExecutorOptions{EnableEntityPrefetch: true, ScopeWindowCap: 128, Handler: handler}
-			relation, err := NewOrFallbackRelation(
-				NewQueryExecutor(d.Matcher(), nil, options),
-				NewContext(),
-				[]query.Symbol{entitySymbol},
-				[]query.Symbol{valueSymbol},
-				[][]query.Clause{branch},
-				testCase.outer,
-				options,
-				true,
-			)
-			require.NoError(t, err)
-			iterator := relation.Iterator()
-			for iterator.Next() {
-			}
-			err = iterator.Error()
-			if closeErr := iterator.Close(); err == nil {
-				err = closeErr
-			}
-			require.EqualError(t, err, testCase.expected.Error())
-			require.NotZero(t, triggers, "the trigger ran before the failure, so the arm served the branch")
-			require.Equal(t, testCase.lookups, lookups, "the arm built every window after the trigger from the cache")
-		})
+				err = iterator.Error()
+				if closeErr := iterator.Close(); err == nil {
+					err = closeErr
+				}
+				require.EqualError(t, err, testCase.expected.Error())
+				require.NotZero(t, triggers, "the trigger ran before the failure, so the arm served the branch")
+				want := testCase.lookups
+				if mode.Fusion() {
+					// A leg carrying fusion fetches the branch for the six
+					// windows before the trigger, 1, 2, 4, 8, 16 and 32
+					// entities, through one lookup per entity; the arm's
+					// lookups are the windows after it.
+					want += 1 + 2 + 4 + 8 + 16 + 32
+				}
+				require.Equal(t, want, lookups, "the fused fetch of the windows before the trigger, where the leg fuses, and the arm's build of every window after it from the cache")
+			})
+		}
 	}
 }

@@ -14,30 +14,34 @@ import (
 func TestCLI_ACPUProfileOfTheRunIsWrittenWhereTheFlagNames(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
-	profilePath := filepath.Join(t.TempDir(), "cpu.prof")
 
-	cmd := exec.Command(binPath, "-db", dbPath, "-cpuprofile", profilePath,
-		"-query", `[:find ?n :where [?e :person/name ?n]]`)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("the run ended with %v:\n%s", err, out)
-	}
+	for _, mode := range cliOptimizeFlags {
+		t.Run(mode.name, func(t *testing.T) {
+			profilePath := filepath.Join(t.TempDir(), "cpu.prof")
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(), "-cpuprofile", profilePath,
+				"-query", `[:find ?n :where [?e :person/name ?n]]`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("the run ended with %v:\n%s", err, out)
+			}
 
-	f, err := os.Open(profilePath)
-	if err != nil {
-		t.Fatalf("the profile was not written: %v", err)
-	}
-	defer f.Close()
-	unzipped, err := gzip.NewReader(f)
-	if err != nil {
-		t.Fatalf("the profile is not the gzipped profile runtime/pprof writes: %v", err)
-	}
-	content, err := io.ReadAll(unzipped)
-	if err != nil {
-		t.Fatalf("the profile does not read whole: %v", err)
-	}
-	if len(content) == 0 {
-		t.Fatal("the profile holds no samples")
+			f, err := os.Open(profilePath)
+			if err != nil {
+				t.Fatalf("the profile was not written: %v", err)
+			}
+			defer f.Close()
+			unzipped, err := gzip.NewReader(f)
+			if err != nil {
+				t.Fatalf("the profile is not the gzipped profile runtime/pprof writes: %v", err)
+			}
+			content, err := io.ReadAll(unzipped)
+			if err != nil {
+				t.Fatalf("the profile does not read whole: %v", err)
+			}
+			if len(content) == 0 {
+				t.Fatal("the profile holds no samples")
+			}
+		})
 	}
 }
 
@@ -47,29 +51,33 @@ func TestCLI_ACPUProfileOfTheRunIsWrittenWhereTheFlagNames(t *testing.T) {
 func TestCLI_AnAllocationProfileOfTheRunIsWrittenWhereTheFlagNames(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
-	profilePath := filepath.Join(t.TempDir(), "mem.prof")
 
-	cmd := exec.Command(binPath, "-db", dbPath, "-memprofile", profilePath,
-		"-query", `[:find ?n :where [?e :person/name ?n]]`)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("the run ended with %v:\n%s", err, out)
-	}
+	for _, mode := range cliOptimizeFlags {
+		t.Run(mode.name, func(t *testing.T) {
+			profilePath := filepath.Join(t.TempDir(), "mem.prof")
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(), "-memprofile", profilePath,
+				"-query", `[:find ?n :where [?e :person/name ?n]]`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("the run ended with %v:\n%s", err, out)
+			}
 
-	f, err := os.Open(profilePath)
-	if err != nil {
-		t.Fatalf("the profile was not written: %v", err)
-	}
-	defer f.Close()
-	unzipped, err := gzip.NewReader(f)
-	if err != nil {
-		t.Fatalf("the profile is not the gzipped profile runtime/pprof writes: %v", err)
-	}
-	content, err := io.ReadAll(unzipped)
-	if err != nil {
-		t.Fatalf("the profile does not read whole: %v", err)
-	}
-	if len(content) == 0 {
-		t.Fatal("the profile holds no samples")
+			f, err := os.Open(profilePath)
+			if err != nil {
+				t.Fatalf("the profile was not written: %v", err)
+			}
+			defer f.Close()
+			unzipped, err := gzip.NewReader(f)
+			if err != nil {
+				t.Fatalf("the profile is not the gzipped profile runtime/pprof writes: %v", err)
+			}
+			content, err := io.ReadAll(unzipped)
+			if err != nil {
+				t.Fatalf("the profile does not read whole: %v", err)
+			}
+			if len(content) == 0 {
+				t.Fatal("the profile holds no samples")
+			}
+		})
 	}
 }
