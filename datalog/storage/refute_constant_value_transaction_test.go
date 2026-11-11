@@ -21,9 +21,9 @@ import (
 // as of T. First asserts "x" again later, and T selects nothing in the latest
 // view, where the later ElementID selects first. Every spelling with the value
 // constant or from an input, the attribute free or bound, the transaction a
-// constant, an integer Lamport or from an input, on $, a named source and a
-// rule body, answers the reference in each view, with the EA cache on and
-// off. In History the same patterns answer every datom T wrote carrying "x".
+// constant or from an input, on $, a named source and a rule body, answers
+// the reference in each view, with the EA cache on and off. In History the
+// same patterns answer every datom T wrote carrying "x".
 func TestRefuteAConstantValueMatchHonorsItsTransactionPosition(t *testing.T) {
 	one := datalog.NewKeyword(":item/one")
 	name := datalog.NewKeyword(":item/name")
@@ -127,7 +127,6 @@ func TestRefuteAConstantValueMatchHonorsItsTransactionPosition(t *testing.T) {
 							}{
 								{"attribute free, value and transaction constant", fmt.Sprintf(`[:find ?e :where [?e ?a "x" %s]]`, eid), nil},
 								{"attribute bound, value and transaction constant", fmt.Sprintf(`[:find ?e :where [?e :item/one "x" %s]]`, eid), nil},
-								{"attribute free, value constant, transaction an integer Lamport", fmt.Sprintf(`[:find ?e :where [?e ?a "x" %d]]`, at.Lamport), nil},
 								{"attribute free, value constant, transaction from an input", `[:find ?e :in $ ?t :where [?e ?a "x" ?t]]`, []interface{}{at}},
 								{"attribute free, value from an input, transaction constant", fmt.Sprintf(`[:find ?e :in $ ?v :where [?e ?a ?v %s]]`, eid), []interface{}{"x"}},
 								{"attribute free, value and transaction from a relation input", `[:find ?e :in $ [[?v ?t]] :where [?e ?a ?v ?t]]`, []interface{}{[]interface{}{[]interface{}{"x", at}}}},

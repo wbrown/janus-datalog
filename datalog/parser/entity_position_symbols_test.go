@@ -9,11 +9,12 @@ import (
 
 func TestPositionSymbols(t *testing.T) {
 	tests := []struct {
-		name    string
-		query   string
-		entity  []string
-		attr    []string
-		neither []string
+		name        string
+		query       string
+		entity      []string
+		attr        []string
+		transaction []string
+		neither     []string
 	}{
 		{
 			name:    "direct pattern",
@@ -33,6 +34,13 @@ func TestPositionSymbols(t *testing.T) {
 			entity:  []string{"?e"},
 			attr:    []string{"?a"},
 			neither: []string{"?v"},
+		},
+		{
+			name:        "transaction variable",
+			query:       `[:find ?v :in $ ?t :where [?e :user/name ?v ?t]]`,
+			entity:      []string{"?e"},
+			transaction: []string{"?t"},
+			neither:     []string{"?v"},
 		},
 		{
 			name: "inside not and or",
@@ -69,6 +77,19 @@ func TestPositionSymbols(t *testing.T) {
 			neither: []string{"?count"},
 		},
 		{
+			name: "subquery argument mapped to inner transaction position",
+			query: `[:find ?e ?count
+			         :in $ ?when
+			         :where [?e :task/id _]
+			                [(q [:find (count ?t)
+			                     :in $ ?tx
+			                     :where [?t :task/id _ ?tx]]
+			                    $ ?when) [[?count]]]]`,
+			entity:      []string{"?e"},
+			transaction: []string{"?when"},
+			neither:     []string{"?count"},
+		},
+		{
 			name: "subquery argument feeding only value positions is not position-bound",
 			query: `[:find ?e ?count
 			         :in $ ?status
@@ -88,7 +109,7 @@ func TestPositionSymbols(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseQuery failed: %v", err)
 			}
-			entity, attr := query.PositionSymbols(q)
+			entity, attr, transaction := query.PositionSymbols(q)
 			for _, sym := range tt.entity {
 				if !entity[datalog.NewSymbol(sym)] {
 					t.Errorf("expected %s in entity-position set, got %v", sym, entity)
@@ -99,12 +120,20 @@ func TestPositionSymbols(t *testing.T) {
 					t.Errorf("expected %s in attribute-position set, got %v", sym, attr)
 				}
 			}
+			for _, sym := range tt.transaction {
+				if !transaction[datalog.NewSymbol(sym)] {
+					t.Errorf("expected %s in transaction-position set, got %v", sym, transaction)
+				}
+			}
 			for _, sym := range tt.neither {
 				if entity[datalog.NewSymbol(sym)] {
 					t.Errorf("%s must not be in entity-position set, got %v", sym, entity)
 				}
 				if attr[datalog.NewSymbol(sym)] {
 					t.Errorf("%s must not be in attribute-position set, got %v", sym, attr)
+				}
+				if transaction[datalog.NewSymbol(sym)] {
+					t.Errorf("%s must not be in transaction-position set, got %v", sym, transaction)
 				}
 			}
 		})

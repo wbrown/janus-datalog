@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
@@ -63,8 +62,8 @@ import (
 // setting of every planner option a test can turn on, named backend/leg. The
 // leg's fields are the mode's by promotion. Under -reach legsFor hands a test
 // modes that record its reach, recordsReach naming the test, and the mode's
-// plannerOptions carry the recorder as the handler; a test's own handler,
-// given at open, carries it ahead through recording.
+// plannerOptions carry the recorder as the handler, which the database hands
+// every event beside a handler given at open.
 type optimizerMode struct {
 	name string
 	optionLeg
@@ -80,20 +79,6 @@ func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 		opts.Handler = reachRecorder(m.recordsReach)
 	}
 	return opts
-}
-
-// recording wraps handler so the recorder receives every event the handler
-// does, or returns handler unchanged when the mode records no reach or when
-// handler is nil, annotations off, under which no event is emitted.
-func (m optimizerMode) recording(handler annotations.Handler) annotations.Handler {
-	if m.recordsReach == "" || handler == nil {
-		return handler
-	}
-	record := reachRecorder(m.recordsReach)
-	return func(event annotations.Event) {
-		record(event)
-		handler(event)
-	}
 }
 
 // optionLeg is one setting of the six options, named by the options on, in

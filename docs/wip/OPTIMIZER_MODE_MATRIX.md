@@ -132,7 +132,7 @@ No environment variables, no build tags, no gate changes: the matrix runs inside
 
    - In `datalog/storage` and `tests/` it wraps the annotation handler of every database the package's constructor opens, so every test opening through the constructor is in the record.
    - In the other packages the mode carries `recordsReach`, the test's name, which `legsFor` sets under `-reach`, and the mode's planner options carry the recorder as their handler. A database opened under them, or an executor built under them, carries it on.
-   - A test that installs a handler of its own, on the options or at the database's open, installs it through `recording`, the mode's method: with `recordsReach` set it returns the handler with the recorder ahead of it, so the recorder receives every event the handler does, and with it empty it returns the handler itself.
+   - A test that installs a handler of its own on the options installs it through `recording`, the mode's method: with `recordsReach` set it returns the handler with the recorder ahead of it, so the recorder receives every event the handler does, and with it empty it returns the handler itself. A handler given at a database's open is given as it is: the database hands every event to it and to the handler its planner options carry.
 
    Each package's `reach_report_test.go` holds the flag, the record and the report written at the end of the run, and the loops take their reaches from it. A test absent from the report, one that opens its database outside the constructor or loops the modes directly, keeps every option.
 

@@ -82,8 +82,6 @@ func TestAManyMembersTransactionPositionIsItsOwnAssertions(t *testing.T) {
 						[][]interface{}{}},
 					{"a bound T on the member's own assertion", `[:find ?added :where [#id "bindery:press" :bindery/quires "folio" ` + eid(pressFolio) + ` ?added]]`,
 						[][]interface{}{{true}}},
-					{"a Lamport at the transaction position", fmt.Sprintf(`[:find ?v :where [#id "bindery:press" :bindery/quires ?v %d]]`, pressOctavo.Lamport),
-						[][]interface{}{{"octavo"}}},
 				}
 				for _, c := range cases {
 					t.Run(c.name, func(t *testing.T) {

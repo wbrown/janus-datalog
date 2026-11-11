@@ -183,7 +183,7 @@ type DatabaseOptions struct {
 	// with no tuple. It requires Schema: with none to check against, the
 	// constructor returns an error.
 	RefuseUnknownAttributes bool
-	AnnotationHandler       annotations.Handler     // Optional handler for query tracing
+	AnnotationHandler       annotations.Handler     // Handler for query tracing; the database hands every event to it and to the Handler PlannerOptions carries
 	ReplicaID               uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
 	DisableCache            bool                    // Disable EA cache; queries resolve directly from storage
 	PlannerOptions          *planner.PlannerOptions // Optional override for default planner options
@@ -343,18 +343,16 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		cache = NewCache(clock)
 	}
 
-	// AnnotationHandler is the documented
-	// input and wins when set; a Handler supplied directly on PlannerOptions
-	// stands otherwise. Fixed at construction: nothing attaches an observer to a
-	// running database, because everything built from these options — executors,
-	// matchers, relations — is built with it already in place.
+	// AnnotationHandler and a Handler supplied on PlannerOptions both receive
+	// every event, the planner's first; one alone stands as given. Fixed at
+	// construction: nothing attaches an observer to a running database, because
+	// everything built from these options — executors, matchers, relations — is
+	// built with it already in place.
 	plannerOptions := DefaultPlannerOptions()
 	if opts.PlannerOptions != nil {
 		plannerOptions = *opts.PlannerOptions
 	}
-	if opts.AnnotationHandler != nil {
-		plannerOptions.Handler = opts.AnnotationHandler
-	}
+	plannerOptions.Handler = annotations.Both(plannerOptions.Handler, opts.AnnotationHandler)
 
 	d := &Database{
 		store:          store,
@@ -3115,12 +3113,13 @@ func (d *Database) Stats() (map[string]interface{}, error) {
 }
 
 // convertInputValue admits one user input value for one symbol: it refuses a
-// value outside the domain, applies the entity- and attribute-position typing
-// rules, refuses a keyword bound into an attribute position that is wider
-// than storage holds, then normalizes the value into the domain (integer
-// widths → int64). Every input form converts its values through here, once
-// per value, so the width is never read on a match.
-func convertInputValue(entityBound, attrBound map[query.Symbol]bool, sym query.Symbol, value interface{}) (interface{}, error) {
+// value outside the domain, applies the entity-, attribute- and
+// transaction-position typing rules, refuses a keyword bound into an
+// attribute position that is wider than storage holds, then normalizes the
+// value into the domain (integer widths → int64). Every input form converts
+// its values through here, once per value, so the width is never read on a
+// match.
+func convertInputValue(entityBound, attrBound, txBound map[query.Symbol]bool, sym query.Symbol, value interface{}) (interface{}, error) {
 	if err := datalog.ValidateValue(value); err != nil {
 		return nil, fmt.Errorf("input %s: %w", sym, err)
 	}
@@ -3137,6 +3136,11 @@ func convertInputValue(entityBound, attrBound map[query.Symbol]bool, sym query.S
 			if err := datalog.ValidateAttributeWidth(attr); err != nil {
 				return nil, fmt.Errorf("input %s: %w", sym, err)
 			}
+		}
+	}
+	if txBound[sym] {
+		if err := query.ValidateTransactionBinding(value); err != nil {
+			return nil, fmt.Errorf("input %s: %w", sym, err)
 		}
 	}
 	return datalog.NormalizeValue(value), nil
@@ -3188,7 +3192,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 	inputRelations := make([]executor.Relation, 0, len(inputs))
 	var rules *query.RuleSet
 	inputIdx := 0
-	entityBound, attrBound := query.PositionSymbols(q)
+	entityBound, attrBound, txBound := query.PositionSymbols(q)
 
 	for _, inputSpec := range q.In {
 		if _, ok := inputSpec.(query.DatabaseInput); ok {
@@ -3279,7 +3283,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 			}
 			tuple := make(executor.Tuple, len(values))
 			for j, val := range values {
-				v, err := convertInputValue(entityBound, attrBound, symbols[j], val)
+				v, err := convertInputValue(entityBound, attrBound, txBound, symbols[j], val)
 				if err != nil {
 					return nil, nil, err
 				}

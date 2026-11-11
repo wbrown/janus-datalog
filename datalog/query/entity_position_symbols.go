@@ -34,26 +34,41 @@ func ValidateAttributeBinding(v interface{}) error {
 	return nil
 }
 
-// PositionSymbols returns the sets of symbols that occupy the entity and
-// attribute positions of a data pattern anywhere in the query — directly,
-// inside not/or containers, or transitively as an argument to a subquery
-// whose corresponding :in parameter occupies such a position in the nested
-// query. One walk collects both sets.
-//
-// The entity position is inhabited only by Identity and the attribute
-// position only by Keyword, so input values bound to these symbols must have
-// those types. Validating that at the input boundary turns a query defect
-// into a loud error before execution; interior data flow (values joined from
-// other positions) is never validated — a mistyped value there is the
-// equality join's ordinary typed non-match.
-func PositionSymbols(q *Query) (entity, attribute map[Symbol]bool) {
-	entity = make(map[Symbol]bool)
-	attribute = make(map[Symbol]bool)
-	positionSymbolsInClauses(q.Where, entity, attribute)
-	return entity, attribute
+// ValidateTransactionBinding is the transaction-position counterpart of
+// ValidateEntityBinding: the transaction position is inhabited only by
+// ElementID, given as a value or through a pointer. An integer names no
+// transaction, since the Lamport is one component of an ElementID.
+func ValidateTransactionBinding(v interface{}) error {
+	if v == nil {
+		return nil
+	}
+	if _, ok := datalog.DerefElementID(v); !ok {
+		return fmt.Errorf("data pattern transaction position requires an ElementID, got %T (construct one with datalog.ElementID or an #eid [lamport replica] literal)", v)
+	}
+	return nil
 }
 
-func positionSymbolsInClauses(clauses []Clause, entity, attribute map[Symbol]bool) {
+// PositionSymbols returns the sets of symbols that occupy the entity,
+// attribute and transaction positions of a data pattern anywhere in the query
+// — directly, inside not/or containers, or transitively as an argument to a
+// subquery whose corresponding :in parameter occupies such a position in the
+// nested query. One walk collects the three sets.
+//
+// The entity position is inhabited only by Identity, the attribute position
+// only by Keyword and the transaction position only by ElementID, so input
+// values bound to these symbols must have those types. Validating that at the
+// input boundary turns a query defect into a loud error before execution;
+// interior data flow (values joined from other positions) is never validated
+// — a mistyped value there is the equality join's ordinary typed non-match.
+func PositionSymbols(q *Query) (entity, attribute, transaction map[Symbol]bool) {
+	entity = make(map[Symbol]bool)
+	attribute = make(map[Symbol]bool)
+	transaction = make(map[Symbol]bool)
+	positionSymbolsInClauses(q.Where, entity, attribute, transaction)
+	return entity, attribute, transaction
+}
+
+func positionSymbolsInClauses(clauses []Clause, entity, attribute, transaction map[Symbol]bool) {
 	WalkClauses(clauses, func(clause Clause) bool {
 		switch c := clause.(type) {
 		case *DataPattern:
@@ -63,25 +78,28 @@ func positionSymbolsInClauses(clauses []Clause, entity, attribute map[Symbol]boo
 			if v, ok := c.GetA().(Variable); ok {
 				attribute[v.Name] = true
 			}
+			if v, ok := c.GetT().(Variable); ok {
+				transaction[v.Name] = true
+			}
 		case *SubqueryPattern:
 			// The subquery's inner positions map back through its argument
 			// list, not through a direct walk of its :where.
-			positionSymbolsFromSubquery(*c, entity, attribute)
+			positionSymbolsFromSubquery(*c, entity, attribute, transaction)
 		}
 		return true
 	})
 }
 
-// positionSymbolsFromSubquery maps the nested query's entity- and
-// attribute-position :in parameters back onto the outer argument symbols: an
-// outer symbol passed into an inner typed-position parameter is itself bound
-// to that position.
-func positionSymbolsFromSubquery(p SubqueryPattern, entity, attribute map[Symbol]bool) {
+// positionSymbolsFromSubquery maps the nested query's entity-, attribute- and
+// transaction-position :in parameters back onto the outer argument symbols:
+// an outer symbol passed into an inner typed-position parameter is itself
+// bound to that position.
+func positionSymbolsFromSubquery(p SubqueryPattern, entity, attribute, transaction map[Symbol]bool) {
 	if p.Query == nil {
 		return
 	}
-	innerEntity, innerAttribute := PositionSymbols(p.Query)
-	if len(innerEntity) == 0 && len(innerAttribute) == 0 {
+	innerEntity, innerAttribute, innerTransaction := PositionSymbols(p.Query)
+	if len(innerEntity) == 0 && len(innerAttribute) == 0 && len(innerTransaction) == 0 {
 		return
 	}
 
@@ -135,6 +153,9 @@ func positionSymbolsFromSubquery(p SubqueryPattern, entity, attribute map[Symbol
 		}
 		if innerAttribute[innerSym] {
 			attribute[v.Name] = true
+		}
+		if innerTransaction[innerSym] {
+			transaction[v.Name] = true
 		}
 	}
 }

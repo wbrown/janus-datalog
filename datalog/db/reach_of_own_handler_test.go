@@ -45,7 +45,7 @@ func TestADbTestWithItsOwnHandlerHasItsReachRecorded(t *testing.T) {
 				mu.Unlock()
 			}
 		}
-		d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(mode.recording(handler)))
+		d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(handler))
 		require.NoError(t, err)
 		tx := d.NewTransaction()
 		for i := 1; i <= subjectSize; i++ {

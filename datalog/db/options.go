@@ -43,6 +43,8 @@ func WithReplicaID(id uint64) Option {
 }
 
 // WithAnnotationHandler sets a handler for query tracing and observability.
+// The database hands every event to it and to the handler the planner options
+// of WithPlannerOptions carry.
 func WithAnnotationHandler(h annotations.Handler) Option {
 	return func(c *config) { c.annotationHandler = h }
 }

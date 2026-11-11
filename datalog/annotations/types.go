@@ -403,6 +403,22 @@ type Handler func(event Event)
 // pairing stays wrong. An event therefore carries everything its line
 // reports, and state lives where the facts are produced.
 
+// Both is the handler that hands every event to first and then to second. A
+// nil handler among the two is left out, so a lone handler is answered as
+// itself, and two nil handlers answer nil.
+func Both(first, second Handler) Handler {
+	if first == nil {
+		return second
+	}
+	if second == nil {
+		return first
+	}
+	return func(event Event) {
+		first(event)
+		second(event)
+	}
+}
+
 // TimedEvent closes an event that began at start, computing End and Latency from
 // one clock read. A producer holding a start time builds its event here and emits
 // it itself, so the guard on whether to emit at all stays where the payload is

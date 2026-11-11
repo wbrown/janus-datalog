@@ -57,7 +57,9 @@ func TestReviewAConstantValueWithAFreeAttributeThroughThePublicAPI(t *testing.T)
 				asserted, err := executor.CollectTuples(d.Query(`[:find ?t :where [#id "item:holder" :item/one "x" ?t]]`))
 				require.NoError(t, err)
 				require.Len(t, asserted, 1)
-				lamport := asserted[0][0].(*datalog.ElementID).Lamport
+				at, ok := datalog.DerefElementID(asserted[0][0])
+				require.True(t, ok, "the transaction position binds an ElementID, got %T", asserted[0][0])
+				eid := fmt.Sprintf("#eid [%d %d]", at.Lamport, at.ReplicaID)
 
 				for _, view := range []struct {
 					name string
@@ -80,9 +82,9 @@ func TestReviewAConstantValueWithAFreeAttributeThroughThePublicAPI(t *testing.T)
 					require.NoError(t, err)
 					assert.ElementsMatch(t, [][]interface{}{{holder, code}}, fromBuilder, "%s: the builder's [?e ?a \"y\"] answers holder under :item/code", view.name)
 
-					selected, err := executor.CollectTuples(view.d.Query(fmt.Sprintf(`[:find ?e ?a :where [?e ?a "x" %d]]`, lamport)))
+					selected, err := executor.CollectTuples(view.d.Query(fmt.Sprintf(`[:find ?e ?a :where [?e ?a "x" %s]]`, eid)))
 					require.NoError(t, err)
-					assert.ElementsMatch(t, [][]interface{}{{holder, one}}, selected, "%s: [?e ?a \"x\" %d] answers the assertion the transaction names alone", view.name, lamport)
+					assert.ElementsMatch(t, [][]interface{}{{holder, one}}, selected, "%s: [?e ?a \"x\" %s] answers the assertion the transaction names alone", view.name, eid)
 				}
 			})
 		}

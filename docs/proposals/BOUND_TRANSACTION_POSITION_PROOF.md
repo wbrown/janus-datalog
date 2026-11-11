@@ -11,7 +11,7 @@ Every name below is the code's, given a symbol for the proof.
 
 - A **pattern** P is a data pattern `[e a v]`, `[e a v t]` or `[e a v t added]`. Its positions are E, A, V, T and the fifth. A position is **bound** when P holds a constant there or a variable the binding or the query's inputs bind, and **free** otherwise.
 - A **view** is the matcher's mode and target. The **latest** view holds every datom in the store. The view **as of** τ holds every datom whose Tx is at or below τ, which `shouldFilterTx` decides. **History** holds every datom and resolves nothing. The latest and as-of views are the **resolving views**.
-- A datom's **Tx** is the ElementID of the operation that wrote it. A bound T names an ElementID, spelled `#eid [lamport replica]` in the text, or a Lamport alone when it is an integer.
+- A datom's **Tx** is the ElementID of the operation that wrote it. A bound T names an ElementID, spelled `#eid [lamport replica]` in the text. The T position is inhabited by ElementID alone, as E is by Identity and A by Keyword: a constant or an input of another type is refused at the user boundary (`query.ValidateTransactionBinding`, at the match's entry and at the query's entry), and a value of another type joined into the position from elsewhere is the equality join's typed non-match, selected out at the match's entry (`typedPositionBindingCheck`).
 - An **(E, A) group** is the set of datoms of one entity and one attribute in the view.
 - The **resolved datoms** of a group in a resolving view are what the cardinality the attribute resolves under makes of the group:
   - Cardinality one under the plain rule: the group's datom with the highest Tx when it asserts, and none when it withdraws or the group is empty.
@@ -19,7 +19,7 @@ Every name below is the code's, given a symbol for the proof.
   - Cardinality many: per value, the group's highest-Tx operation carrying it, when it asserts; an assertion at a withdrawal's Lamport counts as later (`processAddWins`).
   - Cardinality vector: one datom whose V is the collection the RGA rule reconstructs and whose Tx is the highest ElementID among the group's operations (`resolveRGAGroup`).
 - In History every datom is its own resolved datom.
-- A pattern **admits** a datom when `matchesDatom` holds: the datom's value at each bound position equals the bound value, E by identity, A by keyword, V by `datalog.ValuesEqual`, Tx by ElementID or by Lamport for an integer, and the fifth by whether the datom asserts.
+- A pattern **admits** a datom when `matchesDatom` holds: the datom's value at each bound position equals the bound value, E by identity, A by keyword, V by `datalog.ValuesEqual`, Tx by ElementID, and the fifth by whether the datom asserts.
 - The **answer** of P in a view is the set of resolved datoms of the view that P admits, each projected to P's variables. This is the contract DATOMIC_COMPATIBILITY states for the fifth position, "in the latest view and an as-of view every tuple is a resolved value", read for every position: a tuple of a resolving view's answer is a resolved datom's.
 - A **run** is a `ScanBound`, an index with the leading components bound to values, read in index order.
 - A run **holds a group whole** when every datom of the group lies in the run, adjacent to the group's other datoms (SEEK §1).
@@ -29,7 +29,7 @@ Every name below is the code's, given a symbol for the proof.
 
 ## 2. Preconditions
 
-- **P1** (`matchesDatom`). The function compares a datom's E, A, V, Tx and operation against the values bound at the pattern's positions, a nil standing for a free position, and the Tx by value against an ElementID or against a Lamport integer.
+- **P1** (`matchesDatom`). The function compares a datom's E, A, V, Tx and operation against the values bound at the pattern's positions, a nil standing for a free position, and the Tx by value against an ElementID, given as a value or through a pointer; a bound Tx of another type is unreachable past the boundary and the entry selection, and the function asserts on one.
 - **P2** (the unbound route). `matchUnboundScan` reads P's constants at E, A, V and T, picks a run through `chooseIndex(e, a, v, tx)`, wraps the scan in `CRDTResolvingIterator` in a resolving view and leaves it raw in History, and `unboundIterator.Next` admits each datom the iterator emits through `matchesDatom(datom, e, a, v, tx, added)`.
 - **P3** (`chooseIndex` with E free and T bound). A bound A with V free gives ATEV under `[A][T]`. A free A with V free gives TAEV under `[T]`. A bound A with V bound gives AVET under `[A][V]`, and a free A with V bound gives VAET under `[V]`, the V arm preceding the T arm. A bound E gives an EATV or EAVT run under E whatever T holds.
 - **P4** (INDEX Theorem 1a). A run on EATV, EAVT, AETV or AEVT whose prefix ends at or before the attribute holds every group it meets whole, in Tx-descending order within the cardinality-one group.
@@ -123,7 +123,8 @@ Each contract runs on the legs `legsFor` answers for the test's measured reach, 
 - In History, `[?e ?a V T]` answers every datom T wrote carrying V, on L2's data and L5's (T9).
 - The unique claimant: on L4's data `[?e ?a "y" T1]` answers holder and `[?e ?a "y" T2]` nothing, with the attribute free and bound (T4, P16).
 - A many member, on L7's data, with the cache on and off: `[E A ?v ?t]`, `[E A V ?t]`, `[?e A ?v ?t]`, `[?e A V ?t]` and `[?e A ?v ?t]` with `?e` bound by an input bind each member's own assertion's Tx, History's reading of the assertion. `[E A ?v T]` and `[E A V T]` admit the member whose assertion T is and no other member (T11).
-- The public API: `TestReviewAConstantValueWithAFreeAttributeThroughThePublicAPI`'s assertion that `[?e ?a "x" lamport]` answers the assertion the transaction names, through `db.OpenMemory`.
+- The public API: `TestReviewAConstantValueWithAFreeAttributeThroughThePublicAPI`'s assertion that `[?e ?a "x" #eid [lamport replica]]` answers the assertion the transaction names, through `db.OpenMemory`.
+- The T position's type: a constant of another type is refused at the match's entry in every form and view (`TestATransactionConstantOfAnotherTypeIsRefusedAtTheMatchsEntry`), an input of another type is refused at the query's entry, directly, as a collection or through a subquery's argument (`TestATransactionInputOfAnotherTypeIsRefusedAtTheQuerysEntry`), and a value joined into the position from elsewhere contributes no tuple and no error in every view (`TestAValueJoinedIntoTheTransactionPositionIsATypedNonMatch`).
 - A failing resolution scan on the validating route surfaces as the match's error (`TestValidateCandidateSurfacesScanErrors`).
 - The reporting of the validating route, `TestVValidationReportsWhatItsScansCost`, `TestVValidationReportsAScanClosedBeforeItsEndOnce` and the as-of widget tests, stands.
 

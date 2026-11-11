@@ -328,7 +328,10 @@ func (m *PatternMatcher) scanBoundForValues(index IndexType, e, a, v, tx interfa
 
 		eid, ok := datalog.DerefElementID(tx)
 		if !ok {
-			panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
+			// Unreachable: a transaction constant is validated at the match's
+			// entry (query.ValidateTransactionBinding) and a binding's key is
+			// selected there (typedPositionBindingCheck).
+			panic(fmt.Sprintf("BUG: non-ElementID transaction reached scanBoundForValues: %T", tx))
 		}
 		prefix = append(prefix, eid)
 
@@ -359,11 +362,13 @@ func (m *PatternMatcher) scanBoundForValues(index IndexType, e, a, v, tx interfa
 
 	case TAEV:
 		// TAEV: Transaction-Attribute-Entity-Value.
-		// Tx is always an ElementID by contract.
 		if tx != nil {
 			eid, ok := datalog.DerefElementID(tx)
 			if !ok {
-				panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
+				// Unreachable: a transaction constant is validated at the
+				// match's entry (query.ValidateTransactionBinding) and a
+				// binding's key is selected there (typedPositionBindingCheck).
+				panic(fmt.Sprintf("BUG: non-ElementID transaction reached scanBoundForValues: %T", tx))
 			}
 			prefix = append(prefix, eid)
 		}

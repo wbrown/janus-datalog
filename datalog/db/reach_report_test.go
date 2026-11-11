@@ -55,9 +55,7 @@ func optionReached(event annotations.Event) (option, bool) {
 // reachRecorder is the handler a mode carries under -reach: it records the
 // option every event it receives reaches under the test named, which enters
 // the record when the handler is made whether or not an event fires. The
-// database honors it as its annotation handler where the test sets none, and
-// a test's own handler, given at open, carries it ahead through the mode's
-// recording.
+// database hands every event to it, beside a handler the test gives at open.
 func reachRecorder(test string) annotations.Handler {
 	reachRecorded.Lock()
 	if reachRecorded.byTest[test] == nil {

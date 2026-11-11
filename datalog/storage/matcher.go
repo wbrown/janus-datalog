@@ -457,7 +457,9 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 			if tx != nil && v == nil {
 				eid, ok := datalog.DerefElementID(tx)
 				if !ok {
-					panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
+					// Unreachable: a transaction constant is validated at the
+					// match's entry (query.ValidateTransactionBinding).
+					panic(fmt.Sprintf("BUG: non-ElementID transaction constant reached chooseIndex: %T", tx))
 				}
 				return ScanBound{Index: ATEV, Prefix: []datalog.Value{aKw, eid}}
 			}
@@ -489,10 +491,12 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 		// VAET: V → A → E → Tx↓ - groups by A, enabling efficient cardinality lookup
 		return ScanBound{Index: VAET, Prefix: []datalog.Value{v}}
 	} else if tx != nil {
-		// Use TAEV index. Tx is always an ElementID by contract.
+		// Only Tx bound - use TAEV index.
 		eid, ok := datalog.DerefElementID(tx)
 		if !ok {
-			panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
+			// Unreachable: a transaction constant is validated at the match's
+			// entry (query.ValidateTransactionBinding).
+			panic(fmt.Sprintf("BUG: non-ElementID transaction constant reached chooseIndex: %T", tx))
 		}
 		return ScanBound{Index: TAEV, Prefix: []datalog.Value{eid}}
 	}
@@ -506,25 +510,27 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 // typedPositionBindingCheck returns the per-tuple check the binding-driven
 // match selects its bindings under at its entry (MatchWithConstraints):
 // whether the tuple's value for the pattern's entity-position variable is an
-// Identity, its value for the attribute-position variable is a Keyword, and,
-// under a constant attribute, its value for the value-position variable is
-// not a vector. A tuple failing it names no entity, no attribute and no
-// datom's value, the typed non-match of the equality join, so it contributes
-// zero tuples and no seek is constructed for it. The entity and attribute
-// positions are each inhabited by one type, so those arms decide from the
-// value alone. A vector at the value position names a declared vector
-// attribute's whole collection, so whether it matches depends on the
-// attribute. Under a constant attribute the vector equals no datom this
-// selection's routes read: outside History a pattern on a vector attribute
-// is intercepted before the selection by the vector arm of
-// MatchWithConstraints, and under History a datom is read as written, an
-// element and never a collection. Under a variable attribute the tuple
-// passes and the attribute decides downstream: the join routes compare the
-// vector against each resolved collection, and the V-validation route
-// answers it through matchVectorUnderOpenAttribute. Returns nil when no
-// checked position is bound by these symbols — no check is needed.
+// Identity, its value for the attribute-position variable is a Keyword, its
+// value for the transaction-position variable is an ElementID, as a value or
+// through a pointer, and, under a constant attribute, its value for the
+// value-position variable is not a vector. A tuple failing it names no
+// entity, no attribute, no transaction and no datom's value, the typed
+// non-match of the equality join, so it contributes zero tuples and no seek
+// is constructed for it. The entity, attribute and transaction positions are
+// each inhabited by one type, so those arms decide from the value alone. A
+// vector at the value position names a declared vector attribute's whole
+// collection, so whether it matches depends on the attribute. Under a
+// constant attribute the vector equals no datom this selection's routes
+// read: outside History a pattern on a vector attribute is intercepted before
+// the selection by the vector arm of MatchWithConstraints, and under History
+// a datom is read as written, an element and never a collection. Under a
+// variable attribute the tuple passes and the attribute decides downstream:
+// the join routes compare the vector against each resolved collection, and
+// the V-validation route answers it through matchVectorUnderOpenAttribute.
+// Returns nil when no checked position is bound by these symbols — no check
+// is needed.
 func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbol) func(executor.Tuple) bool {
-	eIdx, aIdx, vIdx := -1, -1, -1
+	eIdx, aIdx, vIdx, tIdx := -1, -1, -1, -1
 	if v, ok := pattern.GetE().(query.Variable); ok {
 		eIdx = query.SymbolIndex(symbols, v.Name)
 	}
@@ -536,7 +542,10 @@ func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbo
 			vIdx = query.SymbolIndex(symbols, v.Name)
 		}
 	}
-	if eIdx < 0 && aIdx < 0 && vIdx < 0 {
+	if v, ok := pattern.GetT().(query.Variable); ok {
+		tIdx = query.SymbolIndex(symbols, v.Name)
+	}
+	if eIdx < 0 && aIdx < 0 && vIdx < 0 && tIdx < 0 {
 		return nil
 	}
 	return func(tuple executor.Tuple) bool {
@@ -553,6 +562,11 @@ func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbo
 		if vIdx >= 0 && vIdx < len(tuple) && datalog.IsVector(tuple[vIdx]) {
 			return false
 		}
+		if tIdx >= 0 && tIdx < len(tuple) {
+			if _, ok := datalog.DerefElementID(tuple[tIdx]); !ok {
+				return false
+			}
+		}
 		return true
 	}
 }
@@ -562,19 +576,12 @@ func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbo
 // fifth, whether the datom asserts, nil where a position is unbound.
 func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx, added interface{}) bool {
 	// A bound fifth position matches the datoms whose operation answers it,
-	// and a value that is not a boolean matches none, as a transaction of
-	// another type matches none below.
+	// and a value that is not a boolean matches none.
 	if added != nil {
 		asserts, ok := added.(bool)
 		if !ok || asserts != datom.Op.Asserts() {
 			return false
 		}
-	}
-
-	// Tx is the one position with a pointer form: a bound Tx arrives as either an
-	// ElementID or a *ElementID, so it is compared by value below.
-	if ptr, ok := tx.(*datalog.ElementID); ok {
-		tx = *ptr
 	}
 
 	// Check entity
@@ -619,26 +626,18 @@ func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx, added i
 		}
 	}
 
-	// Check transaction
+	// Check transaction: a bound Tx arrives as an ElementID or a *ElementID,
+	// and is compared by value.
 	if tx != nil {
-		switch txv := tx.(type) {
-		case uint64:
-			if datom.Tx.Lamport != txv {
-				return false
-			}
-		case int64:
-			if datom.Tx.Lamport != uint64(txv) {
-				return false
-			}
-		case int:
-			if datom.Tx.Lamport != uint64(txv) {
-				return false
-			}
-		case datalog.ElementID:
-			if datom.Tx != txv {
-				return false
-			}
-		default:
+		txv, ok := datalog.DerefElementID(tx)
+		if !ok {
+			// Unreachable: a constant is validated at the user boundary
+			// (query.ValidateTransactionBinding) and a binding is selected at
+			// the match's entry (typedPositionBindingCheck). Fail loudly: the
+			// transaction position is inhabited only by ElementID.
+			panic(fmt.Sprintf("BUG: non-ElementID transaction binding reached matchesDatom: %T", tx))
+		}
+		if datom.Tx != txv {
 			return false
 		}
 	}

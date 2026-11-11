@@ -91,6 +91,9 @@ func (m *PatternMatcher) MatchWithConstraints(
 	if err := query.ValidateAttributeBinding(m.extractValue(pattern.GetA())); err != nil {
 		return nil, err
 	}
+	if err := query.ValidateTransactionBinding(m.extractValue(pattern.GetT())); err != nil {
+		return nil, err
+	}
 	if m.mode != historyMode && len(pattern.Elements) == query.PatternPositions {
 		return m.matchAsAssertions(pattern, bindings, constraints)
 	}
@@ -493,9 +496,7 @@ func (m *PatternMatcher) matchUnboundScan(
 		// candidate's own attribute decides its validation, as on the binding
 		// route (analyzeReuseStrategy). Under History nothing resolves and
 		// there is no resolved datom: the raw scan below reads every datom
-		// carrying the bound positions, which is the answer. A T bound to a
-		// Lamport integer narrows no run and is compared on the resolved
-		// datom by the V-run or by the whole-group scan below.
+		// carrying the bound positions, which is the answer.
 		strategy := ReuseStrategy{
 			Type:            SinglePositionReuse,
 			NeedsValidation: true,
@@ -1059,11 +1060,12 @@ func (it *validatingVBoundIterator) Next() bool {
 		it.currentBoundV = it.patternExtractor.ExtractV(tuple)
 		it.currentBoundT = it.patternExtractor.ExtractT(tuple)
 		if it.candidatePosition == 3 {
-			// A T-narrowed run is addressed by an ElementID; a binding that
-			// holds none at the position narrows no run.
 			eid, ok := datalog.DerefElementID(it.currentBoundT)
 			if !ok {
-				continue
+				// Unreachable: a transaction constant is validated at the
+				// match's entry (query.ValidateTransactionBinding) and a
+				// binding is selected there (typedPositionBindingCheck).
+				panic(fmt.Sprintf("BUG: non-ElementID transaction binding reached the validating iterator: %T", it.currentBoundT))
 			}
 			it.currentNarrowing = eid
 		} else {

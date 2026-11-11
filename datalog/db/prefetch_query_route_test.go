@@ -48,7 +48,7 @@ func TestPrefetchFillsTheCacheOnTheQueryRoute(t *testing.T) {
 			}
 			opts := mode.plannerOptions()
 			opts.ScopeWindowCap = 128
-			d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(mode.recording(handler)))
+			d, err := db.OpenMemory(db.WithSchema(s), db.WithPlannerOptions(opts), db.WithAnnotationHandler(handler))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, d.Close()) })
 			tx := d.NewTransaction()
