@@ -41,7 +41,7 @@ func TestDerivedSet_AnIndexAnswersTheViewsTuplesUnderAKey(t *testing.T) {
 		ix := set.index(key, view.Size())
 		var tuples []Tuple
 		for _, ordinal := range ix.probe(Tuple{"probe", k}, []int{1}, view.Size()) {
-			tuples = append(tuples, set.tuples[ordinal])
+			tuples = append(tuples, set.keys.members[ordinal])
 		}
 		return tuples
 	}
@@ -58,7 +58,7 @@ func TestDerivedSet_AnIndexAnswersTheViewsTuplesUnderAKey(t *testing.T) {
 	require.Equal(t, []Tuple{{int64(3), "e"}}, probe(second, 3))
 	require.Empty(t, probe(third, 4), "a key no tuple holds answers nothing")
 	require.Len(t, set.indexes, 1, "one index per key asked for")
-	require.Equal(t, len(set.tuples), set.indexes[0].held,
+	require.Equal(t, set.keys.Len(), set.indexes[0].held,
 		"asked for through the latest view, the index holds every tuple of the set")
 }
 
@@ -85,9 +85,26 @@ func TestDerivedSet_AJoinIntoItsRelationLeavesTheSetAsItWas(t *testing.T) {
 			}))
 			require.ElementsMatch(t, []Tuple{{int64(2), "x", "b"}, {int64(2), "x", "c"}}, got, "the join answers the nested loop's pairs")
 			require.Empty(t, set.indexes, "a join into the set's relation wrote an index into the set")
-			require.Equal(t, setTuples, set.tuples, "the set holds the tuples it absorbed and nothing else")
+			require.Equal(t, setTuples, set.keys.members, "the set holds the tuples it absorbed and nothing else")
 		})
 	}
+}
+
+// A derived set holds each tuple's header once: the relation it answers and
+// the index it keeps read the tuples its table holds, and the set keeps no
+// second slice of them (docs/proposals/FIXPOINT_MEMORY.md, S2).
+func TestDerivedSet_HoldsEachTupleHeaderOnce(t *testing.T) {
+	e, r := datalog.NewSymbol("?e"), datalog.NewSymbol("?r")
+	symbols := []query.Symbol{e, r}
+	set := newDerivedSet(symbols)
+	tuples := []Tuple{{int64(1), "a"}, {int64(2), "b"}, {int64(1), "c"}}
+	_, err := set.absorb(NewMaterializedRelation(symbols, tuples))
+	require.NoError(t, err)
+	rel := set.relation(ExecutorOptions{})
+	require.Equal(t, tuples, rel.tuples, "the relation is the tuples absorbed")
+	require.Same(t, &set.keys.members[0], &rel.tuples[0], "the relation reads the table's members and no second slice of the headers")
+	ix := set.index([]int{0}, rel.Size())
+	require.Equal(t, len(set.keys.members), ix.held, "the index entered the table's members")
 }
 
 // An invocation of a predicate the fixpoint holds, whose arguments are
@@ -135,7 +152,7 @@ func TestExecuteRuleInvocation_ARenameOfAHeldPredicateAnswersItsSet(t *testing.T
 				return
 			}
 			require.Same(t, c.set, got, "the rename of a held predicate answers the set the evaluation keeps for it")
-			require.Equal(t, c.set.tuples, rel.(*MaterializedRelation).tuples, "the rename is the set's tuples so far")
+			require.Equal(t, c.set.keys.members, rel.(*MaterializedRelation).tuples, "the rename is the set's tuples so far")
 		})
 	}
 }

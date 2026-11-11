@@ -159,14 +159,15 @@ type DerivedSet = derivedSet
 // NewDerivedSet answers an empty set over symbols.
 var NewDerivedSet = newDerivedSet
 
-// Absorb adds the tuples of rel the set does not hold and answers them.
-func (s *derivedSet) Absorb(rel Relation) ([]Tuple, error) { return s.absorb(rel) }
+// Absorb adds the tuples of rel the set does not hold and answers how many it
+// added.
+func (s *derivedSet) Absorb(rel Relation) (int, error) { return s.absorb(rel) }
 
 // Relation answers the set as a relation over the tuples added so far.
 func (s *derivedSet) Relation(opts ExecutorOptions) *MaterializedRelation { return s.relation(opts) }
 
 // Len answers the number of tuples the set holds.
-func (s *derivedSet) Len() int { return len(s.tuples) }
+func (s *derivedSet) Len() int { return s.keys.Len() }
 
 // NewRuleEvaluation answers the evaluation planned for an invocation.
 var NewRuleEvaluation = newRuleEvaluation

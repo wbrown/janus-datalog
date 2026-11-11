@@ -18,16 +18,15 @@
 ## 1. What the fixpoint must hold
 
 - **P1 (the closure is read twice over).** A pass's copy joins its delta against the sets as they stand, and a body's result is absorbed by probing the set for each tuple it yields: a tuple the set holds is rejected, one it does not is added (`derivedSet.absorb`, `runStratum`'s pass). The termination of the stratum is the pass that runs no copy, which is every mark at its set's count. So each recursive predicate's whole closure is read by the next pass's joins and by every absorption, until the stratum converges. A relation that streams its tuples once cannot serve either read, and the closure's size is the output's: `unfilled` is 70,458 pairs because that is the relation.
-- **P2 (what streams).** The delta a pass hands to the next is a view over the set's tuples from the copy's mark to the set's count (`runStratum`, the pass loop), the lower deltas a window hands up are the tuples the window added (`extend`'s `added`), and the answer is a view over the answer predicate's tuples (`derivedSet.relation`). None is a copy of the closure.
+- **P2 (what streams).** The delta a pass hands to the next is a view over the set's tuples from the copy's mark to the set's count (`runStratum`, the pass loop), the lower deltas a window hands up are a view over the tuples the window added (`extend`'s `added`), and the answer is a view over the answer predicate's tuples (`derivedSet.relation`). None is a copy of the closure.
 
 ## 2. What a set holds per tuple
 
 - **P3 (the set).** A `derivedSet` holds, per tuple:
   - the tuple's values, its own backing array of one interface value per position;
-  - its header in `tuples`, a slice in admission order;
-  - its header again in the `TupleSet` under `keys`, whose `members` is a slice in admission order beside an open-addressed table of one `int32` index and one `uint8` tag per slot, at most half full;
+  - its header in the `TupleSet` under `keys`, whose `members` is a slice in admission order beside an open-addressed table of one `int32` index and one `uint8` tag per slot, at most half full;
   - per key its joins read, an `ordinalIndex`: a `TupleSet` over the first tuple of each distinct key, one `int32` ordinal per tuple, and, under fanout, the key's ordinals grouped.
-- **P4 (the two slices).** `absorb` appends each admitted tuple to `tuples` and adds it to `keys`, and `TupleSet.Add` appends it to `members`, so every held tuple's header is held in two slices of the set, and each slice grows by doubling. `relation` and `index` read `tuples`; nothing reads `members` outside the table.
+- **P4 (the one slice).** `absorb` adds each admitted tuple to `keys`, and `TupleSet.Add` appends it to `members`, so every held tuple's header is held in one slice of the set, which grows by doubling. `relation`, `index`, a pass's delta view, a window's additions and a join's kept tuples read `members` capped at a count.
 
 ## 3. How long the sets live
 
@@ -58,7 +57,7 @@ Each pins the statement named in §6, written before the change and run red wher
 ## 6. What changes
 
 - **S1 (a whole evaluation drops its sets).** After the first window of an evaluation with no seed, nothing reads its sets (P6): no stratum runs again, and the answer is a view over the answer predicate's tuples, which carries no set (T6 of the held-index proof). So once that window's strata have run, the evaluation keeps the answer relation and each stratum's tuple count for its complete event, and drops every stratum's set, its keys and its indexes with it. The answer predicate's tuples stay referenced by the relation alone. A seeded evaluation keeps its sets (P7). Excluded: dropping the sets at `complete`, which a continued evaluation reaches at the form's end, after every window has held them; and dropping a lower stratum's set as soon as the strata above it converge within the first window, which frees the keys and indexes earlier but leaves the tuples referenced by the views the running strata hold, and is a second rule for a part of what S1 frees whole.
-- **S2 (one slice of headers).** The set's tuples are the table's members: `tuples` goes, and `relation` and `index` read `keys.members`, which holds the headers in admission order (P3, P4). The ordinal of a tuple stays its position in that slice, so the held-index proof's P7 and T4 hold as stated. Excluded: a table that holds no members and reads keys from the set's slice, which is the layout the one-table proof replaced.
+- **S2 (one slice of headers).** The set's tuples are the table's members (P3, P4): `relation` and `index` read `keys.members`, which holds the headers in admission order, `absorb` answers how many tuples it added, the members from the set's count before the call to its count after it, and `runStratum` takes a pass's delta view and a window's additions as the members capped at a count. The ordinal of a tuple is its position in that slice, so the held-index proof's P7 and T4 hold as stated. `TestDerivedSet_HoldsEachTupleHeaderOnce` pins it. Excluded: a table that holds no members and reads keys from the set's slice, which is the layout the one-table proof replaced.
 - **S3 (the magic sets).** The bound query's derived tuples outnumber the whole relation's, and the record names the rewrite's choice of adornment as the cause. That is the rewrite's question, decided there, and this proposal changes nothing of it.
 
 ## 7. What this proposal does not cover

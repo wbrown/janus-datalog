@@ -486,10 +486,13 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 // each once, each held in the set under its whole-tuple key
 // (docs/proposals/ONE_TUPLE_TABLE_PROOF.md, T4), and keeps, per key its
 // joins read, an index over its tuples by ordinal
-// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md).
+// (docs/proposals/A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md). The
+// table's members are the set's tuples in admission order, the one slice of
+// their headers the set holds (docs/proposals/FIXPOINT_MEMORY.md, S2); a
+// reader of the tuples through a count takes the members capped at it, so an
+// append cannot reach a member past the count.
 type derivedSet struct {
 	symbols []query.Symbol
-	tuples  []Tuple
 	keys    *TupleSet
 	indexes []*ordinalIndex
 }
@@ -517,30 +520,32 @@ func (s *derivedSet) index(positions []int, count int) *ordinalIndex {
 		s.indexes = append(s.indexes, ix)
 	}
 	if ix.held < count {
-		ix.extend(s.tuples)
+		ix.extend(s.keys.members)
 	}
 	return ix
 }
 
 // absorb adds the tuples of rel the set does not hold, as they are pulled,
-// and returns them, each held over the set's symbols. rel carries the set's
-// symbols in any layout, found by symbol once; a relation lacking one is the
-// set's error. A tuple in the set's layout is probed before anything else,
-// so one the set holds is rejected without a copy, and is held as it is from
-// a stable source or copied once, on admission, from a reusing one. A tuple
-// in another layout is read out at the set's positions into a copy before it
-// is probed. The held tuple is the set's member.
-func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
+// each held over the set's symbols, and answers how many it added: the
+// tuples added are the set's members from its count before the call to its
+// count after it. rel carries the set's symbols in any layout, found by
+// symbol once; a relation lacking one is the set's error. A tuple in the
+// set's layout is probed before anything else, so one the set holds is
+// rejected without a copy, and is held as it is from a stable source or
+// copied once, on admission, from a reusing one. A tuple in another layout
+// is read out at the set's positions into a copy before it is probed. The
+// held tuple is the set's member.
+func (s *derivedSet) absorb(rel Relation) (int, error) {
 	positions, err := query.SymbolIndexTable(rel.Symbols(), s.symbols)
 	if err != nil {
-		return nil, fmt.Errorf("absorbing into %v: %w", s.symbols, err)
+		return 0, fmt.Errorf("absorbing into %v: %w", s.symbols, err)
 	}
 	sameLayout := len(rel.Symbols()) == len(s.symbols)
 	for i := 0; sameLayout && i < len(positions); i++ {
 		sameLayout = positions[i] == i
 	}
 	copies := rel.RequiresCopy()
-	var added []Tuple
+	added := 0
 	err = ForEach(rel, func(tuple Tuple) error {
 		if !sameLayout {
 			held := make(Tuple, len(positions))
@@ -557,8 +562,7 @@ func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
 			tuple = copyTuple(tuple)
 		}
 		s.keys.Add(tuple, hash)
-		s.tuples = append(s.tuples, tuple)
-		added = append(added, tuple)
+		added++
 		return nil
 	})
 	return added, err
@@ -570,8 +574,8 @@ func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
 // (Context.sets), so a relation the evaluation hands out does not change when
 // it is joined (A_HELD_RELATION_KEEPS_ITS_JOIN_INDEX_PROOF.md, T2).
 func (s *derivedSet) relation(opts ExecutorOptions) *MaterializedRelation {
-	n := len(s.tuples)
-	return newMaterializedRelationFromSet(s.symbols, s.tuples[:n:n], opts, deduplicatedProperties(s.symbols))
+	n := s.keys.Len()
+	return newMaterializedRelationFromSet(s.symbols, s.keys.members[:n:n], opts, deduplicatedProperties(s.symbols))
 }
 
 // stratumEvaluation is a stratum's planned bodies (planner.Bodies), under
@@ -675,38 +679,38 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 		}
 		return m
 	}
-	added := map[query.Symbol][]Tuple{}
-	// absorb pulls a run's results into the sets and returns the new tuples
-	// per predicate, counting them into the window's additions and the
-	// evaluation's total.
-	absorb := func(results map[query.Symbol][]Relation) (map[query.Symbol][]Tuple, error) {
-		next := map[query.Symbol][]Tuple{}
+	// start is each predicate's count at the window's start: the tuples the
+	// window adds to a predicate are its members from there to its count at
+	// the end, which the strata above read as their lower deltas.
+	start := make(map[query.Symbol]int, len(stratum.Predicates))
+	for _, p := range stratum.Predicates {
+		start[p] = s.full[p].keys.Len()
+	}
+	// absorb pulls a run's results into the sets and answers how many tuples
+	// each predicate gained, counting them into the evaluation's total.
+	absorb := func(results map[query.Symbol][]Relation) (map[query.Symbol]int, error) {
+		gained := map[query.Symbol]int{}
 		for p, rels := range results {
 			for _, rel := range rels {
-				tuples, err := s.full[p].absorb(rel)
+				n, err := s.full[p].absorb(rel)
 				if err != nil {
 					return nil, fmt.Errorf("rule %s: %w", p, err)
 				}
-				if len(tuples) > 0 {
-					next[p] = append(next[p], tuples...)
-					added[p] = append(added[p], tuples...)
-					ev.total += len(tuples)
+				if n > 0 {
+					gained[p] += n
+					ev.total += n
 				}
 			}
 		}
 		if limit := e.options.MaxDerivedTuples; limit > 0 && ev.total > limit {
 			return nil, &query.DerivedTupleLimitError{Predicates: stratum.Predicates, Limit: limit, Reached: ev.total}
 		}
-		return next, nil
+		return gained, nil
 	}
 	iteration := 0
-	emitIteration := func(delta map[query.Symbol][]Tuple) {
+	emitIteration := func(delta map[query.Symbol]int) {
 		if handler == nil {
 			return
-		}
-		sizes := make(map[query.Symbol]int, len(delta))
-		for p, tuples := range delta {
-			sizes[p] = len(tuples)
 		}
 		handler(annotations.Event{
 			Name:  annotations.RulesIteration,
@@ -714,20 +718,19 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 			Data: map[string]interface{}{
 				"predicates": stratum.Predicates,
 				"iteration":  iteration,
-				"delta":      sizes,
+				"delta":      delta,
 			},
 		})
 	}
 
-	delta := map[query.Symbol][]Tuple{}
+	delta := map[query.Symbol]int{}
 	if seed != nil {
-		tuples, err := s.full[ev.seed].absorb(seed)
+		n, err := s.full[ev.seed].absorb(seed)
 		if err != nil {
 			return nil, fmt.Errorf("seeding %s: %w", ev.seed, err)
 		}
-		if len(tuples) > 0 {
-			delta[ev.seed] = tuples
-			added[ev.seed] = tuples
+		if n > 0 {
+			delta[ev.seed] = n
 		}
 	}
 	// The bodies run under a context carrying every set the evaluation keeps,
@@ -765,8 +768,8 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 	if err != nil {
 		return nil, err
 	}
-	for p, tuples := range grown {
-		delta[p] = append(delta[p], tuples...)
+	for p, n := range grown {
+		delta[p] += n
 		held[p] = s.full[p].relation(e.options)
 	}
 	emitIteration(delta)
@@ -783,10 +786,10 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 		// sets are closed under the bodies
 		// (A_COPY_READS_THE_TUPLES_ADDED_SINCE_IT_RAN_PROOF.md, L2, L5, L6).
 		ran := false
-		passAdded := map[query.Symbol][]Tuple{}
+		passAdded := map[query.Symbol]int{}
 		for i, body := range s.eval.bodies.Delta {
 			set := s.full[body.Marked]
-			count := len(set.tuples)
+			count := set.keys.Len()
 			if s.marks[i] >= count {
 				continue
 			}
@@ -798,7 +801,7 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 				ran = true
 			}
 			symbols := s.eval.symbols[body.Marked]
-			held[query.DeltaSymbol(body.Marked)] = newMaterializedRelationFromSet(symbols, set.tuples[s.marks[i]:count:count], e.options, deduplicatedProperties(symbols))
+			held[query.DeltaSymbol(body.Marked)] = newMaterializedRelationFromSet(symbols, set.keys.members[s.marks[i]:count:count], e.options, deduplicatedProperties(symbols))
 			s.marks[i] = count
 			results, err := s.eval.run(scope, held, []planner.PlannedBody{body})
 			if err != nil {
@@ -808,8 +811,8 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 			if err != nil {
 				return nil, err
 			}
-			for p, tuples := range grown {
-				passAdded[p] = append(passAdded[p], tuples...)
+			for p, n := range grown {
+				passAdded[p] += n
 				held[p] = s.full[p].relation(e.options)
 			}
 		}
@@ -819,8 +822,13 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 		emitIteration(passAdded)
 	}
 	s.iterations += iteration
+	added := map[query.Symbol][]Tuple{}
 	for _, p := range stratum.Predicates {
-		ev.derived[p] = s.full[p].relation(e.options)
+		set := s.full[p]
+		ev.derived[p] = set.relation(e.options)
+		if n := set.keys.Len(); n > start[p] {
+			added[p] = set.keys.members[start[p]:n:n]
+		}
 	}
 	return added, nil
 }
@@ -840,7 +848,7 @@ func (ev *ruleEvaluation) complete() {
 		}
 		tuples := 0
 		for _, p := range s.stratum.Predicates {
-			tuples += len(s.full[p].tuples)
+			tuples += s.full[p].keys.Len()
 		}
 		handler(annotations.TimedEvent(annotations.RulesStratumComplete, s.start, map[string]interface{}{
 			"predicates": s.stratum.Predicates,

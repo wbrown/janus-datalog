@@ -392,7 +392,7 @@ func hashJoinWithSet(
 	if rightSet != nil {
 		bound = right.Size()
 		kept = rightSet.index(buildIndices, bound)
-		keptTuples = rightSet.tuples[:bound:bound]
+		keptTuples = rightSet.keys.members[:bound:bound]
 	}
 	buildSide := "right"
 	if buildIsLeft {

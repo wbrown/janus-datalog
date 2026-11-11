@@ -325,7 +325,7 @@ func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
 					if err != nil {
 						t.Fatalf("naive pass: %v", err)
 					}
-					if len(added) > 0 {
+					if added > 0 {
 						grew = true
 					}
 				}

@@ -84,7 +84,7 @@ func benchmarkNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.RuleS
 				if err != nil {
 					b.Fatal(err)
 				}
-				if len(added) > 0 {
+				if added > 0 {
 					grew = true
 				}
 			}

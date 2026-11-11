@@ -300,11 +300,11 @@ func TestDerivedSet_AbsorbCopiesOnlyNewTuples(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(added) != len(held) {
-			t.Fatalf("absorbed %d tuples, want %d", len(added), len(held))
+		if added != len(held) {
+			t.Fatalf("absorbed %d tuples, want %d", added, len(held))
 		}
 		for i := range held {
-			if &added[i][0] != &held[i][0] {
+			if &set.keys.members[i][0] != &held[i][0] {
 				t.Errorf("tuple %d was copied on absorbing: a materialized source's tuples are stable and are held as they are", i)
 			}
 		}
@@ -614,8 +614,8 @@ func TestDerivedSetAbsorbsABodyResultLaidOutInAnotherOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(added) != 1 {
-		t.Fatalf("added %v, want the one pair", added)
+	if added != 1 {
+		t.Fatalf("added %d, want the one pair", added)
 	}
 	rel := set.relation(ExecutorOptions{})
 	positions, err := query.SymbolIndexTable(rel.Symbols(), []query.Symbol{a, b})
@@ -634,8 +634,8 @@ func TestDerivedSetAbsorbsABodyResultLaidOutInAnotherOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(added) != 0 {
-		t.Errorf("the same fact under the canonical layout is held already, got %v added", added)
+	if added != 0 {
+		t.Errorf("the same fact under the canonical layout is held already, got %d added", added)
 	}
 
 	_, err = set.absorb(NewMaterializedRelation([]query.Symbol{a, c}, []Tuple{{page(1), page(3)}}))
