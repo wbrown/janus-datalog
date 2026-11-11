@@ -3,6 +3,7 @@ package executor
 import (
 	"sync"
 
+	"github.com/wbrown/janus-datalog/datalog/internal/errjoin"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -258,11 +259,9 @@ func (r *ScanRegistry) Close() error {
 	}
 	r.mu.Unlock()
 
-	var firstErr error
+	var failures error
 	for _, close := range closes {
-		if err := close(); firstErr == nil {
-			firstErr = err
-		}
+		failures = errjoin.Join(failures, close())
 	}
-	return firstErr
+	return failures
 }

@@ -180,23 +180,34 @@ func TestScanRegistryGetOrCreateConcurrent(t *testing.T) {
 }
 
 // The registry's Close at the query's end closes the sources still open and
-// answers their failures once: a second Close closes nothing and answers
-// nothing, the failure having reached its reader.
+// answers each of their failures once: a second Close closes nothing and
+// answers nothing, the failures having reached their reader.
 func TestScanRegistryCloseReleasesPartialScans(t *testing.T) {
-	closeErr := errors.New("registry close failure")
-	source := failingRelation{
-		Relation:  NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}}),
-		failAfter: 100,
-		closeErr:  closeErr,
-	}
 	registry := NewScanRegistry()
-	registry.Put(unboundScanOf(":registry/partial"), &SharedScan{
-		Seq:     NewTupleSeq(source.Iterator(), false),
-		Symbols: testSymbols(),
-	})
+	open := []struct {
+		attr     string
+		closeErr error
+	}{
+		{":registry/partial", errors.New("registry close failure")},
+		{":registry/partial-second", errors.New("registry close failure of the second scan")},
+	}
+	for _, scan := range open {
+		source := failingRelation{
+			Relation:  NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}}),
+			failAfter: 100,
+			closeErr:  scan.closeErr,
+		}
+		registry.Put(unboundScanOf(scan.attr), &SharedScan{
+			Seq:     NewTupleSeq(source.Iterator(), false),
+			Symbols: testSymbols(),
+		})
+	}
 
-	require.ErrorIs(t, registry.Close(), closeErr)
-	require.NoError(t, registry.Close(), "a second Close closes nothing and answers nothing: the failure reached its reader")
+	err := registry.Close()
+	for _, scan := range open {
+		require.ErrorIs(t, err, scan.closeErr, "the close failure of the open scan over %s reaches the reader", scan.attr)
+	}
+	require.NoError(t, registry.Close(), "a second Close closes nothing and answers nothing: the failures reached their reader")
 }
 
 // A shared scan read to its end closed its source there, and the reader that

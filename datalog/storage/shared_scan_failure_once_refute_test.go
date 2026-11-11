@@ -21,6 +21,7 @@ import (
 // the database's executor alike.
 func TestRefuteASharedScanAnswersEachFailureOnce(t *testing.T) {
 	score := datalog.NewKeyword(":item/score")
+	rank := datalog.NewKeyword(":item/rank")
 	rules := `[[(scored ?e ?v) [?e :item/score ?v]]]`
 	cases := []struct {
 		name     string
@@ -34,6 +35,7 @@ func TestRefuteASharedScanAnswersEachFailureOnce(t *testing.T) {
 		{"not over a rule invocation, close fails", `[:find ?e :in $ % :where [?e :item/score ?v] (not-join [?v] (scored ?f ?w) [(> ?w ?v)])]`, true, false},
 		{"correlated count subquery, close fails", `[:find ?e ?n :where [?e :item/score ?v] [(q [:find (count ?f) :in $ ?v :where [?f :item/score ?w] [(>= ?w ?v)]] $ ?v) [[?n]]]]`, false, false},
 		{"two sites joined on the value, limited, close fails", `[:find ?e :where [?e :item/score ?v] [?f :item/score ?v] :limit 1]`, false, false},
+		{"two fingerprints at two sites each, limited, close fails", `[:find ?e :where [?e :item/score ?v] [?f :item/score ?v] [?e :item/rank ?r] [?g :item/rank ?r] :limit 1]`, false, false},
 	}
 	readers := []struct {
 		name   string
@@ -116,7 +118,9 @@ func TestRefuteASharedScanAnswersEachFailureOnce(t *testing.T) {
 					defer func() { require.NoError(t, db.Close()) }()
 					tx := db.NewTransaction()
 					require.NoError(t, tx.Add(datalog.NewIdentity("refute-failure:first"), score, int64(3)))
+					require.NoError(t, tx.Add(datalog.NewIdentity("refute-failure:first"), rank, int64(1)))
 					require.NoError(t, tx.Add(datalog.NewIdentity("refute-failure:second"), score, int64(5)))
+					require.NoError(t, tx.Add(datalog.NewIdentity("refute-failure:second"), rank, int64(2)))
 					committed, err := tx.Commit()
 					require.NoError(t, err)
 
