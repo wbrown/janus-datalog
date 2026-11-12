@@ -84,6 +84,7 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"installed":      fieldInherited, // the schema in force and the store's definitions, one value the handle shares with the parent
 	"refuseUnknown":  fieldInherited, // the RefuseUnknownAttributes option; a handle refuses what its parent refuses
 	"givenSchema":    fieldInherited, // the parent's declaration; a handle declares nothing of its own
+	"taken":          fieldInherited, // the declarations the parent took at its open (SchemaOf); they are part of the schema the handle shares, and a handle's dump states them as the parent's does
 	"plannerOptions": fieldInherited, // carries the handler; the handle inherits both together
 	"clock":          fieldInherited,
 	"replicaID":      fieldInherited,
@@ -164,6 +165,9 @@ func testTemporalHandleFieldClassification(t *testing.T, backend Backend) {
 		}
 		if handle.installed.Load() != db.installed.Load() {
 			t.Errorf("%s: installed schema not inherited", handleName)
+		}
+		if handle.taken != db.taken {
+			t.Errorf("%s: the declarations the parent took not inherited", handleName)
 		}
 		if handle.plannerOptions != db.plannerOptions {
 			t.Errorf("%s: plannerOptions not inherited", handleName)
