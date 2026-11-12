@@ -5,10 +5,10 @@ import (
 )
 
 // nodeGrowthStep is how much a node's slices grow when they fill. Go's append
-// grows by roughly doubling, which at branchingFactor 256 overshoots badly —
-// a node one entry past 128 would jump to 256 slots. Growth is explicit and
-// small instead, and never exceeds one entry past the branching factor, which
-// is the transient overflow a split immediately resolves.
+// grows by roughly doubling, which at a branching factor of 256 overshoots
+// badly — a node one entry past 128 would jump to 256 slots. Growth is explicit
+// and small instead, and never exceeds one entry past the tree's branching
+// factor, which is the transient overflow a split immediately resolves.
 const nodeGrowthStep = 8
 
 // ownerToken identifies the builder that created a node. A node carrying the
@@ -32,23 +32,27 @@ type ownerToken struct {
 // The builder never writes through to the tree it came from. Its token is
 // dropped at commit, after which every node it created is immutable, because
 // no future builder can hold the same token.
+//
+// branching is the tree's, held where the tree holds it (datomTree.branching).
 type treeBuilder struct {
-	index IndexType
-	order [componentsPerIndex]keyComponent
-	root  *node
-	count int
-	token *ownerToken
+	index     IndexType
+	order     [componentsPerIndex]keyComponent
+	branching uint16
+	root      *node
+	count     int
+	token     *ownerToken
 }
 
 // transient opens a builder over the tree. The tree itself is not modified;
 // readers holding it keep seeing exactly what they saw.
 func (t *datomTree) transient() *treeBuilder {
 	return &treeBuilder{
-		index: t.index,
-		order: t.order,
-		root:  t.root,
-		count: t.count,
-		token: &ownerToken{},
+		index:     t.index,
+		order:     t.order,
+		branching: t.branching,
+		root:      t.root,
+		count:     t.count,
+		token:     &ownerToken{},
 	}
 }
 
@@ -60,7 +64,7 @@ func (b *treeBuilder) commit() *datomTree {
 		panic("treeBuilder: commit called twice")
 	}
 	b.token = nil
-	return &datomTree{index: b.index, order: b.order, root: b.root, count: b.count}
+	return &datomTree{index: b.index, order: b.order, branching: b.branching, root: b.root, count: b.count}
 }
 
 func (b *treeBuilder) compare(x, y *datalog.Datom) int {
@@ -184,7 +188,7 @@ func (b *treeBuilder) insertIntoLeaf(n *node, d *datalog.Datom) (updated, split 
 	}
 
 	editable := b.editable(n)
-	editable.keys = insertDatomAt(editable.keys, idx, d)
+	editable.keys = b.insertDatomAt(editable.keys, idx, d)
 	left, right := b.splitIfFull(editable)
 	return left, right, true
 }
@@ -206,8 +210,8 @@ func (b *treeBuilder) insertIntoBranch(n *node, d *datalog.Datom) (updated, spli
 	editable.children[idx] = childUpdated
 	editable.keys[idx] = childUpdated.maxDatom()
 	if childSplit != nil {
-		editable.keys = insertDatomAt(editable.keys, idx+1, childSplit.maxDatom())
-		editable.children = insertNodeAt(editable.children, idx+1, childSplit)
+		editable.keys = b.insertDatomAt(editable.keys, idx+1, childSplit.maxDatom())
+		editable.children = b.insertNodeAt(editable.children, idx+1, childSplit)
 	}
 
 	left, right := b.splitIfFull(editable)
@@ -222,29 +226,29 @@ func (b *treeBuilder) editable(n *node) *node {
 		return n
 	}
 	copied := &node{level: n.level, owner: b.token}
-	copied.keys = make([]*datalog.Datom, len(n.keys), growthCapacity(len(n.keys)))
+	copied.keys = make([]*datalog.Datom, len(n.keys), b.growthCapacity(len(n.keys)))
 	copy(copied.keys, n.keys)
 	if n.children != nil {
-		copied.children = make([]*node, len(n.children), growthCapacity(len(n.children)))
+		copied.children = make([]*node, len(n.children), b.growthCapacity(len(n.children)))
 		copy(copied.children, n.children)
 	}
 	return copied
 }
 
 // splitIfFull divides an over-full node in half, returning it and its new right
-// sibling. A node is allowed to reach one entry past the branching factor
-// during an insert; this is what resolves that.
+// sibling. A node is allowed to reach one entry past the tree's branching
+// factor during an insert; this is what resolves that.
 func (b *treeBuilder) splitIfFull(n *node) (left, right *node) {
-	if len(n.keys) <= branchingFactor {
+	if len(n.keys) <= int(b.branching) {
 		return n, nil
 	}
 
 	mid := len(n.keys) / 2
 	right = &node{level: n.level, owner: b.token}
-	right.keys = make([]*datalog.Datom, len(n.keys)-mid, growthCapacity(len(n.keys)-mid))
+	right.keys = make([]*datalog.Datom, len(n.keys)-mid, b.growthCapacity(len(n.keys)-mid))
 	copy(right.keys, n.keys[mid:])
 	if n.children != nil {
-		right.children = make([]*node, len(n.children)-mid, growthCapacity(len(n.children)-mid))
+		right.children = make([]*node, len(n.children)-mid, b.growthCapacity(len(n.children)-mid))
 		copy(right.children, n.children[mid:])
 	}
 
@@ -275,10 +279,10 @@ func (b *treeBuilder) searchNode(n *node, target *datalog.Datom) int {
 
 // growthCapacity is the allocation for a slice holding n entries: a fixed step
 // beyond it, never past the one-entry overflow a split resolves.
-func growthCapacity(n int) int {
+func (b *treeBuilder) growthCapacity(n int) int {
 	capacity := n + nodeGrowthStep
-	if capacity > branchingFactor+1 {
-		capacity = branchingFactor + 1
+	if capacity > int(b.branching)+1 {
+		capacity = int(b.branching) + 1
 	}
 	if capacity < n {
 		capacity = n
@@ -286,9 +290,9 @@ func growthCapacity(n int) int {
 	return capacity
 }
 
-func insertDatomAt(s []*datalog.Datom, idx int, d *datalog.Datom) []*datalog.Datom {
+func (b *treeBuilder) insertDatomAt(s []*datalog.Datom, idx int, d *datalog.Datom) []*datalog.Datom {
 	if len(s) == cap(s) {
-		grown := make([]*datalog.Datom, len(s), growthCapacity(len(s)+1))
+		grown := make([]*datalog.Datom, len(s), b.growthCapacity(len(s)+1))
 		copy(grown, s)
 		s = grown
 	}
@@ -298,9 +302,9 @@ func insertDatomAt(s []*datalog.Datom, idx int, d *datalog.Datom) []*datalog.Dat
 	return s
 }
 
-func insertNodeAt(s []*node, idx int, n *node) []*node {
+func (b *treeBuilder) insertNodeAt(s []*node, idx int, n *node) []*node {
 	if len(s) == cap(s) {
-		grown := make([]*node, len(s), growthCapacity(len(s)+1))
+		grown := make([]*node, len(s), b.growthCapacity(len(s)+1))
 		copy(grown, s)
 		s = grown
 	}

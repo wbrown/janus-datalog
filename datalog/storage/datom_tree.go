@@ -6,25 +6,39 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// branchingFactor is the maximum number of entries in a node. It is an
+// branchingFactor is the maximum number of entries in a node of a store made
+// with no factor of its own (MemoryTreeStoreOptions.BranchingFactor). It is an
 // empirical starting point, not a derivation: at full packing, three million
 // datoms reach depth three (256³ = 16.7M), which 512 also reaches while
-// doubling the path copy per level. It settles against the batch-size
-// distribution and against path-copy cost measured on a commit.
+// doubling the path copy per level. A commit copies each node on its path
+// before changing it, in every index, so the factor is what a commit of few
+// datoms costs; a store that commits a datom at a time is made with a smaller
+// one.
 const branchingFactor = 256
 
+// MinBranchingFactor is the smallest factor a store is made with: a split
+// leaves each half two entries or more, so no branch is left with one child.
+const MinBranchingFactor = 4
+
+// MaxBranchingFactor is the largest factor a store is made with: a tree holds
+// its factor in sixteen bits (datomTree.branching).
+const MaxBranchingFactor = 1<<16 - 1
+
 // bulkPackingFraction is how full a sorted bulk build packs a leaf, as a
-// fraction of branchingFactor. Packing is a build property rather than a
-// structural constant, and it sets the store's resting memory: the sizing model
-// in MEMORY_DATOM_INDEXES.md assumes a near-full sorted build. This is the
-// other empirical parameter.
+// fraction of the tree's branching factor. Packing is a build property rather
+// than a structural constant, and it sets the store's resting memory: the
+// sizing model in MEMORY_DATOM_INDEXES.md assumes a near-full sorted build.
+// This is the other empirical parameter.
 const bulkPackingFraction = 1.0
 
-// maxTreeDepth bounds the inline cursor path. Nodes below the root hold at
-// least branchingFactor/2 entries, so this admits 128⁷ datoms beneath a root —
-// unreachable. Exceeding it is a construction bug, and treeCursor says so
-// rather than growing silently.
-const maxTreeDepth = 8
+// maxTreeDepth is the length of the array inline in a cursor, which is its
+// path over a tree no deeper. A node split from a full one holds at least half
+// the tree's branching factor, so at the default factor this admits 128⁶
+// datoms beneath a root, and a cursor over such a tree allocates once. A tree
+// of a small factor is deeper, and its cursor's path is a slice of the tree's
+// depth (treeCursor.path). Seven levels and the path's slice are the memory a
+// fixed path of eight levels took.
+const maxTreeDepth = 7
 
 // node is one tree node. Level zero is a leaf; above that, keys[i] is the
 // maximum datom in children[i], so a search descends into the first child whose
@@ -55,20 +69,29 @@ func (n *node) maxDatom() *datalog.Datom { return n.keys[len(n.keys)-1] }
 
 // datomTree is a persistent sorted set of datoms in one index's order. A tree
 // value is its root; sharing a root shares the whole structure.
+//
+// branching is the maximum number of entries in a node of the tree. Every tree
+// built from this one carries it, so a store's trees keep the factor the store
+// was made with through every commit, bulk build and fork. It is sixteen bits
+// wide and declared before the root, where it lies in the bytes the index and
+// the order leave unused: a commit makes a tree for every index, and the
+// factor adds nothing to what each takes.
 type datomTree struct {
-	index IndexType
-	order [componentsPerIndex]keyComponent
-	root  *node
-	count int
+	index     IndexType
+	order     [componentsPerIndex]keyComponent
+	branching uint16
+	root      *node
+	count     int
 }
 
-// newDatomTree returns an empty tree ordered for index.
-func newDatomTree(index IndexType) *datomTree {
+// newDatomTree returns an empty tree ordered for index, whose nodes hold at
+// most branching entries, a factor no larger than MaxBranchingFactor.
+func newDatomTree(index IndexType, branching int) *datomTree {
 	order, err := componentOrder(index)
 	if err != nil {
 		panic(fmt.Sprintf("newDatomTree: %v", err))
 	}
-	return &datomTree{index: index, order: order}
+	return &datomTree{index: index, order: order, branching: uint16(branching)}
 }
 
 func (t *datomTree) compare(a, b *datalog.Datom) int {
@@ -91,18 +114,19 @@ func (t *datomTree) buildFromSorted(datoms []*datalog.Datom) {
 		return
 	}
 
-	level := buildLeafLevel(datoms)
+	level := buildLeafLevel(datoms, int(t.branching))
 	for len(level) > 1 {
-		level = buildBranchLevel(level)
+		level = buildBranchLevel(level, int(t.branching))
 	}
 	t.root = level[0]
 }
 
-// buildLeafLevel packs the sorted datoms into leaves. The final leaf takes
-// whatever remains rather than being balanced against its predecessor: a bulk
-// build is followed by reads, not by inserts at the tail.
-func buildLeafLevel(datoms []*datalog.Datom) []*node {
-	perLeaf := int(float64(branchingFactor) * bulkPackingFraction)
+// buildLeafLevel packs the sorted datoms into leaves of at most branching
+// entries. The final leaf takes whatever remains rather than being balanced
+// against its predecessor: a bulk build is followed by reads, not by inserts at
+// the tail.
+func buildLeafLevel(datoms []*datalog.Datom, branching int) []*node {
+	perLeaf := int(float64(branching) * bulkPackingFraction)
 	if perLeaf < 1 {
 		perLeaf = 1
 	}
@@ -120,12 +144,12 @@ func buildLeafLevel(datoms []*datalog.Datom) []*node {
 	return leaves
 }
 
-// buildBranchLevel groups the level below into parents, each keyed by its
-// children's maxima.
-func buildBranchLevel(below []*node) []*node {
-	parents := make([]*node, 0, (len(below)+branchingFactor-1)/branchingFactor)
-	for start := 0; start < len(below); start += branchingFactor {
-		end := start + branchingFactor
+// buildBranchLevel groups the level below into parents of at most branching
+// children, each keyed by its children's maxima.
+func buildBranchLevel(below []*node, branching int) []*node {
+	parents := make([]*node, 0, (len(below)+branching-1)/branching)
+	for start := 0; start < len(below); start += branching {
+		end := start + branching
 		if end > len(below) {
 			end = len(below)
 		}

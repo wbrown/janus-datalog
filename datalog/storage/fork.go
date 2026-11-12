@@ -103,30 +103,31 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 		return nil, fmt.Errorf("Fork %q: %w", name, err)
 	}
 	plannerOptions := *d.plannerOptions
-	// The given schema and the declared definitions are one state, published
-	// together under schemaInstallMu by every install, so both are read under
-	// it.
+	// The given schema and the definitions the store states are one state,
+	// published together under schemaInstallMu by every install, so both are
+	// read under it.
 	d.schemaInstallMu.Lock()
 	d.mu.RLock()
 	given := d.givenSchema
 	d.mu.RUnlock()
-	declared := d.declaredSchema()
+	stored := d.storedSchema()
 	d.schemaInstallMu.Unlock()
-	branch, err = NewDatabaseWithOptions(DatabaseOptions{
+	// The branch holds the parent's facts as of the snapshot. The definitions
+	// the parent's store states are asserted into it by the install that ends
+	// its open, so a declaration the parent made after the snapshot reaches
+	// the branch and its dump describes itself, and the branch's schema is
+	// composed once, from what its store states after. The declarations the
+	// parent took from another database at its open are the branch's as they
+	// are the parent's, held beside its store and stated in neither.
+	branch, err = openDatabase(DatabaseOptions{
 		Store:                   forked,
 		Schema:                  given,
 		RefuseUnknownAttributes: d.refuseUnknown,
 		PlannerOptions:          &plannerOptions,
 		DisableCache:            d.cache == nil,
-	})
+	}, stored, d.taken)
 	if err != nil {
 		return nil, errjoin.Join(fmt.Errorf("Fork %q: %w", name, err), forked.Close())
-	}
-	// The branch holds the parent's facts as of the snapshot. The parent's
-	// declared definitions are asserted into it, so a declaration the parent
-	// made after the snapshot reaches the branch and its dump describes itself.
-	if err := branch.adoptDeclarations(declared); err != nil {
-		return nil, errjoin.Join(fmt.Errorf("Fork %q: %w", name, err), branch.Close())
 	}
 	if err := addBranchRecord(tx, name, snapshot.At, ceiling, branch.ReplicaID()); err != nil {
 		return nil, errjoin.Join(err, branch.Close())

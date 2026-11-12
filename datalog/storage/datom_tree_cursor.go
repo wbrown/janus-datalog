@@ -13,22 +13,33 @@ type cursorLevel struct {
 	idx int
 }
 
-// treeCursor walks a datomTree in index order. The path is a fixed-size array
-// inline in the struct, so a cursor allocates once and neither seeking nor
-// stepping allocates again.
+// treeCursor walks a datomTree in index order. Its path is as long as the tree
+// is deep, which the root's level says when the cursor is made: an array
+// inline in the struct for a tree no deeper than maxTreeDepth, so that such a
+// cursor allocates once, and a slice of the tree's depth for a deeper one, a
+// tree of a small branching factor. Neither seeking nor stepping allocates.
+//
+// The path points into the cursor's own array, so a cursor is made by
+// datomTree.cursor and held by pointer, never copied.
 //
 // A cursor holds nodes from one root. Because nodes are immutable once
 // published, that root stays walkable no matter what commits afterward — which
 // is what makes a read session a retained root rather than a lock.
 type treeCursor struct {
-	tree  *datomTree
-	path  [maxTreeDepth]cursorLevel
-	depth int
-	valid bool
+	tree   *datomTree
+	path   []cursorLevel
+	inline [maxTreeDepth]cursorLevel
+	depth  int
+	valid  bool
 }
 
 func (t *datomTree) cursor() *treeCursor {
-	return &treeCursor{tree: t}
+	c := &treeCursor{tree: t}
+	c.path = c.inline[:]
+	if t.root != nil && int(t.root.level) >= len(c.inline) {
+		c.path = make([]cursorLevel, int(t.root.level)+1)
+	}
+	return c
 }
 
 // seek positions the cursor at the first datom not less than target and reports
@@ -127,8 +138,8 @@ func (c *treeCursor) descendLeftmost(n *node) {
 func (c *treeCursor) push(n *node, idx int) {
 	if c.depth == len(c.path) {
 		panic(fmt.Sprintf(
-			"treeCursor: depth exceeded %d on %v — a tree this deep means node "+
-				"construction is producing undersized nodes", maxTreeDepth, c.tree.index))
+			"treeCursor: a descent of %v went deeper than its root's level, %d, says the tree is",
+			c.tree.index, len(c.path)-1))
 	}
 	c.path[c.depth] = cursorLevel{n: n, idx: idx}
 	c.depth++

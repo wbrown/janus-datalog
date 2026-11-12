@@ -52,7 +52,7 @@ func TestDatomTreeBuildFromSortedRoundTrips(t *testing.T) {
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("n=%d", size), func(t *testing.T) {
 			datoms := sortedTreeDatoms(EAVT, size)
-			tree := newDatomTree(EAVT)
+			tree := newDatomTree(EAVT, branchingFactor)
 			tree.buildFromSorted(datoms)
 			require.Equal(t, size, tree.Len())
 
@@ -81,7 +81,7 @@ func TestDatomTreeBuildReachesExpectedDepth(t *testing.T) {
 		{size: branchingFactor*branchingFactor + 1, level: 2},
 	} {
 		t.Run(fmt.Sprintf("n=%d", tc.size), func(t *testing.T) {
-			tree := newDatomTree(EAVT)
+			tree := newDatomTree(EAVT, branchingFactor)
 			tree.buildFromSorted(sortedTreeDatoms(EAVT, tc.size))
 			require.Equal(t, tc.level, tree.root.level)
 		})
@@ -91,7 +91,7 @@ func TestDatomTreeBuildReachesExpectedDepth(t *testing.T) {
 func TestDatomTreeSeek(t *testing.T) {
 	const size = branchingFactor*2 + 7
 	datoms := sortedTreeDatoms(EAVT, size)
-	tree := newDatomTree(EAVT)
+	tree := newDatomTree(EAVT, branchingFactor)
 	tree.buildFromSorted(datoms)
 
 	t.Run("present target lands on it", func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestDatomTreeSeek(t *testing.T) {
 }
 
 func TestDatomTreeEmpty(t *testing.T) {
-	tree := newDatomTree(EAVT)
+	tree := newDatomTree(EAVT, branchingFactor)
 	tree.buildFromSorted(nil)
 	require.Zero(t, tree.Len())
 
@@ -169,7 +169,7 @@ func TestDatomTreeBuildsEveryIndexOrder(t *testing.T) {
 	for _, index := range Indices {
 		t.Run(fmt.Sprintf("%v", index), func(t *testing.T) {
 			datoms := sortedTreeDatoms(index, branchingFactor+13)
-			tree := newDatomTree(index)
+			tree := newDatomTree(index, branchingFactor)
 			tree.buildFromSorted(datoms)
 
 			walked := walkTree(t, tree)

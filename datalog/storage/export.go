@@ -46,9 +46,92 @@ func (d *Database) ExportCompressed(w io.Writer) error {
 	return d.Export(w, ExportOptions{Compressed: true})
 }
 
+// openDumpScan opens the scan a dump is written from: the store's datoms in
+// EAVT order, and on a database opened under another's schema the declarations
+// it took that its own store does not supersede, each at its entity's place
+// among them (takenDeclarations). The dump of such a database states the
+// definitions it runs under, as any database's does.
+func (d *Database) openDumpScan() (Iterator, error) {
+	iter, err := OpenScan(d.store, DiscardIntake, ScanBound{Index: EAVT})
+	if err != nil || d.taken == nil {
+		return iter, err
+	}
+	return &declarationsAmongScan{Iterator: iter, taken: d.taken.unsuperseded(d.storedSchema())}, nil
+}
+
+// declarationsAmongScan is a store's EAVT scan with the declarations a
+// database took yielded among its datoms, in the order of their entities. No
+// entity of a declaration it yields has a datom in the store: a store that
+// states a definition of an ident supersedes the one taken for it, and
+// unsuperseded leaves that one out. Seek, Scanned and Close are the store
+// scan's own.
+type declarationsAmongScan struct {
+	Iterator
+	// taken is the declarations' datoms in entity order, and next the first not
+	// yet yielded.
+	taken []datalog.Datom
+	next  int
+	// held is set while the store's scan stands on a datom not yet yielded,
+	// stored, read from the scan once as it came to stand there; ended is set
+	// once the store's scan has no more.
+	held, ended bool
+	stored      *datalog.Datom
+	current     *datalog.Datom
+	err         error
+}
+
+func (s *declarationsAmongScan) Next() bool {
+	if s.err != nil {
+		return false
+	}
+	if !s.held && !s.ended {
+		s.held = s.Iterator.Next()
+		s.ended = !s.held
+		if s.held {
+			if s.stored, s.err = s.Iterator.Datom(); s.err != nil {
+				return false
+			}
+		}
+	}
+	if s.held {
+		if s.next < len(s.taken) && s.taken[s.next].E.Compare(s.stored.E) < 0 {
+			s.current = &s.taken[s.next]
+			s.next++
+			return true
+		}
+		s.current, s.held = s.stored, false
+		return true
+	}
+	if s.Iterator.Error() != nil || s.next == len(s.taken) {
+		s.current = nil
+		return false
+	}
+	s.current = &s.taken[s.next]
+	s.next++
+	return true
+}
+
+func (s *declarationsAmongScan) Datom() (*datalog.Datom, error) {
+	return s.current, s.err
+}
+
+func (s *declarationsAmongScan) ElementID() datalog.ElementID {
+	if s.current == nil {
+		return datalog.ElementID{}
+	}
+	return s.current.Tx
+}
+
+func (s *declarationsAmongScan) Error() error {
+	if s.err != nil {
+		return s.err
+	}
+	return s.Iterator.Error()
+}
+
 // export is the shared implementation for Export and ExportCompressed.
 func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, skipEntity func(datalog.Identity) bool) (exportErr error) {
-	iter, err := OpenScan(d.store, DiscardIntake, ScanBound{Index: EAVT})
+	iter, err := d.openDumpScan()
 	if err != nil {
 		return fmt.Errorf("failed to scan database: %w", err)
 	}

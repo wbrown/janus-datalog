@@ -86,7 +86,11 @@ type Database struct {
 	// givenSchema is the schema the caller gave, at open or through SetSchema.
 	// installSchema asserts it into the store and re-asserts it after an
 	// import, so it supersedes what a dump carried for the idents it names.
-	givenSchema    schema.SchemaProvider
+	givenSchema schema.SchemaProvider
+	// taken is the declarations the database took from another at its open
+	// (DatabaseOptions.SchemaOf), nil where it took none. It is set before the
+	// install that ends the open and never changes.
+	taken          *takenDeclarations
 	plannerOptions *planner.PlannerOptions // Optional planner options override
 	clock          *LamportClock           // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
 	replicaID      uint64                  // CRDT: This database's replica identifier
@@ -178,10 +182,22 @@ type DatabaseOptions struct {
 	// BackendName, Path and CompressionThreshold.
 	Store  Store
 	Schema schema.SchemaProvider // Optional schema for validation
+	// SchemaOf opens the database under the schema another database declares.
+	// The database runs with the definitions the other's store states at the
+	// open, taken as the datoms of their declarations and held beside its own
+	// store, which states none of them: the open declares nothing. A
+	// definition its own store comes to state, through SetSchema or an import,
+	// supersedes the one it took for that ident; a dump of it writes the
+	// declarations it took that none supersedes; a branch forked from it holds
+	// them as it does. The other database is read at the open alone, so a
+	// declaration it makes afterwards does not reach this one, and it may be
+	// closed while this one lives. Mutually exclusive with Schema; the other
+	// database is one that writes, not an AsOf or History handle.
+	SchemaOf *Database
 	// RefuseUnknownAttributes makes a query or pull that names an attribute the
 	// schema does not declare an error, where the database otherwise answers it
-	// with no tuple. It requires Schema: with none to check against, the
-	// constructor returns an error.
+	// with no tuple. It requires Schema or SchemaOf: with none to check
+	// against, the constructor returns an error.
 	RefuseUnknownAttributes bool
 	AnnotationHandler       annotations.Handler     // Handler for query tracing; the database hands every event to it and to the Handler PlannerOptions carries
 	ReplicaID               uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
@@ -239,6 +255,26 @@ func newBinaryKeyEncoder(threshold int) *BinaryKeyEncoder {
 //	    Path: "/path/to/db",
 //	})
 func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
+	var taken *takenDeclarations
+	if opts.SchemaOf != nil {
+		if opts.Schema != nil {
+			return nil, fmt.Errorf("SchemaOf and Schema both set: the database runs under the other database's schema or under a given one")
+		}
+		var err error
+		if taken, err = opts.SchemaOf.lentDeclarations(); err != nil {
+			return nil, fmt.Errorf("SchemaOf: %w", err)
+		}
+	}
+	return openDatabase(opts, nil, taken)
+}
+
+// openDatabase is NewDatabaseWithOptions. For a fork's branch it is given
+// adopted, the definitions the parent's store states, which the install that
+// ends the open asserts into the branch's store after the given schema
+// (installOpening). taken is the declarations the database runs under without
+// stating them: another database's, taken for SchemaOf, or for a fork's
+// branch the ones its parent took.
+func openDatabase(opts DatabaseOptions, adopted *schema.Schema, taken *takenDeclarations) (*Database, error) {
 	if opts.Schema != nil {
 		if err := engineWordRedeclared(opts.Schema); err != nil {
 			return nil, err
@@ -361,6 +397,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		planCache:      planner.NewPlanCache(1000, 0),
 		parseCache:     NewParseCache(1000),
 		givenSchema:    opts.Schema,
+		taken:          taken,
 		refuseUnknown:  opts.RefuseUnknownAttributes,
 		plannerOptions: &plannerOptions,
 		clock:          clock,
@@ -386,9 +423,10 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		}
 	}
 
-	// The store's definitions are read, a given schema declared into them, and
-	// the schema the database runs with composed from what the store states.
-	if err := d.installSchema(true); err != nil {
+	// The store's definitions are read, a given schema declared into them, a
+	// fork's parent's declarations after it, and the schema the database runs
+	// with composed from what the store states.
+	if err := d.installOpening(adopted); err != nil {
 		return nil, closeOwnedStore(fmt.Errorf("installing schema: %w", err))
 	}
 	return d, nil
@@ -413,7 +451,7 @@ func (d *Database) SetSchema(s schema.SchemaProvider) error {
 	if d.mode != latestMode {
 		return fmt.Errorf("SetSchema: cannot declare a schema on a read-only temporal handle (AsOf/History)")
 	}
-	if s == nil && d.refuseUnknown {
+	if s == nil && d.refuseUnknown && d.taken == nil {
 		return errRefuseUnknownNeedsSchema
 	}
 	if s != nil {
@@ -801,6 +839,7 @@ func (d *Database) AsOf(target datalog.ElementID) *Database {
 		store:          d.store,
 		encoder:        d.encoder,
 		givenSchema:    d.givenSchema,
+		taken:          d.taken,
 		refuseUnknown:  d.refuseUnknown,
 		planCache:      d.planCache,
 		parseCache:     d.parseCache,
@@ -840,6 +879,7 @@ func (d *Database) History() *Database {
 		store:          d.store,
 		encoder:        d.encoder,
 		givenSchema:    d.givenSchema,
+		taken:          d.taken,
 		refuseUnknown:  d.refuseUnknown,
 		planCache:      d.planCache,
 		parseCache:     d.parseCache,

@@ -471,6 +471,27 @@ behind unique-attribute resolution.
 
 See `PERFORMANCE_STATUS.md` for detailed benchmarks.
 
+## A Database Opened Under Another's Schema
+
+`DatabaseOptions.SchemaOf` names another database, and the database opened runs with the definitions that database declares at the open:
+
+```go
+trial, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+    BackendName: "memory-trees",
+    SchemaOf:    longLived,
+})
+```
+
+- The open declares nothing. The definitions are taken as the datoms of their declarations and held beside the store, which states none of them, so the open costs what an open under no schema costs, whatever the number of attributes.
+- The definitions are the ones the other database declares, not the ones its ops infer, and they are fixed at the open: a later `SetSchema` on the other database does not reach this one, and the other may be closed while this one lives.
+- A definition this database's own store comes to state, through `SetSchema` or an import, supersedes the one it took for that ident. `SetSchema(nil)` withdraws the given schema and leaves the ones it took.
+- A dump of it writes the declarations it took that its store does not supersede, among the store's own datoms, so the dump describes itself.
+- A branch forked from it runs under the same definitions and states none of them either.
+- `RefuseUnknownAttributes` checks against the definitions it took; no `Schema` is given, and `Schema` beside `SchemaOf` is an error.
+- A query of the schema's facts (`[?a :db.attribute/declaration ?d]`) reads the database's own store, and finds the definitions it declared itself and none it took.
+
+The use is one long-lived database and many short-lived ones beside it, each a source in the same queries (see `MULTI_SOURCE.md`).
+
 ## Limitations
 
 Current limitations compared to Datomic:

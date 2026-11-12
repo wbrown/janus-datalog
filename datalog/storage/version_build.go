@@ -6,10 +6,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// versionFromDatoms builds a version from scratch, deriving each index's order
-// from one already built instead of sorting all eight independently. The datoms
-// must be duplicate-free — the dump format's own property, trusted rather than
-// swept for.
+// versionFromDatoms builds a version from scratch, its trees' nodes holding at
+// most branching entries, deriving each index's order from one already built
+// instead of sorting all eight independently. The datoms must be
+// duplicate-free — the dump format's own property, trusted rather than swept
+// for.
 //
 // The derivations, in sequence over the caller's slice w and one scratch s:
 //
@@ -24,10 +25,10 @@ import (
 //	VAET  k-way merge of AVET's V-sorted runs into w, k = distinct attributes
 //	ATEV  s's per-A runs resorted by (Tx,E,V,tail)
 //	TAEV  full sort of w — Tx leads, so comparisons rarely pass one component
-func versionFromDatoms(datoms []*datalog.Datom) *storeVersion {
+func versionFromDatoms(datoms []*datalog.Datom, branching int) *storeVersion {
 	next := &storeVersion{}
 	build := func(index IndexType, ordered []*datalog.Datom) {
-		t := newDatomTree(index)
+		t := newDatomTree(index, branching)
 		t.buildFromSorted(ordered)
 		next.trees[index] = t
 	}
@@ -42,7 +43,7 @@ func versionFromDatoms(datoms []*datalog.Datom) *storeVersion {
 	w := datoms
 	s := make([]*datalog.Datom, len(datoms))
 
-	eavt := newDatomTree(EAVT)
+	eavt := newDatomTree(EAVT, branching)
 	slices.SortFunc(w, func(a, b *datalog.Datom) int {
 		return compareDatomsInOrder(eavt.order, a, b)
 	})
@@ -68,7 +69,7 @@ func versionFromDatoms(datoms []*datalog.Datom) *storeVersion {
 	runs.resort(s, compareTxEVTail)
 	build(ATEV, s)
 
-	taev := newDatomTree(TAEV)
+	taev := newDatomTree(TAEV, branching)
 	slices.SortFunc(w, func(a, b *datalog.Datom) int {
 		return compareDatomsInOrder(taev.order, a, b)
 	})
