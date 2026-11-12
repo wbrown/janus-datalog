@@ -45,7 +45,7 @@ func TestTreeInsertProducesSortedOrder(t *testing.T) {
 			shuffled := strided(sorted)
 			require.Len(t, shuffled, size, "strided lost or duplicated entries")
 
-			tree := insertAll(newDatomTree(EAVT), shuffled)
+			tree := insertAll(newDatomTree(EAVT, branchingFactor), shuffled)
 			require.Equal(t, size, tree.Len())
 
 			walked := walkTree(t, tree)
@@ -62,7 +62,7 @@ func TestTreeInsertProducesSortedOrder(t *testing.T) {
 // child and each ancestor's separator for it have to grow.
 func TestTreeInsertAscendingExercisesRightmostGrowth(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*3)
-	tree := insertAll(newDatomTree(EAVT), sorted)
+	tree := insertAll(newDatomTree(EAVT, branchingFactor), sorted)
 
 	require.Equal(t, len(sorted), tree.Len())
 	walked := walkTree(t, tree)
@@ -74,7 +74,7 @@ func TestTreeInsertAscendingExercisesRightmostGrowth(t *testing.T) {
 
 func TestTreeInsertIsASet(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, 64)
-	tree := insertAll(newDatomTree(EAVT), sorted)
+	tree := insertAll(newDatomTree(EAVT, branchingFactor), sorted)
 
 	b := tree.transient()
 	for _, d := range sorted {
@@ -91,7 +91,7 @@ func TestTreeInsertIsASet(t *testing.T) {
 // is not a retained root.
 func TestTreeInsertLeavesTheSourceTreeIntact(t *testing.T) {
 	base := sortedTreeDatoms(EAVT, branchingFactor*2)
-	original := newDatomTree(EAVT)
+	original := newDatomTree(EAVT, branchingFactor)
 	original.buildFromSorted(base)
 
 	before := walkTree(t, original)
@@ -122,7 +122,7 @@ func TestTreeInsertLeavesTheSourceTreeIntact(t *testing.T) {
 // memory model would be wrong: every commit would duplicate the store.
 func TestTreeInsertSharesUntouchedSubtrees(t *testing.T) {
 	base := sortedTreeDatoms(EAVT, branchingFactor*4)
-	original := newDatomTree(EAVT)
+	original := newDatomTree(EAVT, branchingFactor)
 	original.buildFromSorted(base)
 	require.False(t, original.root.isLeaf(), "fixture must produce a branching tree")
 	require.Greater(t, len(original.root.children), 2, "fixture must produce several subtrees")
@@ -162,7 +162,7 @@ func TestTreeInsertSharesUntouchedSubtrees(t *testing.T) {
 // published nodes in place beneath live readers. It fails as inconsistent reads
 // far from the cause, so it is pinned here at the cause.
 func TestOwnerTokensAreDistinct(t *testing.T) {
-	tree := insertAll(newDatomTree(EAVT), sortedTreeDatoms(EAVT, 4))
+	tree := insertAll(newDatomTree(EAVT, branchingFactor), sortedTreeDatoms(EAVT, 4))
 
 	seen := make(map[*ownerToken]bool)
 	for i := 0; i < 16; i++ {
@@ -181,7 +181,7 @@ func TestOwnerTokensAreDistinct(t *testing.T) {
 func TestTreeSplitClearsVacatedSlots(t *testing.T) {
 	// Enough to split leaves and produce a branch level, so both the datom and
 	// the child-pointer slices get truncated somewhere.
-	tree := insertAll(newDatomTree(EAVT), sortedTreeDatoms(EAVT, branchingFactor*4))
+	tree := insertAll(newDatomTree(EAVT, branchingFactor), sortedTreeDatoms(EAVT, branchingFactor*4))
 
 	var checked int
 	var walk func(n *node)
@@ -210,7 +210,7 @@ func TestTreeSplitClearsVacatedSlots(t *testing.T) {
 // TestTreeBuilderRejectsUseAfterCommit: a committed builder's nodes are
 // published, so writing through it would mutate a tree readers can see.
 func TestTreeBuilderRejectsUseAfterCommit(t *testing.T) {
-	tree := insertAll(newDatomTree(EAVT), sortedTreeDatoms(EAVT, 8))
+	tree := insertAll(newDatomTree(EAVT, branchingFactor), sortedTreeDatoms(EAVT, 8))
 	b := tree.transient()
 	b.commit()
 
@@ -232,9 +232,9 @@ func TestTreeInsertMatchesBulkBuild(t *testing.T) {
 		t.Run(fmt.Sprintf("%v", index), func(t *testing.T) {
 			sorted := sortedTreeDatoms(index, branchingFactor*2+31)
 
-			built := newDatomTree(index)
+			built := newDatomTree(index, branchingFactor)
 			built.buildFromSorted(sorted)
-			inserted := insertAll(newDatomTree(index), strided(sorted))
+			inserted := insertAll(newDatomTree(index, branchingFactor), strided(sorted))
 
 			require.Equal(t, built.Len(), inserted.Len())
 			fromBuild := walkTree(t, built)

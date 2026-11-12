@@ -16,7 +16,7 @@ func TestStoreVersionCoversEveryIndex(t *testing.T) {
 	require.Len(t, Indices, indexCount,
 		"give storeVersion a slot for the new index; a missing one is a nil tree at scan time")
 
-	v := emptyStoreVersion()
+	v := emptyStoreVersion(branchingFactor)
 	for _, index := range Indices {
 		require.NotNil(t, v.tree(index), "index %v has no tree", index)
 		require.Zero(t, v.tree(index).Len())
@@ -51,7 +51,7 @@ func requireIndexesAgree(t *testing.T, v *storeVersion) {
 func TestVersionBuilderWritesEveryIndex(t *testing.T) {
 	datoms := sortedTreeDatoms(EAVT, branchingFactor*2+9)
 
-	b := emptyStoreVersion().transient()
+	b := emptyStoreVersion(branchingFactor).transient()
 	for _, d := range datoms {
 		require.True(t, b.addDatom(d))
 	}
@@ -67,7 +67,7 @@ func TestVersionBuilderWritesEveryIndex(t *testing.T) {
 func TestVersionBuilderIsASet(t *testing.T) {
 	datoms := sortedTreeDatoms(EAVT, 32)
 
-	first := emptyStoreVersion().transient()
+	first := emptyStoreVersion(branchingFactor).transient()
 	for _, d := range datoms {
 		first.addDatom(d)
 	}
@@ -84,7 +84,7 @@ func TestVersionBuilderIsASet(t *testing.T) {
 }
 
 func TestVersionBuilderRejectsUseAfterCommit(t *testing.T) {
-	b := emptyStoreVersion().transient()
+	b := emptyStoreVersion(branchingFactor).transient()
 	b.commit()
 	require.Panics(t, func() { b.commit() })
 	require.Panics(t, func() { b.addDatom(sortedTreeDatoms(EAVT, 1)[0]) })
@@ -94,7 +94,7 @@ func TestVersionBuilderRejectsUseAfterCommit(t *testing.T) {
 // exact contents however many batches land afterward. This is what lets a read
 // session be a retained pointer instead of a lock.
 func TestRetainedVersionSurvivesCommits(t *testing.T) {
-	h := newVersionHolder()
+	h := newVersionHolder(branchingFactor)
 
 	base := sortedTreeDatoms(EAVT, branchingFactor)
 	b := h.begin()
@@ -135,7 +135,7 @@ func TestRetainedVersionSurvivesCommits(t *testing.T) {
 // batch that is abandoned leaves no trace and the write lock is released for
 // the next writer.
 func TestAbandonedBatchPublishesNothing(t *testing.T) {
-	h := newVersionHolder()
+	h := newVersionHolder(branchingFactor)
 	before := h.read()
 
 	b := h.begin()
@@ -156,12 +156,12 @@ func TestAbandonedBatchPublishesNothing(t *testing.T) {
 // builder never touched, so the swap, the builder's death, and the lock release
 // each have to happen anyway.
 func TestPublishBuiltSwapsInTheBuiltVersion(t *testing.T) {
-	h := newVersionHolder()
+	h := newVersionHolder(branchingFactor)
 	before := h.read()
 
 	datoms := sortedTreeDatoms(EAVT, 24)
 	b := h.begin()
-	built := versionFromDatoms(datoms)
+	built := versionFromDatoms(datoms, branchingFactor)
 	h.publishBuilt(b, built)
 
 	require.Same(t, built, h.read(), "published version is not the built one")
@@ -193,7 +193,7 @@ func TestConcurrentReadersNeverSeeATornVersion(t *testing.T) {
 		perCommit  = 8
 	)
 
-	h := newVersionHolder()
+	h := newVersionHolder(branchingFactor)
 	seed := h.begin()
 	for _, d := range sortedTreeDatoms(EAVT, branchingFactor) {
 		seed.addDatom(d)

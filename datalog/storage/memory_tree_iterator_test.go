@@ -14,7 +14,7 @@ import (
 // contract — compare against the stored datoms, not the fixture.
 func versionOf(t *testing.T, datoms []*datalog.Datom) (*storeVersion, []*datalog.Datom) {
 	t.Helper()
-	b := emptyStoreVersion().transient()
+	b := emptyStoreVersion(branchingFactor).transient()
 	for _, d := range datoms {
 		b.addDatom(d)
 	}
@@ -87,7 +87,7 @@ func TestMemoryScanWholeIndex(t *testing.T) {
 }
 
 func TestMemoryScanEmptyVersion(t *testing.T) {
-	v := emptyStoreVersion()
+	v := emptyStoreVersion(branchingFactor)
 	it, err := v.scan(ScanBound{Index: EAVT})
 	require.NoError(t, err)
 	require.False(t, it.Next())
@@ -275,7 +275,7 @@ func TestMemoryScanRejectsBadBounds(t *testing.T) {
 // TestMemoryScanWalksItsOwnVersion: an open scan is reading a retained version,
 // so commits landing mid-iteration are invisible to it.
 func TestMemoryScanWalksItsOwnVersion(t *testing.T) {
-	h := newVersionHolder()
+	h := newVersionHolder(branchingFactor)
 	base := sortedTreeDatoms(EAVT, 64)
 	seed := h.begin()
 	for _, d := range base {

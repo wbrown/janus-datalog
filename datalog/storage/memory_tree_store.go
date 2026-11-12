@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -51,13 +52,45 @@ type MemoryTreeStore struct {
 	bulk    []*datalog.Datom
 }
 
-// NewMemoryTreeStore returns an empty typed store.
+// MemoryTreeStoreOptions configures a MemoryTreeStore where it is made.
+type MemoryTreeStoreOptions struct {
+	// Encoder serves the JDZL and EDN boundaries. Nil is a BinaryKeyEncoder of
+	// the default configuration.
+	Encoder *BinaryKeyEncoder
+	// BranchingFactor is the maximum number of entries in a node of the store's
+	// trees. A commit copies each node on its path before changing it, in every
+	// index, so the factor is what a commit of few datoms costs, against one
+	// more level to descend for each division of it. The store keeps it for its
+	// life, and a fork of the store has it. Zero is the default, 256; a factor
+	// below MinBranchingFactor is refused.
+	BranchingFactor int
+}
+
+// NewMemoryTreeStore returns an empty typed store of the default branching
+// factor.
 func NewMemoryTreeStore(encoder *BinaryKeyEncoder) *MemoryTreeStore {
+	return newMemoryTreeStore(encoder, branchingFactor)
+}
+
+// NewMemoryTreeStoreWithOptions returns an empty typed store made as opts say.
+func NewMemoryTreeStoreWithOptions(opts MemoryTreeStoreOptions) (*MemoryTreeStore, error) {
+	branching := opts.BranchingFactor
+	if branching == 0 {
+		branching = branchingFactor
+	}
+	if branching < MinBranchingFactor {
+		return nil, fmt.Errorf("memory tree store: branching factor %d is below the smallest a store is made with, %d",
+			opts.BranchingFactor, MinBranchingFactor)
+	}
+	return newMemoryTreeStore(opts.Encoder, branching), nil
+}
+
+func newMemoryTreeStore(encoder *BinaryKeyEncoder, branching int) *MemoryTreeStore {
 	if encoder == nil {
 		encoder = &BinaryKeyEncoder{}
 	}
 	return &MemoryTreeStore{
-		versions: newVersionHolder(),
+		versions: newVersionHolder(branching),
 		encoder:  encoder,
 		metadata: make(map[string]uint64),
 	}
@@ -154,7 +187,7 @@ func (s *MemoryTreeStore) FinishBatch() error {
 	if b.base.datomCount() == 0 {
 		datoms := s.bulk
 		s.bulk = nil
-		s.versions.publishBuilt(b, versionFromDatoms(datoms))
+		s.versions.publishBuilt(b, versionFromDatoms(datoms, b.base.branching()))
 		return nil
 	}
 	s.versions.publish(b)

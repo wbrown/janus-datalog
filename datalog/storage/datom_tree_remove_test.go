@@ -23,7 +23,7 @@ func TestTreeRemoveLeavesTheRestInOrder(t *testing.T) {
 	for _, size := range []int{1, 2, branchingFactor + 1, branchingFactor * 3} {
 		t.Run(fmt.Sprintf("n=%d", size), func(t *testing.T) {
 			sorted := sortedTreeDatoms(EAVT, size)
-			tree := newDatomTree(EAVT)
+			tree := newDatomTree(EAVT, branchingFactor)
 			tree.buildFromSorted(sorted)
 
 			var dropped, kept []*datalog.Datom
@@ -49,7 +49,7 @@ func TestTreeRemoveLeavesTheRestInOrder(t *testing.T) {
 
 func TestTreeRemoveReportsWhetherItFound(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, 32)
-	tree := newDatomTree(EAVT)
+	tree := newDatomTree(EAVT, branchingFactor)
 	tree.buildFromSorted(sorted)
 
 	b := tree.transient()
@@ -68,7 +68,7 @@ func TestTreeRemoveReportsWhetherItFound(t *testing.T) {
 // root, or the tree keeps a spine of empty levels and Len disagrees with a walk.
 func TestTreeRemoveEverythingEmptiesTheTree(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*2+5)
-	tree := newDatomTree(EAVT)
+	tree := newDatomTree(EAVT, branchingFactor)
 	tree.buildFromSorted(sorted)
 
 	empty := removeAll(tree, sorted)
@@ -84,7 +84,7 @@ func TestTreeRemoveEverythingEmptiesTheTree(t *testing.T) {
 // subtree leaves the levels above it in place and every descent pays for them.
 func TestTreeRemoveCollapsesASingleChildRoot(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*3)
-	tree := newDatomTree(EAVT)
+	tree := newDatomTree(EAVT, branchingFactor)
 	tree.buildFromSorted(sorted)
 	require.False(t, tree.root.isLeaf(), "fixture must start branching")
 
@@ -99,7 +99,7 @@ func TestTreeRemoveCollapsesASingleChildRoot(t *testing.T) {
 // so a version handed out earlier keeps everything it had.
 func TestTreeRemoveLeavesTheSourceTreeIntact(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*2)
-	original := newDatomTree(EAVT)
+	original := newDatomTree(EAVT, branchingFactor)
 	original.buildFromSorted(sorted)
 
 	before := walkTree(t, original)
@@ -118,7 +118,7 @@ func TestTreeRemoveLeavesTheSourceTreeIntact(t *testing.T) {
 // into a subtree that no longer holds the target's range.
 func TestTreeRemoveThenSeekFindsTheSuccessor(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*2+11)
-	tree := newDatomTree(EAVT)
+	tree := newDatomTree(EAVT, branchingFactor)
 	tree.buildFromSorted(sorted)
 
 	// Drop a run from the middle, then seek each removed datom: every one must
@@ -140,7 +140,7 @@ func TestTreeRemoveThenSeekFindsTheSuccessor(t *testing.T) {
 
 func TestTreeRemoveClearsVacatedSlots(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*4)
-	tree := newDatomTree(EAVT)
+	tree := newDatomTree(EAVT, branchingFactor)
 	tree.buildFromSorted(sorted)
 	pruned := removeAll(tree, sorted[:branchingFactor*2])
 
@@ -171,7 +171,7 @@ func TestTreeRemoveAcrossEveryIndexOrder(t *testing.T) {
 	for _, index := range Indices {
 		t.Run(fmt.Sprintf("%v", index), func(t *testing.T) {
 			sorted := sortedTreeDatoms(index, branchingFactor+17)
-			tree := newDatomTree(index)
+			tree := newDatomTree(index, branchingFactor)
 			tree.buildFromSorted(sorted)
 
 			pruned := removeAll(tree, sorted[3:9])

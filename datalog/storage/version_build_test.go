@@ -89,7 +89,7 @@ func requireLatticeMatchesDirectSorts(t *testing.T, datoms []*datalog.Datom) {
 		reference[index] = sorted
 	}
 
-	built := versionFromDatoms(append([]*datalog.Datom(nil), datoms...))
+	built := versionFromDatoms(append([]*datalog.Datom(nil), datoms...), branchingFactor)
 	for _, index := range Indices {
 		require.Equal(t, len(datoms), built.tree(index).Len(), "index %v count", index)
 		walked := walkTree(t, built.tree(index))

@@ -26,14 +26,19 @@ type storeVersion struct {
 	trees [indexCount]*datomTree
 }
 
-// emptyStoreVersion is the state of a store with nothing in it.
-func emptyStoreVersion() *storeVersion {
+// emptyStoreVersion is the state of a store with nothing in it, whose trees'
+// nodes hold at most branching entries.
+func emptyStoreVersion(branching int) *storeVersion {
 	v := &storeVersion{}
 	for _, index := range Indices {
-		v.trees[index] = newDatomTree(index)
+		v.trees[index] = newDatomTree(index, branching)
 	}
 	return v
 }
+
+// branching is the branching factor of the version's trees. Every tree of a
+// version carries the one its store was made with, so any tree answers.
+func (v *storeVersion) branching() int { return v.trees[EAVT].branching }
 
 // tree returns the version's tree for one index order.
 func (v *storeVersion) tree(index IndexType) *datomTree {
@@ -135,9 +140,9 @@ type versionHolder struct {
 	writeMu sync.Mutex
 }
 
-func newVersionHolder() *versionHolder {
+func newVersionHolder(branching int) *versionHolder {
 	h := &versionHolder{}
-	h.current.Store(emptyStoreVersion())
+	h.current.Store(emptyStoreVersion(branching))
 	return h
 }
 
