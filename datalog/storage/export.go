@@ -71,9 +71,11 @@ type declarationsAmongScan struct {
 	// yet yielded.
 	taken []datalog.Datom
 	next  int
-	// held is set while the store's scan stands on a datom not yet yielded, and
-	// ended once it has no more.
+	// held is set while the store's scan stands on a datom not yet yielded,
+	// stored, read from the scan once as it came to stand there; ended is set
+	// once the store's scan has no more.
 	held, ended bool
+	stored      *datalog.Datom
 	current     *datalog.Datom
 	err         error
 }
@@ -85,19 +87,19 @@ func (s *declarationsAmongScan) Next() bool {
 	if !s.held && !s.ended {
 		s.held = s.Iterator.Next()
 		s.ended = !s.held
+		if s.held {
+			if s.stored, s.err = s.Iterator.Datom(); s.err != nil {
+				return false
+			}
+		}
 	}
 	if s.held {
-		stored, err := s.Iterator.Datom()
-		if err != nil {
-			s.err = err
-			return false
-		}
-		if s.next < len(s.taken) && s.taken[s.next].E.Compare(stored.E) < 0 {
+		if s.next < len(s.taken) && s.taken[s.next].E.Compare(s.stored.E) < 0 {
 			s.current = &s.taken[s.next]
 			s.next++
 			return true
 		}
-		s.current, s.held = stored, false
+		s.current, s.held = s.stored, false
 		return true
 	}
 	if s.Iterator.Error() != nil || s.next == len(s.taken) {

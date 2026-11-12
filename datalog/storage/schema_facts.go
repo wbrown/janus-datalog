@@ -71,6 +71,13 @@ var attributeDeclarationAttr = datalog.WellKnownKeyword(":db.attribute/declarati
 const definitionsQuery = `[:find ?a ?d
 	:where [?a :db.attribute/declaration ?d]]`
 
+// parsedDefinitionsQuery is definitionsQuery parsed, once a process. Every
+// database asks it at its open, where its own parse cache holds nothing, so
+// the text parsed through that cache is parsed again by each database opened.
+var parsedDefinitionsQuery = sync.OnceValues(func() (*query.Query, error) {
+	return parser.ParseQuery(definitionsQuery)
+})
+
 // definitionWords is the pull pattern of a definition's seven words.
 const definitionWords = `[:db/ident :db/valueType :db/cardinality :db/unique :db/uniqueElements :db/neverZeroValue :db/doc]`
 
@@ -145,7 +152,11 @@ func wildcardAttributes(declared *schema.Schema) map[datalog.Keyword]struct{} {
 func readSchemaFacts(d *Database) (*schema.Schema, error) {
 	planOpts := d.effectivePlannerOptions()
 	planOpts.Handler = nil
-	_, definitionsRel, err := d.queryUnderPlannerOptions(planOpts, definitionsQuery)
+	definitionsParsed, err := parsedDefinitionsQuery()
+	if err != nil {
+		return nil, fmt.Errorf("reading schema facts: %w", err)
+	}
+	_, definitionsRel, err := d.queryUnderPlannerOptions(planOpts, definitionsParsed)
 	tuples, err := executor.CollectTuples(definitionsRel, err)
 	if err != nil {
 		return nil, fmt.Errorf("reading schema facts: %w", err)
