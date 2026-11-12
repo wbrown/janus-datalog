@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
@@ -11,33 +13,33 @@ type cursorLevel struct {
 	idx int
 }
 
-// treeCursor walks a datomTree in index order. The first maxTreeDepth levels of
-// the path are a fixed-size array inline in the struct, so a cursor over a tree
-// no deeper than that allocates once and neither seeking nor stepping allocates
-// again. The levels of a deeper tree, one of a small branching factor, are in
-// deep, which grows to the tree's depth on the first descent and is kept.
+// treeCursor walks a datomTree in index order. Its path is as long as the tree
+// is deep, which the root's level says when the cursor is made: an array
+// inline in the struct for a tree no deeper than maxTreeDepth, so that such a
+// cursor allocates once, and a slice of the tree's depth for a deeper one, a
+// tree of a small branching factor. Neither seeking nor stepping allocates.
+//
+// The path points into the cursor's own array, so a cursor is made by
+// datomTree.cursor and held by pointer, never copied.
 //
 // A cursor holds nodes from one root. Because nodes are immutable once
 // published, that root stays walkable no matter what commits afterward — which
 // is what makes a read session a retained root rather than a lock.
 type treeCursor struct {
-	tree  *datomTree
-	path  [maxTreeDepth]cursorLevel
-	deep  []cursorLevel
-	depth int
-	valid bool
-}
-
-// level is the cursor's step at depth i of its path, counted from the root.
-func (c *treeCursor) level(i int) *cursorLevel {
-	if i < len(c.path) {
-		return &c.path[i]
-	}
-	return &c.deep[i-len(c.path)]
+	tree   *datomTree
+	path   []cursorLevel
+	inline [maxTreeDepth]cursorLevel
+	depth  int
+	valid  bool
 }
 
 func (t *datomTree) cursor() *treeCursor {
-	return &treeCursor{tree: t}
+	c := &treeCursor{tree: t}
+	c.path = c.inline[:]
+	if t.root != nil && int(t.root.level) >= len(c.inline) {
+		c.path = make([]cursorLevel, int(t.root.level)+1)
+	}
+	return c
 }
 
 // seek positions the cursor at the first datom not less than target and reports
@@ -91,7 +93,7 @@ func (c *treeCursor) next() bool {
 	}
 
 	// Advance within the leaf when it has more entries.
-	leaf := c.level(c.depth - 1)
+	leaf := &c.path[c.depth-1]
 	if leaf.idx+1 < len(leaf.n.keys) {
 		leaf.idx++
 		return true
@@ -100,7 +102,7 @@ func (c *treeCursor) next() bool {
 	// Otherwise climb to the nearest ancestor with an unvisited child, then
 	// take that subtree's first datom.
 	for c.depth--; c.depth > 0; c.depth-- {
-		level := c.level(c.depth - 1)
+		level := &c.path[c.depth-1]
 		if level.idx+1 < len(level.n.keys) {
 			level.idx++
 			c.descendLeftmost(level.n.children[level.idx])
@@ -117,7 +119,7 @@ func (c *treeCursor) datom() *datalog.Datom {
 	if !c.valid {
 		return nil
 	}
-	level := c.level(c.depth - 1)
+	level := c.path[c.depth-1]
 	return level.n.keys[level.idx]
 }
 
@@ -133,17 +135,12 @@ func (c *treeCursor) descendLeftmost(n *node) {
 	}
 }
 
-// push records the next step of a descent. A step past the inline path goes
-// into deep, appended where the cursor has not been that deep before.
 func (c *treeCursor) push(n *node, idx int) {
-	step := cursorLevel{n: n, idx: idx}
-	switch past := c.depth - len(c.path); {
-	case past < 0:
-		c.path[c.depth] = step
-	case past < len(c.deep):
-		c.deep[past] = step
-	default:
-		c.deep = append(c.deep, step)
+	if c.depth == len(c.path) {
+		panic(fmt.Sprintf(
+			"treeCursor: a descent of %v went deeper than its root's level, %d, says the tree is",
+			c.tree.index, len(c.path)-1))
 	}
+	c.path[c.depth] = cursorLevel{n: n, idx: idx}
 	c.depth++
 }

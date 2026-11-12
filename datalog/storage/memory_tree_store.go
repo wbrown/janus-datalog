@@ -62,7 +62,7 @@ type MemoryTreeStoreOptions struct {
 	// index, so the factor is what a commit of few datoms costs, against one
 	// more level to descend for each division of it. The store keeps it for its
 	// life, and a fork of the store has it. Zero is the default, 256; a factor
-	// below MinBranchingFactor is refused.
+	// below MinBranchingFactor or above MaxBranchingFactor is refused.
 	BranchingFactor int
 }
 
@@ -81,6 +81,10 @@ func NewMemoryTreeStoreWithOptions(opts MemoryTreeStoreOptions) (*MemoryTreeStor
 	if branching < MinBranchingFactor {
 		return nil, fmt.Errorf("memory tree store: branching factor %d is below the smallest a store is made with, %d",
 			opts.BranchingFactor, MinBranchingFactor)
+	}
+	if branching > MaxBranchingFactor {
+		return nil, fmt.Errorf("memory tree store: branching factor %d is above the largest a store is made with, %d",
+			opts.BranchingFactor, MaxBranchingFactor)
 	}
 	return newMemoryTreeStore(opts.Encoder, branching), nil
 }

@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
@@ -121,10 +122,48 @@ func TestTreeStoreBranchingFactorDefaultAndRefusal(t *testing.T) {
 	require.Equal(t, branchingFactor, widestNode(store.versions.read()),
 		"a batch over an empty store packs its leaves to the default factor")
 
-	for _, refused := range []int{-1, 1, MinBranchingFactor - 1} {
+	for _, refused := range []int{-1, 1, MinBranchingFactor - 1, MaxBranchingFactor + 1} {
 		_, err := treeStoreMadeWith(refused)
 		require.Error(t, err, "branching factor %d", refused)
 	}
+	for _, accepted := range []int{MinBranchingFactor, MaxBranchingFactor} {
+		store, err := treeStoreMadeWith(accepted)
+		require.NoError(t, err, "branching factor %d", accepted)
+		require.NoError(t, store.Close())
+	}
+}
+
+// A tree, its builder and its cursor take the memory they took before a store
+// could be made with a branching factor. A commit makes a tree and a builder
+// for every index and a scan makes a cursor, so a word added to one of them is
+// bytes every commit or scan of every store allocates. The factor lies in the
+// bytes a tree's index and order leave unused before its root. A cursor's path
+// is a slice over an inline array one level shorter than the array it was, and
+// is one word larger than that array's cursor, which the allocator rounds to
+// the same size.
+func TestBranchingFactorAddsNoMemoryToATreeItsBuilderOrItsCursor(t *testing.T) {
+	type treeWithoutFactor struct {
+		index IndexType
+		order [componentsPerIndex]keyComponent
+		root  *node
+		count int
+	}
+	type builderWithoutFactor struct {
+		index IndexType
+		order [componentsPerIndex]keyComponent
+		root  *node
+		count int
+		token *ownerToken
+	}
+	type cursorOfAFixedPath struct {
+		tree  *datomTree
+		path  [8]cursorLevel
+		depth int
+		valid bool
+	}
+	require.Equal(t, unsafe.Sizeof(treeWithoutFactor{}), unsafe.Sizeof(datomTree{}))
+	require.Equal(t, unsafe.Sizeof(builderWithoutFactor{}), unsafe.Sizeof(treeBuilder{}))
+	require.LessOrEqual(t, int(unsafe.Sizeof(treeCursor{})), int(unsafe.Sizeof(cursorOfAFixedPath{})+unsafe.Sizeof(uintptr(0))))
 }
 
 // deepestTree is the number of levels of the version's deepest tree.

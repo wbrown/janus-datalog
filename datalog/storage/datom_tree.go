@@ -20,6 +20,10 @@ const branchingFactor = 256
 // leaves each half two entries or more, so no branch is left with one child.
 const MinBranchingFactor = 4
 
+// MaxBranchingFactor is the largest factor a store is made with: a tree holds
+// its factor in sixteen bits (datomTree.branching).
+const MaxBranchingFactor = 1<<16 - 1
+
 // bulkPackingFraction is how full a sorted bulk build packs a leaf, as a
 // fraction of the tree's branching factor. Packing is a build property rather
 // than a structural constant, and it sets the store's resting memory: the
@@ -27,12 +31,14 @@ const MinBranchingFactor = 4
 // This is the other empirical parameter.
 const bulkPackingFraction = 1.0
 
-// maxTreeDepth is the length of the cursor's inline path. A node split from a
-// full one holds at least half the tree's branching factor, so at the default
-// factor this admits 128⁷ datoms beneath a root, and a cursor over such a tree
-// allocates once. A tree of a small factor is deeper, and its cursor holds the
-// levels past this in a slice (treeCursor.deep).
-const maxTreeDepth = 8
+// maxTreeDepth is the length of the array inline in a cursor, which is its
+// path over a tree no deeper. A node split from a full one holds at least half
+// the tree's branching factor, so at the default factor this admits 128⁶
+// datoms beneath a root, and a cursor over such a tree allocates once. A tree
+// of a small factor is deeper, and its cursor's path is a slice of the tree's
+// depth (treeCursor.path). Seven levels and the path's slice are the memory a
+// fixed path of eight levels took.
+const maxTreeDepth = 7
 
 // node is one tree node. Level zero is a leaf; above that, keys[i] is the
 // maximum datom in children[i], so a search descends into the first child whose
@@ -66,23 +72,26 @@ func (n *node) maxDatom() *datalog.Datom { return n.keys[len(n.keys)-1] }
 //
 // branching is the maximum number of entries in a node of the tree. Every tree
 // built from this one carries it, so a store's trees keep the factor the store
-// was made with through every commit, bulk build and fork.
+// was made with through every commit, bulk build and fork. It is sixteen bits
+// wide and declared before the root, where it lies in the bytes the index and
+// the order leave unused: a commit makes a tree for every index, and the
+// factor adds nothing to what each takes.
 type datomTree struct {
 	index     IndexType
 	order     [componentsPerIndex]keyComponent
+	branching uint16
 	root      *node
 	count     int
-	branching int
 }
 
 // newDatomTree returns an empty tree ordered for index, whose nodes hold at
-// most branching entries.
+// most branching entries, a factor no larger than MaxBranchingFactor.
 func newDatomTree(index IndexType, branching int) *datomTree {
 	order, err := componentOrder(index)
 	if err != nil {
 		panic(fmt.Sprintf("newDatomTree: %v", err))
 	}
-	return &datomTree{index: index, order: order, branching: branching}
+	return &datomTree{index: index, order: order, branching: uint16(branching)}
 }
 
 func (t *datomTree) compare(a, b *datalog.Datom) int {
@@ -105,9 +114,9 @@ func (t *datomTree) buildFromSorted(datoms []*datalog.Datom) {
 		return
 	}
 
-	level := buildLeafLevel(datoms, t.branching)
+	level := buildLeafLevel(datoms, int(t.branching))
 	for len(level) > 1 {
-		level = buildBranchLevel(level, t.branching)
+		level = buildBranchLevel(level, int(t.branching))
 	}
 	t.root = level[0]
 }

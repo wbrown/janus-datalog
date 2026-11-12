@@ -38,7 +38,7 @@ func emptyStoreVersion(branching int) *storeVersion {
 
 // branching is the branching factor of the version's trees. Every tree of a
 // version carries the one its store was made with, so any tree answers.
-func (v *storeVersion) branching() int { return v.trees[EAVT].branching }
+func (v *storeVersion) branching() int { return int(v.trees[EAVT].branching) }
 
 // tree returns the version's tree for one index order.
 func (v *storeVersion) tree(index IndexType) *datomTree {

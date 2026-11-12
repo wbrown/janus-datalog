@@ -32,12 +32,14 @@ type ownerToken struct {
 // The builder never writes through to the tree it came from. Its token is
 // dropped at commit, after which every node it created is immutable, because
 // no future builder can hold the same token.
+//
+// branching is the tree's, held where the tree holds it (datomTree.branching).
 type treeBuilder struct {
 	index     IndexType
 	order     [componentsPerIndex]keyComponent
+	branching uint16
 	root      *node
 	count     int
-	branching int
 	token     *ownerToken
 }
 
@@ -47,9 +49,9 @@ func (t *datomTree) transient() *treeBuilder {
 	return &treeBuilder{
 		index:     t.index,
 		order:     t.order,
+		branching: t.branching,
 		root:      t.root,
 		count:     t.count,
-		branching: t.branching,
 		token:     &ownerToken{},
 	}
 }
@@ -62,7 +64,7 @@ func (b *treeBuilder) commit() *datomTree {
 		panic("treeBuilder: commit called twice")
 	}
 	b.token = nil
-	return &datomTree{index: b.index, order: b.order, root: b.root, count: b.count, branching: b.branching}
+	return &datomTree{index: b.index, order: b.order, branching: b.branching, root: b.root, count: b.count}
 }
 
 func (b *treeBuilder) compare(x, y *datalog.Datom) int {
@@ -237,7 +239,7 @@ func (b *treeBuilder) editable(n *node) *node {
 // sibling. A node is allowed to reach one entry past the tree's branching
 // factor during an insert; this is what resolves that.
 func (b *treeBuilder) splitIfFull(n *node) (left, right *node) {
-	if len(n.keys) <= b.branching {
+	if len(n.keys) <= int(b.branching) {
 		return n, nil
 	}
 
@@ -279,8 +281,8 @@ func (b *treeBuilder) searchNode(n *node, target *datalog.Datom) int {
 // beyond it, never past the one-entry overflow a split resolves.
 func (b *treeBuilder) growthCapacity(n int) int {
 	capacity := n + nodeGrowthStep
-	if capacity > b.branching+1 {
-		capacity = b.branching + 1
+	if capacity > int(b.branching)+1 {
+		capacity = int(b.branching) + 1
 	}
 	if capacity < n {
 		capacity = n
